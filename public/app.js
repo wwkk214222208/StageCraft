@@ -598,7 +598,9 @@ function collectImpressions() {
 $('#inspector-impression-add').onclick = () => { const list = $('#inspector-impressions-list'); const hint = list.querySelector('.hint'); if (hint) hint.remove(); const row = document.createElement('div'); row.className = 'impression-row'; row.innerHTML = '<input class="impression-name" placeholder="姓名"><input class="impression-text" placeholder="对该角色的印象"><button type="button" class="impression-del" title="删除">✕</button>'; list.appendChild(row); row.querySelector('.impression-name').focus() }
 document.addEventListener('click', event => { if (event.target.classList.contains('impression-del')) event.target.closest('.impression-row')?.remove() })
 function setInspectorReadOnly(on) {
-  ['#inspector-self-model', '#inspector-goals', '#inspector-memory', '#inspector-provider', '#inspector-model', '#inspector-save', '#inspector-delete', '#inspector-sync-story', '#inspector-impression-add', '#inspector-avatar-upload', '#inspector-avatar-url'].forEach(selector => { const el = $(selector); if (el) el.disabled = on })
+  // 沉浸模式只读：除上述运行/剧情字段外，供应商与模型（#inspector-provider / #inspector-model）属运行配置，
+  // 允许在沉浸模式下调整；保存按钮（#inspector-save）保留可用以提交这些改动。其余人设/记忆/头像等保持只读。
+  ['#inspector-self-model', '#inspector-goals', '#inspector-memory', '#inspector-delete', '#inspector-sync-story', '#inspector-impression-add', '#inspector-avatar-upload', '#inspector-avatar-url'].forEach(selector => { const el = $(selector); if (el) el.disabled = on })
   document.querySelectorAll('#role-modal .impression-row input').forEach(input => { input.disabled = on })
   document.querySelectorAll('#role-modal .impression-row .impression-del').forEach(button => { button.disabled = on })
 }
