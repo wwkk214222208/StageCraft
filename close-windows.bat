@@ -1,10 +1,7 @@
 @echo off
 setlocal
-title Close Character Tavern
+title Close Character Tavern (Windows)
 set "PORT=8787"
-
-echo Stopping Character Tavern in WSL...
-wsl.exe -d Ubuntu -e bash -lc "pkill -f 'experimental-strip-types src/server.ts' && echo WSL instance stopped || echo No WSL instance running"
 
 echo Checking for a Windows instance on port %PORT%...
 set "FOUND="
