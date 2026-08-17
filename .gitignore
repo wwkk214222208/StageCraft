@@ -2,6 +2,7 @@
 data/
 save/
 providers.json
+.workbuddy/
 .npm-cache/
 node_modules/
 *.log
@@ -18,3 +19,10 @@ stories/custom/*
 public/assets/custom/
 prompts/custom/*
 !prompts/custom/.gitkeep
+
+# ── WSL 启动/关闭脚本（本地使用，不纳入版本控制） ──
+start-wsl.bat
+start-wsl.ps1
+wsl-start.sh
+wsl-stop.sh
+close-wsl.bat

@@ -1,0 +1,2 @@
+# 脚本统一用 LF 换行，确保在 Linux / 安卓(Termux) / WSL 的 bash 下能正常执行
+*.sh text eol=lf
