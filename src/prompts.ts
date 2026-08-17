@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -17,12 +17,54 @@ export interface PromptIdeology {
 
 const defaultPath = join(fileURLToPath(new URL('..', import.meta.url)), 'prompts', 'prompts.json')
 
-/** 私有理念文件：<prompts 目录>/custom/ideology.json；不存在视为空 */
+/** 私有理念文件：<prompts 目录>/custom/ideology.json（默认）；若 active.json 指定了其他文件则用该文件 */
 export function loadIdeology(filePath = defaultPath): PromptIdeology {
-  const custom = join(join(dirname(filePath), 'custom'), 'ideology.json')
-  if (!existsSync(custom)) return {}
+  const dir = join(dirname(filePath), 'custom')
+  const active = join(dir, 'active.json')
+  if (existsSync(active)) {
+    try {
+      const record = JSON.parse(readFileSync(active, 'utf8')) as { file?: string }
+      const target = join(dir, String(record.file ?? ''))
+      if (record.file && existsSync(target)) return loadIdeologyFile(target)
+    } catch { /* 损坏则回退默认 */ }
+  }
+  const fallback = join(dir, 'ideology.json')
+  return existsSync(fallback) ? loadIdeologyFile(fallback) : {}
+}
+
+/** 激活指定提示词文件：写 active.json；此后 loadPrompts 注入该文件的理念 */
+export function setActiveIdeologyFile(name: string, filePath = defaultPath): void {
+  const dir = join(dirname(filePath), 'custom')
+  mkdirSync(dir, { recursive: true })
+  const safe = name.endsWith('.json') ? name : `${name}.json`
+  writeFileSync(join(dir, 'active.json'), `${JSON.stringify({ file: safe }, null, 2)}\n`, 'utf8')
+}
+
+/** 保存创作理念到 <prompts 目录>/custom/{name}.json（私有，不进仓库） */
+export function saveIdeologyFile(name: string, ideology: PromptIdeology, filePath = defaultPath): void {
+  const safe = name.endsWith('.json') ? name : `${name}.json`
+  const dir = join(dirname(filePath), 'custom')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, safe), `${JSON.stringify(ideology, null, 2)}\n`, 'utf8')
+}
+
+/** 列出 <prompts 目录>/custom/ 下的全部提示词文件（含各自内容），供编辑页下拉选择 */
+export function listIdeologyFiles(filePath = defaultPath): Array<{ name: string; roleIdeals: string; directorIdeals: string }> {
+  const dir = join(dirname(filePath), 'custom')
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter(name => name.endsWith('.json') && name !== 'active.json')
+    .map(name => {
+      const data = loadIdeologyFile(join(dir, name))
+      return { name, roleIdeals: data.roleIdeals ?? '', directorIdeals: data.directorIdeals ?? '' }
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+}
+
+/** 读取任意 custom 提示词文件（按绝对路径） */
+function loadIdeologyFile(path: string): PromptIdeology {
   try {
-    const parsed = JSON.parse(readFileSync(custom, 'utf8')) as PromptIdeology
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as PromptIdeology
     return {
       ...(typeof parsed.roleIdeals === 'string' ? { roleIdeals: parsed.roleIdeals } : {}),
       ...(typeof parsed.directorIdeals === 'string' ? { directorIdeals: parsed.directorIdeals } : {}),
@@ -30,13 +72,6 @@ export function loadIdeology(filePath = defaultPath): PromptIdeology {
   } catch {
     return {}
   }
-}
-
-/** 保存创作理念到 <prompts 目录>/custom/ideology.json（私有，不进仓库） */
-export function saveIdeology(ideology: PromptIdeology, filePath = defaultPath): void {
-  const dir = join(dirname(filePath), 'custom')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'ideology.json'), `${JSON.stringify(ideology, null, 2)}\n`, 'utf8')
 }
 
 /** 把 {roleIdeals}/{directorIdeals} 占位符换成私有理念；缺失则替换为空串（不留占位符泄漏） */

@@ -216,31 +216,33 @@ $('#prompts-edit').onclick = async () => {
   try {
     const response = await fetch('/api/prompts')
     const data = await response.json()
-    if (!response.ok || !data.role) { alert('加载提示词失败：' + (data.error || response.status)); return }
-    $('#prompt-role-system').value = data.role?.system ?? ''
-    $('#prompt-role-user').value = data.role?.user ?? ''
-    $('#prompt-role-retrySystem').value = data.role?.retrySystem ?? ''
-    $('#prompt-role-retryUser').value = data.role?.retryUser ?? ''
-    $('#prompt-skills-director').value = data.skills?.director ?? ''
-    $('#prompt-skills-consultation').value = data.skills?.consultation ?? ''
-    $('#prompt-director-request').value = data.director?.request ?? ''
-    $('#prompt-director-retrySystem').value = data.director?.retrySystem ?? ''
-    $('#prompt-director-retryUser').value = data.director?.retryUser ?? ''
-    $('#prompt-consult-user').value = data.consult?.user ?? ''
-    $('#prompt-ideology-role').value = data.ideology?.roleIdeals ?? ''
-    $('#prompt-ideology-director').value = data.ideology?.directorIdeals ?? ''
+    if (!response.ok || !data.files) { alert('加载提示词失败：' + (data.error || response.status)); return }
+    promptFiles = data.files
+    renderPromptFileSelect('')
   } catch { alert('加载提示词失败：无法连接服务器。') }
 }
+let promptFiles = []
+function renderPromptFileSelect(selectedName = '') {
+  const select = $('#prompt-file-select')
+  const selected = selectedName && promptFiles.some(file => file.name === selectedName) ? selectedName : ''
+  select.innerHTML = '<option value="">core prompts（默认）</option>' + promptFiles.map(file => '<option value="' + escape(file.name) + '">' + escape(file.name) + '</option>').join('')
+  select.value = selected
+  applyPromptFileSelection(selected)
+}
+function applyPromptFileSelection(name) {
+  const file = promptFiles.find(item => item.name === name)
+  const core = !file
+  $('#prompt-core-note').hidden = !core
+  const role = $('#prompt-role'), director = $('#prompt-director'), save = $('#prompts-save')
+  role.disabled = core; director.disabled = core; save.disabled = core
+  role.value = file?.roleIdeals ?? ''; director.value = file?.directorIdeals ?? ''
+}
+$('#prompt-file-select').onchange = () => applyPromptFileSelection($('#prompt-file-select').value)
 $('#prompts-save').onclick = event => {
   event.preventDefault()
-  const body = {
-    role: { system: $('#prompt-role-system').value, user: $('#prompt-role-user').value, retrySystem: $('#prompt-role-retrySystem').value, retryUser: $('#prompt-role-retryUser').value },
-    director: { request: $('#prompt-director-request').value, retrySystem: $('#prompt-director-retrySystem').value, retryUser: $('#prompt-director-retryUser').value },
-    consult: { user: $('#prompt-consult-user').value },
-    skills: { director: $('#prompt-skills-director').value, consultation: $('#prompt-skills-consultation').value },
-    ideology: { roleIdeals: $('#prompt-ideology-role').value, directorIdeals: $('#prompt-ideology-director').value },
-  }
-  api('/api/prompts', body).then(ok => { if (ok) { alert('提示词已保存并生效'); $('#prompts-modal').close() } })
+  const name = $('#prompt-file-select').value
+  if (!name) return
+  api('/api/prompts', { name, role: $('#prompt-role').value, director: $('#prompt-director').value }).then(ok => { if (ok) { alert('提示词已保存并生效'); $('#prompts-modal').close() } })
 }
 $('#prompts-close').onclick = () => $('#prompts-modal').close()
 $('#provider-select').onchange = () => { updateModels(providers.find(item => item.id === $('#provider-select').value), '#model-select'); api('/api/providers/default-role', { id: $('#provider-select').value, model: $('#model-select').value }) }

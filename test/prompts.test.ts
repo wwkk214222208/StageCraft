@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadPrompts, renderPrompt } from '../src/prompts.ts'
+import { listIdeologyFiles, loadIdeology, loadPrompts, renderPrompt, saveIdeologyFile, setActiveIdeologyFile } from '../src/prompts.ts'
 
 test('loadPrompts reads the default prompts file', () => {
   const prompts = loadPrompts()
@@ -22,8 +22,30 @@ test('renderPrompt substitutes placeholders and keeps unknown ones', () => {
 test('loadPrompts supports a custom file via PROMPTS_FILE', () => {
   const root = mkdtempSync(join(tmpdir(), 'character-tavern-prompts-'))
   const custom = join(root, 'custom.json')
-  writeFileSync(custom, JSON.stringify({ role: { prefix: '自定义前缀 {roleName}', system: '{prefix}\n记忆：{memoryTimeline}', user: 'u', retrySystem: 'rs', retryUser: 'ru' }, director: { request: 'r', retrySystem: 'rs', retryUser: 'ru' }, consult: { user: 'cu' }, skills: { director: 'sd', consultation: 'sc' } }))
+  writeFileSync(custom, JSON.stringify({ role: { prefix: '自定义前缀 {roleName}', system: '{prefix}\n记忆：{memoryTimeline}\n{roleIdeals}', user: 'u', retrySystem: 'rs', retryUser: 'ru' }, director: { request: '{directorIdeals}\n草稿', retrySystem: 'rs', retryUser: 'ru' }, consult: { user: 'cu' }, skills: { director: '{directorIdeals}\n思维链六步', consultation: 'sc' } }))
   const prompts = loadPrompts(custom)
   assert.equal(prompts.role.prefix, '自定义前缀 {roleName}')
-  assert.equal(renderPrompt(prompts.role.system, { prefix: 'P', memoryTimeline: 'M' }), 'P\n记忆：M')
+  assert.equal(renderPrompt(prompts.role.system, { prefix: 'P', memoryTimeline: 'M' }), 'P\n记忆：M\n')
+})
+
+test('custom prompts files: save/list/activate/inject', () => {
+  const root = mkdtempSync(join(tmpdir(), 'character-tavern-ideology-'))
+  const custom = join(root, 'prompts.json')
+  writeFileSync(custom, JSON.stringify({ role: { prefix: 'p', system: 'base\n{roleIdeals}', user: 'u', retrySystem: 'rs', retryUser: 'ru' }, director: { request: 'r', retrySystem: 'rs', retryUser: 'ru' }, consult: { user: 'cu' }, skills: { director: 'base\n{directorIdeals}', consultation: 'sc' } }))
+  // 无任何 custom 文件：占位符替换为空，无泄漏
+  assert.equal(loadPrompts(custom).role.system, 'base\n')
+  assert.equal(loadPrompts(custom).skills.director, 'base\n')
+  // 保存默认 ideology.json 并激活：注入生效
+  saveIdeologyFile('ideology', { roleIdeals: '世界A', directorIdeals: '宪法A' }, custom)
+  setActiveIdeologyFile('ideology', custom)
+  assert.equal(loadPrompts(custom).role.system, 'base\n世界A')
+  assert.equal(loadPrompts(custom).skills.director, 'base\n宪法A')
+  // 列表含文件、不含 active.json
+  assert.deepEqual(listIdeologyFiles(custom).map(item => item.name), ['ideology.json'])
+  // 切换到另一个文件：激活变化，注入随之变化
+  saveIdeologyFile('预设B', { roleIdeals: '世界B', directorIdeals: '宪法B' }, custom)
+  setActiveIdeologyFile('预设B', custom)
+  assert.equal(loadPrompts(custom).role.system, 'base\n世界B')
+  assert.equal(loadIdeology(custom).roleIdeals, '世界B')
+  assert.deepEqual(listIdeologyFiles(custom).map(item => item.name), ['预设B.json', 'ideology.json'])
 })

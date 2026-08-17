@@ -6,7 +6,7 @@
  *
  * 本模块保持框架无关：不 import cordis/dsh，只导出纯函数。
  */
-import { appendFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,7 +15,7 @@ import { RoomRuntime } from './room-runtime.ts'
 import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } from './model-gateway.ts'
 import { listStoryPackages, loadStoryPackage, saveStoryPackage, type StoryPackage } from './story-packages.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
-import { loadIdeology, loadPrompts, saveIdeology, type PromptTemplates } from './prompts.ts'
+import { listIdeologyFiles, loadPrompts, saveIdeologyFile, setActiveIdeologyFile, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
 
 export interface TavernOptions {
@@ -73,7 +73,13 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
     for (const listener of debugListeners) listener(text)
   }
 
-  const providerStore = new ProviderConfigStore(join(dataDir, 'providers.json'))
+  // 配置文件（data/providers.json）不进仓库；不存在时用 providers.example.json 生成默认
+  const providerFilePath = join(dataDir, 'providers.json')
+  if (!existsSync(providerFilePath)) {
+    const example = join(root, 'providers.example.json')
+    if (existsSync(example)) copyFileSync(example, providerFilePath)
+  }
+  const providerStore = new ProviderConfigStore(providerFilePath)
   const envRoute = routeFromEnvironment()
   if (providerStore.list().length === 0 && envRoute.apiKey) providerStore.save({ id: 'environment', name: '环境变量', baseUrl: envRoute.baseUrl, apiKey: envRoute.apiKey, models: [envRoute.model], selectedModel: envRoute.model, responseFormat: envRoute.responseFormat })
 
@@ -172,36 +178,16 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       }
       if (url.pathname === '/api/usage') return json(response, 200, gateway?.usage() ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, mode: 'fake' })
       if (url.pathname === '/api/prompts' && request.method === 'GET') {
-        const prompts = loadPrompts()
-        const ideology = loadIdeology(promptsFilePath)
-        return json(response, 200, {
-          role: { system: prompts.role.system, user: prompts.role.user, retrySystem: prompts.role.retrySystem, retryUser: prompts.role.retryUser },
-          director: { request: prompts.director.request, retrySystem: prompts.director.retrySystem, retryUser: prompts.director.retryUser },
-          consult: { user: prompts.consult.user },
-          skills: { director: prompts.skills.director, consultation: prompts.skills.consultation },
-          ideology: { roleIdeals: ideology.roleIdeals ?? '', directorIdeals: ideology.directorIdeals ?? '' },
-        })
+        return json(response, 200, { files: listIdeologyFiles(promptsFilePath) })
       }
       if (url.pathname === '/api/prompts' && request.method === 'POST') {
         const body = await readJson(request)
-        const prompts = loadPrompts()
-        const patch = (section: Record<string, string>, values: unknown): void => {
-          if (!values || typeof values !== 'object' || Array.isArray(values)) return
-          for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
-            if (typeof value === 'string' && key in section) section[key] = value
-          }
-        }
-        patch(prompts.role as unknown as Record<string, string>, body.role)
-        patch(prompts.director as unknown as Record<string, string>, body.director)
-        patch(prompts.consult as unknown as Record<string, string>, body.consult)
-        patch(prompts.skills as unknown as Record<string, string>, body.skills)
-        writeFileSync(promptsFilePath, `${JSON.stringify(prompts, null, 2)}\n`, 'utf8')
-        // 创作理念单独存私有文件（仓库保留 prompts/custom/ 目录但不提交内容）
-        if (body.ideology && typeof body.ideology === 'object') {
-          saveIdeology({ roleIdeals: String(body.ideology.roleIdeals ?? ''), directorIdeals: String(body.ideology.directorIdeals ?? '') }, promptsFilePath)
-        }
+        // 只允许写入 prompts/custom/ 下的 json 文件名（防路径穿越）
+        const name = /^[\w\u4e00-\u9fff-]+(\.json)?$/.test(String(body.name ?? '')) ? String(body.name).replace(/\.json$/, '') : 'ideology'
+        saveIdeologyFile(name, { roleIdeals: String(body.role ?? ''), directorIdeals: String(body.director ?? '') }, promptsFilePath)
+        setActiveIdeologyFile(name, promptsFilePath)
         reloadPrompts()
-        return json(response, 200, { ok: true })
+        return json(response, 200, { ok: true, files: listIdeologyFiles(promptsFilePath) })
       }
       if (url.pathname === '/api/events') return events(request, response, url.searchParams.get('id') ?? roomId)
       if (url.pathname === '/api/thinking-events') return thinkingEvents(request, response, url.searchParams.get('id') ?? roomId)
