@@ -51,9 +51,11 @@ test('群聊模式：发言 → 待审批台词 → 批准发布 → 在场角�
   assert.equal(room.scenes.at(-1)?.text, '「那把钥匙并不属于你。」')
   assert.equal(room.speech, undefined)
   // 在场角色（aria/mira）都消化了记忆；不在场的 noel 没有
-  assert.ok((room.roles.find(role => role.id === 'aria')?.memoryTimeline['未标注时间'] ?? []).some(event => event.includes('场景')))
-  assert.ok((room.roles.find(role => role.id === 'mira')?.memoryTimeline['未标注时间'] ?? []).some(event => event.includes('场景')))
-  const noelDigested = (room.roles.find(role => role.id === 'noel')?.memoryTimeline['未标注时间'] ?? []).some(event => event.includes('场景'))
+  // 记忆按「当前场景时间」归档（seed 房间默认起始时间为第一日黄昏）
+  const sceneBucket = room.sceneTime ?? '未标注时间'
+  assert.ok((room.roles.find(role => role.id === 'aria')?.memoryTimeline[sceneBucket] ?? []).some(event => event.includes('场景')))
+  assert.ok((room.roles.find(role => role.id === 'mira')?.memoryTimeline[sceneBucket] ?? []).some(event => event.includes('场景')))
+  const noelDigested = (room.roles.find(role => role.id === 'noel')?.memoryTimeline[sceneBucket] ?? []).some(event => event.includes('场景'))
   assert.equal(noelDigested, false)
 })
 
