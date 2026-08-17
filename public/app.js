@@ -238,6 +238,40 @@ function applyPromptFileSelection(name) {
   role.value = file?.roleIdeals ?? ''; director.value = file?.directorIdeals ?? ''
 }
 $('#prompt-file-select').onchange = () => applyPromptFileSelection($('#prompt-file-select').value)
+$('#prompt-new').onclick = () => {
+  const name = prompt('新建提示词文件名（存于 prompts/custom/）：').trim()
+  if (!name) return
+  if (!/^[\w\u4e00-\u9fff-]+\.json$/i.test(name) && !/^[\w\u4e00-\u9fff-]+$/.test(name)) { alert('文件名仅支持中英文、数字、下划线与连字符。'); return }
+  const final = name.endsWith('.json') ? name : name + '.json'
+  if (promptFiles.some(file => file.name === final)) { alert('同名文件已存在。'); return }
+  api('/api/prompts', { name: final, role: '', director: '', activate: false }).then(ok => {
+    if (ok) { promptFiles.push({ name: final, roleIdeals: '', directorIdeals: '' }); renderPromptFileSelect(final) }
+  })
+}
+$('#prompt-rename').onclick = () => {
+  const current = $('#prompt-file-select').value
+  if (!current) return
+  const next = prompt('重命名「' + current + '」为：', current.replace(/\.json$/i, '')).trim()
+  if (!next || next.replace(/\.json$/i, '') === current.replace(/\.json$/i, '')) return
+  if (!/^[\w\u4e00-\u9fff-]+\.json$/i.test(next) && !/^[\w\u4e00-\u9fff-]+$/.test(next)) { alert('文件名仅支持中英文、数字、下划线与连字符。'); return }
+  const final = next.endsWith('.json') ? next : next + '.json'
+  fetch('/api/prompts/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: current, to: final }) }).then(response => response.json()).then(data => {
+    if (!data.ok) { alert('重命名失败（受保护文件或同名冲突）。'); return }
+    promptFiles = data.files
+    renderPromptFileSelect(final)
+  })
+}
+$('#prompt-delete').onclick = () => {
+  const current = $('#prompt-file-select').value
+  if (!current) return
+  if (!confirm('删除「' + current + '」？该操作不可恢复。')) return
+  fetch('/api/prompts?name=' + encodeURIComponent(current), { method: 'DELETE' }).then(response => response.json()).then(data => {
+    if (!data.ok) { alert('删除失败（受保护文件）。'); return }
+    promptFiles = data.files
+    renderPromptFileSelect('')
+    alert('已删除「' + current + '」。')
+  })
+}
 $('#prompts-save').onclick = event => {
   event.preventDefault()
   const name = $('#prompt-file-select').value

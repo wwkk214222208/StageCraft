@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -38,6 +38,49 @@ export function setActiveIdeologyFile(name: string, filePath = defaultPath): voi
   mkdirSync(dir, { recursive: true })
   const safe = name.endsWith('.json') ? name : `${name}.json`
   writeFileSync(join(dir, 'active.json'), `${JSON.stringify({ file: safe }, null, 2)}\n`, 'utf8')
+}
+
+/** 提示词文件名是否合法（仅允许写入 prompts/custom/ 下的 json；空/越界返回 false） */
+export function isValidIdeologyFileName(name: string): boolean {
+  return /^[\w\u4e00-\u9fff-]+\.json$/.test(name)
+}
+
+/** 受保护的内部文件：不能被删除/改名 */
+function isProtected(file: string): boolean {
+  return file === 'active.json' || file === 'ideology.json'
+}
+
+function ideologyDir(filePath: string): string {
+  return join(dirname(filePath), 'custom')
+}
+
+/** 删除提示词文件；受保护文件（active.json / ideology.json）返回 false */
+export function removeIdeologyFile(name: string, filePath = defaultPath): boolean {
+  const file = name.endsWith('.json') ? name : `${name}.json`
+  if (!isValidIdeologyFileName(file) || isProtected(file)) return false
+  const target = join(ideologyDir(filePath), file)
+  if (!existsSync(target)) return false
+  rmSync(target)
+  return true
+}
+
+/** 重命名提示词文件；受保护文件返回 false；若重命名的是激活文件则同步 active.json */
+export function renameIdeologyFile(from: string, to: string, filePath = defaultPath): boolean {
+  const fromFile = from.endsWith('.json') ? from : `${from}.json`
+  const toFile = to.endsWith('.json') ? to : `${to}.json`
+  if (!isValidIdeologyFileName(fromFile) || !isValidIdeologyFileName(toFile) || isProtected(fromFile)) return false
+  const dir = ideologyDir(filePath)
+  const source = join(dir, fromFile)
+  if (!existsSync(source) || existsSync(join(dir, toFile))) return false
+  renameSync(source, join(dir, toFile))
+  const active = join(dir, 'active.json')
+  if (existsSync(active)) {
+    try {
+      const record = JSON.parse(readFileSync(active, 'utf8')) as { file?: string }
+      if (record.file === fromFile) setActiveIdeologyFile(toFile, filePath)
+    } catch { /* 忽略损坏的 active.json */ }
+  }
+  return true
 }
 
 /** 保存创作理念到 <prompts 目录>/custom/{name}.json（私有，不进仓库） */
