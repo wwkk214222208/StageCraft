@@ -1,0 +1,53 @@
+{
+  "id": "royal-festival",
+  "title": "皇家祭典",
+  "opening": "皇家祭典主厅的乐声透过高窗流入夜色，贵族、卫兵与商人穿梭在烛火之间。",
+  "sceneTime": "夜晚",
+  "sceneLocation": "皇家祭典主厅",
+  "playerCharacter": {
+    "name": "玩家",
+    "persona": "谨慎而善于观察的来访者，具体身份和动机由玩家决定。",
+    "currentState": "刚刚进入皇家祭典主厅，正在观察周围环境。"
+  },
+  "roles": [
+    {
+      "id": "aria",
+      "name": "Aria",
+      "portraitRef": "/assets/aria.svg",
+      "currentState": "位于皇家祭典主厅，在场。身着深蓝色礼服，右手仍有轻微伤势；未携带武器。",
+      "presence": "present",
+      "memoryTimeline": {
+        "未标注时间": [
+          "玩家的举动值得留意。"
+        ]
+      },
+      "selfModel": "克制、敏锐，习惯将情绪藏在礼貌之后。"
+    },
+    {
+      "id": "mira",
+      "name": "Mira",
+      "portraitRef": "/assets/mira.svg",
+      "currentState": "位于皇家祭典主厅，在场。带着一箱啤酒，神态轻松，正观察人群。",
+      "presence": "present",
+      "memoryTimeline": {
+        "未标注时间": [
+          "Aria 今晚比平时紧张。"
+        ]
+      },
+      "selfModel": "直率、好奇，擅长用玩笑缓和紧张气氛。"
+    },
+    {
+      "id": "noel",
+      "name": "Noel",
+      "portraitRef": "/assets/noel.svg",
+      "currentState": "不在祭典主厅，暂时不可见。",
+      "presence": "absent",
+      "memoryTimeline": {
+        "未标注时间": [
+          "尚未参与本轮。"
+        ]
+      },
+      "selfModel": "谨慎、寡言，优先观察。"
+    }
+  ]
+}

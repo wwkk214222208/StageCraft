@@ -1,0 +1,17 @@
+{
+  "name": "dsh-rp",
+  "version": "0.1.0",
+  "description": "Character Tavern 的 Cordis/dsh 适配壳：把角色酒馆作为自包含插件跑进 dsh profile（蹭热度原型）",
+  "type": "module",
+  "main": "src/index.ts",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

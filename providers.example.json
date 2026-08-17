@@ -1,0 +1,33 @@
+{
+  "providers": [
+    {
+      "id": "console-go",
+      "name": "Console Go",
+      "baseUrl": "https://opencode.ai/zen/go/v1",
+      "apiKey": "在这里填写你的_API_Key",
+      "models": [
+        "deepseek-v4-flash",
+        "deepseek-v4"
+      ],
+      "selectedModel": "deepseek-v4-flash",
+      "responseFormat": "json_object",
+      "toolCalling": true
+    },
+    {
+      "id": "strong-provider",
+      "name": "强模型服务",
+      "baseUrl": "https://你的强模型服务/v1",
+      "apiKey": "在这里填写强模型的_API_Key",
+      "models": [
+        "strong-model"
+      ],
+      "selectedModel": "strong-model",
+      "responseFormat": "json_object",
+      "toolCalling": true
+    }
+  ],
+  "defaultRoleProviderId": "console-go",
+  "defaultRoleModel": "deepseek-v4-flash",
+  "directorProviderId": "strong-provider",
+  "directorModel": "strong-model"
+}

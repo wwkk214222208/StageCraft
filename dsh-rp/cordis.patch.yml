@@ -1,0 +1,6 @@
+# dsh-rp bundle patch：把酒馆插件行插入 profile 名单。
+# 格式与官方 dsh 插件一致（顶层 YAML 数组，insert 一个插件行）。
+# 装好后 `dsh --profile <name>` 启动时会在 RP_PORT（默认 8799）打开酒馆。
+- insert:
+    - id: rp
+      name: 'dsh-rp'

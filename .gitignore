@@ -1,0 +1,18 @@
+# ── 私有数据（不上传） ──
+data/
+save/
+providers.json
+.npm-cache/
+node_modules/
+*.log
+
+# ── 用户自建内容：保留目录、忽略内容（仓库内保留 .gitkeep） ──
+custom/*
+!custom/.gitkeep
+stories/custom/*
+!stories/custom/.gitkeep
+
+# 备份
+*backup*
+# 私有剧本头像
+public/assets/custom/

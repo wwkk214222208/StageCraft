@@ -1,0 +1,192 @@
+*{box-sizing:border-box}body{margin:0;background:#1b2133;color:#e4edfd;font:14px system-ui,sans-serif;min-height:100vh;overflow:hidden}header{height:54px;background:#222a40;border-bottom:1px solid #34415b;padding:0 20px;display:flex;align-items:center;justify-content:space-between}header strong{font:20px Georgia,serif;color:#b7c8fe}header span{margin-left:10px;color:#8fa1c9}.header-tools{display:flex;align-items:center;gap:7px}#model-mode{color:#679efe;font-size:12px;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button{background:#4176e6;color:#ffffff;border:0;border-radius:3px;padding:7px 10px;font:inherit;cursor:pointer}button:hover{background:#5686fe}button:disabled{opacity:.45;cursor:not-allowed}main{display:grid;grid-template-columns:minmax(225px,20vw) minmax(360px,1fr) minmax(280px,25vw);height:calc(100vh - 142px);min-height:0}aside,section{min-width:0}#roles,#workbench{background:#202839;padding:12px;overflow-y:auto}#roles{border-right:1px solid #2f3c58}#workbench{border-left:1px solid #2f3c58;display:flex;flex-direction:column;gap:16px}#story{padding:24px 8%;overflow:auto}.role{display:grid;grid-template-columns:46px 1fr auto;gap:8px;padding:10px 0;border-bottom:1px solid #2d3a55}.role img{width:46px;height:46px;border-radius:4px}.role-heading{display:flex;align-items:center;gap:7px}.role-name{background:none;color:#b7c8fe;padding:0;text-align:left;font:600 15px Georgia,serif}.role-name:hover{color:#d3e2ff}.role small{display:block;color:#679efe;font-size:11px;margin-top:3px}.role p{grid-column:1/-1;margin:0;color:#a9b8dd;line-height:1.45;font-size:12px}.focus-toggle{padding:2px 6px;background:#3f5b8f;color:#dbe7ff;font-size:12px}.role.focal .focus-toggle{background:#b7c8fe;color:#283142}.role.focal{border-left:3px solid #b7c8fe;padding-left:8px;background:#2e3750}.role.away{opacity:.6}.error{display:block;color:#ffad9d;margin:6px 0;font-size:12px}.thinking{color:#b7c8fe;background:#2a3550;border:1px solid #5686fe;padding:8px;border-radius:4px;animation:pulse 1.2s ease-in-out infinite}@keyframes pulse{50%{opacity:.5}}h2,h3{font:18px Georgia,serif;color:#b7c8fe;margin:0 0 10px}#scenes:empty:before{content:'故事尚未开始。';color:#7f90b8}.scene{padding:16px 0;border-bottom:1px solid #34415b;white-space:pre-wrap;line-height:1.8}.scene time{display:block;color:#93a5cd;font-size:11px;margin-bottom:7px}.scene time.scene-snapshot{color:#b7c8fe;font:600 12px Georgia,serif;letter-spacing:.4px;padding:4px 8px;border-left:3px solid #4868b2;background:#252d42;border-radius:0 4px 4px 0}#turn-display{margin-top:18px;padding:16px;border:1px solid #4868b2;background:#29314a;border-radius:5px}.reaction-list{display:flex;flex-direction:column;align-items:flex-start;gap:8px}.reaction-wrap{max-width:92%;width:100%}.reaction-feedback{padding:7px 10px 0;background:#26324d;border:1px solid #4868b2;border-top:0;border-radius:0 0 8px 8px}.reaction-feedback textarea{min-height:64px;margin-bottom:6px}.reaction-feedback button{font-size:12px;padding:5px 8px}.reaction-bubble{max-width:92%;text-align:left;background:#2b3b5c;color:#e4edfd;border:1px solid #4868b2;border-radius:14px;padding:9px 12px;line-height:1.45}.reaction-wrap.locked .reaction-bubble{background:#3a3a3e;border-color:#666;color:#bbb}.reaction-bubble b{display:block;color:#b7c8fe;margin-bottom:4px}.reaction-bubble small.reaction-identity{display:block;color:#679efe;font-size:11px;margin-top:4px;padding-top:4px;border-top:1px dashed #4868b255}.reaction-bubble:hover{background:#32466d}.director-draft-record{margin-top:16px;padding:14px;border:1px solid #4868b2;background:#2b3247;border-radius:5px}.director-draft-record header{height:auto;padding:0;background:none;border:0;display:flex;align-items:baseline;justify-content:space-between}.director-draft-record header h2{margin:0}.director-draft-record time{color:#93a5cd;font-size:11px}.director-draft-record h2 small{font:11px system-ui;color:#679efe}.director-draft-record textarea{min-height:220px;margin-top:10px}.draft-actions{margin-top:8px;display:flex;justify-content:flex-end}textarea,input,select{width:100%;background:#161c2b;color:#e4edfd;border:1px solid #4a5d8a;padding:9px;font:14px/1.5 inherit;resize:vertical}#turn-info{padding-bottom:12px;border-bottom:1px solid #34415b}#director-chat{display:flex;flex-direction:column;min-height:260px;flex:1}#consultations{flex:1;min-height:100px;overflow:auto;background:#181f30;border:1px solid #2d3a55;padding:8px;margin-bottom:8px}.consultation{margin:0 0 8px;padding:8px;white-space:pre-wrap;line-height:1.45}.consultation b{display:block;font-size:11px;color:#679efe;margin-bottom:3px}.consultation.player{background:#233044}.consultation.director{background:#262f48}#consult-text{min-height:78px;margin-bottom:8px}footer{height:88px;background:#222a40;border-top:1px solid #34415b;padding:10px 20px;display:grid;grid-template-columns:1fr auto;gap:10px}footer textarea{min-height:66px}dialog{background:#222a40;color:#e4edfd;border:1px solid #4a5d8a;max-width:520px;width:min(92vw,520px)}#role-modal{max-width:none;width:min(96vw,1200px);height:min(94vh,920px);padding:20px}#role-modal form{height:100%;display:grid;grid-template-rows:auto auto 1fr 1fr auto;gap:10px;overflow:hidden}#role-modal .inspector-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}#role-modal label{min-height:0}#role-modal textarea{height:100%;min-height:0;resize:none;overflow:auto}#role-modal header,#role-modal button[id=inspector-save]{grid-column:1/-1}dialog::backdrop{background:#0009}dialog form{display:grid;gap:9px}dialog header{height:auto;padding:0;background:none;border:0}dialog header h3{margin:0}dialog label{display:grid;gap:4px;color:#a9b8dd}dialog hr{width:100%;border:0;border-top:1px solid #34415b}.hint{color:#8fa1c9;font-size:12px;margin:0}.load-label{display:block;background:#2f4266;color:#e4edfd;padding:7px 10px;border-radius:3px;cursor:pointer}.load-label input{display:none}#debug-stream{position:fixed;right:12px;bottom:100px;max-width:48vw;max-height:36vh;overflow:auto;background:#0d1117;color:#b7c8fe;padding:10px;border:1px solid #34415b;z-index:5}@media(max-width:900px){main{grid-template-columns:190px 1fr}#workbench{display:none}#story{padding:18px}header{padding:0 10px}.header-tools button{padding:6px}.header-tools{gap:4px}#model-mode{display:none}}@media(max-width:620px){main{grid-template-columns:1fr;height:calc(100vh - 142px)}#roles{display:none}#story{padding:14px}header strong{font-size:17px}#room-title{display:none}}
+
+.thinking-block{border:1px solid #3d4c6b;border-radius:5px;margin:8px 0;background:#212838}.thinking-block>summary{cursor:pointer;padding:7px 10px;color:#b7c8fe;font-size:12px;list-style:none;user-select:none}.thinking-block>summary:hover{background:#2d3650}.thinking-block>summary::before{content:'▸';display:inline-block;margin-right:6px;transition:transform .15s}.thinking-block[open]>summary::before{transform:rotate(90deg)}.thinking-block pre{margin:0;padding:8px 12px;border-top:1px solid #34415b;color:#a9b8dd;font:11px/1.6 Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow-y:auto}.thinking-block.saved>summary{color:#679efe}#thinking-panel{margin:14px 0;max-width:640px}.thinking-block .thinking-label{font-weight:600}
+#scene-bar{position:sticky;top:0;z-index:3;border-bottom:1px solid #3a4a6e;background:#232c43;padding:10px 20px;grid-column:1/-1}#scene-bar .scene-bar-inner{color:#b7c8fe;font:600 15px Georgia,serif;letter-spacing:.5px}.scene-edits{border:1px solid #3a4a6e;border-radius:5px;margin:8px 0;background:#1f2739}.scene-edits>summary{cursor:pointer;padding:7px 10px;color:#b7c8fe;font-size:12px}.scene-edits label{display:flex;align-items:center;gap:8px;padding:6px 10px;color:#a9b8dd;font-size:12px}.scene-edits input{flex:1;background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:3px;padding:6px 8px;font:inherit}.scene-edits .hint{color:#7f90b8;font-size:11px;margin:4px 10px 8px}
+
+/* ── 追加：左侧栏标签 / 世界书 / 存档 / 原始剧本编辑（不修改第 1 行）── */
+.section-title{font:600 13px system-ui;color:#b7c8fe;margin:8px 0 4px}
+.sidebar-tabs{display:flex;gap:6px;margin-bottom:10px;border-bottom:1px solid #2f3c58;padding-bottom:8px}
+.sidebar-tabs button{flex:1;background:none;color:#a9b8dd;border:1px solid #2f3c58;border-radius:4px;padding:6px 8px;font-size:13px}
+.sidebar-tabs button:hover{background:#313a52;color:#b7c8fe}
+.sidebar-tabs button.active{background:#3a4c78;color:#b7c8fe;border-color:#5686fe}
+.lore-add{width:100%;background:#2c3f63;color:#e4edfd;border:1px solid #4868b2;margin-bottom:10px;font-size:13px}
+.lore-add:hover{background:#38507c}
+.lore-entry{display:block;width:100%;text-align:left;background:#252d41;border:1px solid #2d3a55;border-radius:5px;padding:9px 11px;margin-bottom:8px;cursor:pointer}
+.lore-entry:hover{border-color:#5686fe;background:#2a3349}
+.lore-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.lore-heading b{color:#b7c8fe;font:600 14px Georgia,serif}
+.lore-heading small{color:#679efe;font-size:11px;flex-shrink:0}
+.lore-entry p{margin:5px 0 0;color:#a9b8dd;font-size:12px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+#lore-modal{max-width:none;width:min(96vw,760px)}
+#lore-modal #lore-content{min-height:220px}
+.archive-section{margin-top:4px}
+.archive-list{list-style:none;margin:0;padding:0;max-height:180px;overflow-y:auto}
+.archive-list li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 4px;border-bottom:1px solid #2d3a55}
+.archive-name{font-size:12px;color:#e4edfd;word-break:break-all;min-width:0}
+.archive-actions{display:flex;gap:6px;flex-shrink:0}
+.archive-actions button{font-size:12px;padding:4px 8px}
+.archive-actions button.danger{background:#7a3f3f;color:#ffe9e2}
+.archive-actions button.danger:hover{background:#9c4f4f}
+.story-modal-actions{display:flex;gap:8px}
+.story-modal-actions button{flex:1}
+.story-edit-id{font:11px system-ui;color:#679efe}
+#story-edit-modal{max-width:none;width:min(96vw,900px);max-height:94vh;padding:20px}
+#story-edit-modal form{max-height:calc(94vh - 40px);overflow-y:auto;display:grid;gap:9px}
+#story-edit-opening{min-height:110px}
+#story-edit-modal textarea{min-height:80px}
+#story-edit-modal .story-json{margin:0;border:1px solid #3a4a6e;border-radius:5px;background:#1f2739}
+#story-edit-modal .story-json>summary{cursor:pointer;padding:7px 10px;color:#b7c8fe;font-size:12px;list-style:none;user-select:none}
+#story-edit-modal .story-json>summary::before{content:'▸';display:inline-block;margin-right:6px;transition:transform .15s}
+#story-edit-modal .story-json[open]>summary::before{transform:rotate(90deg)}
+#story-edit-modal .story-json[open]>summary{border-bottom:1px solid #3a4a6e}
+#story-edit-modal .story-json textarea{border:0;border-radius:0;min-height:160px;font:11px/1.5 Consolas,monospace;resize:vertical}
+#story-edit-modal .story-json .hint{padding:0 10px 8px;margin:0}
+#story-edit-modal .inspector-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* ── 追加：人物管理（第二轮：新建 / 删除 / 在场 / 导演提议 / 同步）── */
+.role-add{width:100%;background:#3a4c78;color:#b7c8fe;border:1px solid #5686fe;margin-bottom:10px;font-size:13px}
+.role-add:hover{background:#46609a;color:#d3e2ff}
+.presence-toggle{padding:2px 6px;background:#46536f;color:#e4edfd;font-size:12px}
+.role.away .presence-toggle{background:#3a4c78;color:#b7c8fe}
+.role-modal-footer{display:flex;justify-content:space-between;gap:10px;grid-column:1/-1}
+#inspector-delete{background:#7a3f3f;color:#ffe9e2}
+#inspector-delete:hover{background:#9c4f4f}
+.role-proposals{margin:8px 0;padding:8px 10px;border:1px solid #4868b2;background:#2b3247;border-radius:5px}
+.role-proposals .section-title{margin:0 0 6px}
+.role-proposals ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.role-proposals li{border:1px solid #3a4a6e;border-radius:4px;background:#222a3d;padding:6px 9px}
+.proposal-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.role-proposals b{color:#b7c8fe;font:600 13px Georgia,serif}
+.role-proposals small{color:#679efe;font-size:11px}
+.role-proposals p{margin:4px 0 0;color:#a9b8dd;font-size:12px;line-height:1.45}
+#create-role-modal #new-role-self-model{min-height:110px}
+#create-role-modal #new-role-state{min-height:60px}
+#create-role-modal #new-role-memory{min-height:110px}
+
+/* ── 追加：人物拖拽排序 + 新建按钮在底部 ── */
+#roles-list .role-add{margin-top:10px;margin-bottom:0}
+.role[draggable="true"]{cursor:grab}
+.role[draggable="true"]:active{cursor:grabbing}
+.role.drag-over{border-color:#b7c8fe;box-shadow:0 0 0 1px #b7c8fe}
+
+/* ── 追加：角色头像导入（ST 风格）── */
+.avatar-upload{display:flex;align-items:center;gap:12px}
+#inspector-avatar-preview{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #3a4a6e;background:#1a2134}
+.avatar-upload-buttons{display:flex;flex-direction:column;gap:6px}
+.avatar-upload-buttons button{font-size:12px;padding:4px 10px}
+
+/* ── 追加：ST 式头像显示（原图 + object-fit 裁剪）── */
+.role img{object-fit:cover}
+#inspector-avatar-preview{object-fit:cover}
+
+/* ── 追加：角色编辑双窗（左头像窗 + 右信息窗）── */
+#role-avatar-modal,#role-modal{position:fixed;margin:0;padding:0;border:1px solid #3a4a6e;border-radius:8px;background:#222a3d;color:#e4edfd;box-shadow:0 6px 28px rgba(0,0,0,.55);z-index:1000}
+#role-modal{max-height:88vh;overflow:hidden;display:flex;flex-direction:column}
+#role-avatar-modal{width:240px}
+#role-avatar-modal .avatar-panel{display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px}
+#role-avatar-modal .avatar-panel h4{margin:0;color:#b7c8fe;font:600 15px Georgia,serif}
+#inspector-avatar-preview{width:208px;height:208px;object-fit:cover;border-radius:10px;border:1px solid #3a4a6e;background:#1a2134;display:block}
+.avatar-upload-buttons{display:flex;flex-direction:column;gap:6px;width:100%}
+.avatar-upload-buttons button{font-size:12px;padding:4px 10px;width:100%}
+#role-modal{width:920px;max-width:94vw}
+#role-modal form{display:flex;flex-direction:column;gap:0;padding:0;flex:1 1 auto;overflow:hidden;min-height:0}
+#role-modal .inspector-fields{display:flex;flex-direction:column;gap:10px;flex:1 1 auto;overflow-y:auto;min-height:0;padding:14px 16px}
+#role-modal .inspector-two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+#role-modal .inspector-fields textarea{min-height:120px}
+#role-modal .inspector-two-col textarea{min-height:190px;resize:vertical}
+
+/* ── 追加：他人印象列表 + 提示词编辑窗口 ── */
+.inspector-impressions-wrap .field-title{margin:0 0 6px;color:#b7c8fe;font:600 13px Georgia,serif}
+.inspector-impressions-wrap .field-title small{color:#7f90b8;font-weight:400;font-size:11px}
+#inspector-impressions-list{display:flex;flex-direction:column;gap:6px}
+.impression-row{display:grid;grid-template-columns:1fr 2fr auto;gap:6px;align-items:center}
+.impression-row input{background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:3px;padding:5px 8px;font:inherit;font-size:12px}
+.impression-row .impression-del{background:none;border:0;color:#ff9d8a;font-size:14px;cursor:pointer;padding:2px 6px}
+.impression-row .impression-del:hover{color:#ffc4b8}
+#inspector-impression-add{background:none;border:1px dashed #5686fe;color:#b7c8fe;padding:4px 10px;font-size:12px;border-radius:4px;margin-top:6px;cursor:pointer;width:100%}
+#inspector-impression-add:hover{background:#2b3449}
+#prompts-modal{width:720px;max-width:92vw}
+#prompts-modal form{display:flex;flex-direction:column;gap:10px;padding:14px;max-height:86vh;overflow-y:auto}
+#prompts-modal details{border:1px solid #3a4a6e;border-radius:5px;background:#1f2739}
+#prompts-modal summary{cursor:pointer;padding:7px 10px;color:#b7c8fe;font-size:12px;font-weight:600}
+#prompts-modal .prompt-textarea{width:100%;min-height:110px;background:#1b2133;color:#e4edfd;border:0;border-top:1px solid #3a4a6e;padding:8px 10px;font:12px/1.5 ui-monospace,Consolas,monospace;resize:vertical}
+#prompts-modal .prompts-footer{display:flex;justify-content:flex-end}
+
+#role-modal header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #3a4a6e;flex:0 0 auto}
+#role-modal header h3{margin:0;color:#b7c8fe;font:600 17px Georgia,serif}
+#role-modal .role-modal-footer{display:flex;gap:10px;justify-content:flex-end;flex:0 0 auto;padding:12px 16px;border-top:1px solid #3a4a6e;background:#222a3d}
+
+/* ── 追加：角色状态点击编辑 + 导演发言样式 ── */
+.role-state{cursor:pointer;border-bottom:1px dashed transparent}
+.role-state:hover{border-bottom-color:#5686fe;color:#b7c8fe}
+.role-state-edit{width:100%;background:#1b2133;color:#e4edfd;border:1px solid #5686fe;border-radius:4px;padding:6px 8px;font:inherit;font-size:12px;line-height:1.45;resize:vertical;min-height:56px}
+.consultation.director-extra{border-left:3px solid #5686fe;background:#283049;padding:6px 8px;border-radius:0 4px 4px 0;color:#a9b8dd}
+
+/* ── 追加：场景栏在右侧「本回合」面板顶部（普通流内元素）── */
+#scene-bar{width:100%;z-index:auto;border:1px solid #3a4a6e;border-radius:6px;background:#232c43;padding:8px 10px;margin-bottom:10px}
+#scene-bar .scene-bar-inner{color:#b7c8fe;font:600 13px Georgia,serif;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+#scene-bar .scene-edit{background:none;border:1px dashed #5686fe;color:#b7c8fe;padding:2px 7px;border-radius:4px;font-size:12px;cursor:pointer}
+#scene-bar .scene-edit:hover{background:#2b3449;color:#d3e2ff}
+#scene-bar .scene-edit-input{background:#1b2133;color:#b7c8fe;border:1px solid #5686fe;border-radius:4px;padding:3px 7px;font:inherit;font-size:12px;min-width:110px;width:100%}
+
+
+
+/* ── 追加：剧本编辑器角色网格 + 世界书列表 ── */
+#story-roles-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.story-role-card{display:flex;align-items:center;gap:8px;background:#222a3d;border:1px solid #3a4a6e;border-radius:6px;padding:8px;cursor:pointer;user-select:none}
+.story-role-card:hover{border-color:#5686fe}
+.story-role-card.dragging,.story-lore-item.dragging{opacity:.45}
+.story-role-card.drag-over,.story-lore-item.drag-over{border-color:#b7c8fe;outline:1px dashed #b7c8fe}
+.story-role-card img{width:44px;height:58px;object-fit:cover;border-radius:4px;background:#1b2133}
+.story-role-meta{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.story-role-name{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.story-role-presence{font-size:11px;color:#7f90b8}
+.story-role-presence.on{color:#8fce8f}
+.story-role-state{font-size:10px;color:#66789f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.story-role-del,.story-lore-del{background:none;border:0;color:#ff9d8a;cursor:pointer;font-size:13px;padding:2px 5px}
+.story-role-del:hover,.story-lore-del:hover{color:#ffc4b8}
+#story-lore-list{display:flex;flex-direction:column;gap:8px}
+.story-lore-item{border:1px solid #3a4a6e;border-radius:6px;background:#222a3d;user-select:none}
+.story-lore-item details>summary{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;list-style:none}
+.story-lore-item summary::-webkit-details-marker{display:none}
+.lore-handle{color:#7f90b8;cursor:grab;font-weight:700}
+.lore-visible{color:#7f90b8;font-size:11px;margin-left:auto;margin-right:4px}
+.story-lore-item .lore-edit{display:flex;flex-direction:column;gap:8px;padding:10px;border-top:1px solid #3a4a6e}
+.story-lore-item label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#a9b8dd}
+.story-lore-item input.lore-name{background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:3px;padding:5px 8px}
+.story-lore-item textarea.lore-content{background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:3px;padding:6px 8px;min-height:90px;font:12px/1.5 ui-monospace,Consolas,monospace;resize:vertical}
+.lore-roles-label{color:#7f90b8;font-size:11px}
+.lore-roles-grid{display:flex;flex-wrap:wrap;gap:6px 12px}
+.lore-role-check{display:inline-flex;flex-direction:row !important;align-items:center;gap:4px !important;font-size:12px;color:#a9b8dd}
+.lore-role-check input{accent-color:#5686fe}
+.small-btn{background:none;border:1px dashed #5686fe;color:#b7c8fe;padding:5px 12px;font-size:12px;border-radius:4px;margin-top:8px;cursor:pointer}
+.small-btn:hover{background:#2b3449}
+
+/* ── DeepSeek Harness 品牌（装模作样层）：鲸鱼 + 标题 + 主色 ── */
+.brand{display:flex;align-items:center;gap:9px;min-width:0}
+.brand-logo{width:25px;height:auto;color:#5686fe;flex-shrink:0}
+header strong{font:600 18px system-ui,sans-serif;color:#e4edfd;letter-spacing:.2px;white-space:nowrap}
+#room-title{margin-left:10px;color:#8fa1c9;font-size:13px}
+
+/* ── token 计数小字（可开关；只展示，不进入正文；统一一种与正文不同的灰色） ── */
+.token-note{display:block;font:10px/1.4 ui-monospace,Consolas,monospace;letter-spacing:.2px;margin-top:4px;opacity:.85;user-select:none;color:#8fa1c9}
+.scene .scene-text{white-space:pre-wrap;line-height:1.8}
+/* ── 群聊模式 ── */
+.speak-toggle{padding:2px 7px;background:#4176e6;color:#fff;font-size:12px;border:0;border-radius:3px;cursor:pointer}
+.speak-toggle:hover{background:#5686fe}
+#mode-badge{font-size:11px;color:#8fa1c9;border:1px solid #3a4a6e;border-radius:3px;padding:2px 6px;white-space:nowrap}
+#mode-badge.chat{color:#b7c8fe;border-color:#4176e6}
+.speech-approval textarea{min-height:120px}
+/* 设置栏：复选框靠在栏目名字右边 */
+label.settings-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+label.settings-row input[type=checkbox]{width:auto;margin:0}
+/* ── 新建人物：肖像导入区（预览 + 上传/URL） ── */
+.create-avatar{display:flex;align-items:center;gap:14px;padding:8px 0;border-bottom:1px solid #34415b;margin-bottom:2px}
+.create-avatar img{width:60px;height:60px;border-radius:4px;object-fit:cover;border:1px solid #3a4a6e;background:#161c2b}
+.create-avatar .avatar-upload-buttons{flex:1}
+.create-avatar h4{margin:0 0 4px}
+/* ── ST 角色卡导入 ── */
+.st-import-panel{padding:20px;max-width:720px;width:min(94vw,720px)}
+.st-import-panel h3{margin-top:0}
+.st-import-ok{color:#b7c8fe;font-weight:600}
+.st-import-warnings{color:#d5a66e;font-size:12px;line-height:1.6;padding-left:20px;margin:8px 0}
