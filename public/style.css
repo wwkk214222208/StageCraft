@@ -208,3 +208,13 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 .story-role-card img{border-radius:4px}
 .create-avatar img{border-radius:4px}
 /* #inspector-avatar-preview / #player-avatar-preview 已在编辑面板中设为方形，此处不再强制圆形 */
+
+/* ── 滚动条主题风格（统一覆盖页面与各滚动容器）── */
+* { scrollbar-width: thin; scrollbar-color: #3a4a6e #161c2c; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #161c2c; }
+::-webkit-scrollbar-thumb { background: #3a4a6e; border-radius: 6px; border: 2px solid #161c2c; }
+::-webkit-scrollbar-thumb:hover { background: #5686fe; }
+::-webkit-scrollbar-corner { background: #161c2c; }
+/* 各主滚动区保持一致的深色轨道 */
+#roles, #story, #workbench, #scenes, .role-modal form, #story-edit-modal form, .archive-list, .thinking-block pre { scrollbar-color: #3a4a6e #161c2c; }
