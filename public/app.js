@@ -732,3 +732,28 @@ $('#show-thinking').checked = thinkingPrefs.show
 $('#auto-expand-thinking').checked = thinkingPrefs.autoExpand
 $('#show-thinking').addEventListener('change', event => { thinkingPrefs.show = event.target.checked; localStorage.setItem(THINKING_PREFS_KEY, JSON.stringify(thinkingPrefs)); renderThinkingPanel(); if (room) render(room) })
 $('#auto-expand-thinking').addEventListener('change', event => { thinkingPrefs.autoExpand = event.target.checked; localStorage.setItem(THINKING_PREFS_KEY, JSON.stringify(thinkingPrefs)); renderThinkingPanel(); if (room) render(room) })
+
+// ── 标题栏中部横幅：八股文循环播放（15s 一换，八股三词加粗换色）──
+;(function initTagline() {
+  const el = document.getElementById('tagline')
+  if (!el) return
+  const TAGLINES = [
+    '<span class="obagu">不是</span>代码里的轮子，<span class="obagu">而是</span> Cordis 理念本身才是 DSH 的魂。',
+    '<span class="obagu">我不拦</span>你把 DSH 生态硬塞进角色扮演，但别怪它处处拧巴。',
+    '抓住那份理念，<span class="obagu">就够了</span>，何必抱着别人的轮子赶自己的路。',
+    '眼看你为融入生态而削足适履，我<span class="obagu">指节泛白</span>，却知劝也无用。'
+  ]
+  let idx = 0
+  const swap = () => {
+    el.style.opacity = '0'
+    setTimeout(() => {
+      const html = TAGLINES[idx % TAGLINES.length]
+      el.innerHTML = html
+      el.title = html.replace(/<[^>]+>/g, '')
+      el.style.opacity = '1'
+      idx++
+    }, 350)
+  }
+  swap()
+  setInterval(swap, 15000)
+})()

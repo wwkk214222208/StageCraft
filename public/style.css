@@ -218,3 +218,8 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 ::-webkit-scrollbar-corner { background: #161c2c; }
 /* 各主滚动区保持一致的深色轨道 */
 #roles, #story, #workbench, #scenes, .role-modal form, #story-edit-modal form, .archive-list, .thinking-block pre { scrollbar-color: #3a4a6e #161c2c; }
+
+/* ── 标题栏中部：八股文循环横幅（15s 一换，八股三词加粗换色）── */
+.header-tagline{flex:1;text-align:center;color:#9fb2dd;font:12px/1.25 system-ui,sans-serif;letter-spacing:.3px;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;transition:opacity .45s ease;user-select:none;padding:1px 0}
+.header-tagline .obagu{margin:0;font-weight:700;color:#ff8fa3;text-shadow:0 0 9px rgba(255,120,150,.45)}
+.header-tools{flex-shrink:0}
