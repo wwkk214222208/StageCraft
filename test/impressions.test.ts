@@ -7,7 +7,7 @@ import { Store } from '../src/store.ts'
 import { RoomRuntime } from '../src/room-runtime.ts'
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-impressions-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-impressions-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store, {
@@ -54,7 +54,7 @@ test('impressions survive archive round-trip and story restart', () => {
 })
 
 test('decide with impressions updates role card after turn', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-impressions-turn-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-impressions-turn-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store, {

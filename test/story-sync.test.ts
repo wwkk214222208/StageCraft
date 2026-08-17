@@ -8,7 +8,7 @@ import { Store } from '../src/store.ts'
 import { RoomRuntime } from '../src/room-runtime.ts'
 
 test('sync roles to story: 运行中角色卡写回初始剧本，重开即用新角色', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-sync-story-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-sync-story-'))
   const story = {
     id: 'demo', title: 'Demo', opening: '开场。', sceneTime: '夜晚', sceneLocation: '大厅',
     playerCharacter: { name: '玩家', persona: '人设。', currentState: '状态。' },
@@ -42,7 +42,7 @@ test('sync roles to story: 运行中角色卡写回初始剧本，重开即用�
 })
 
 test('sync role to story: 单角色同步保留印象；room 印象为空时保留剧本原印象', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-sync-role-impression-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-sync-role-impression-'))
   const story = {
     id: 'demo2', title: 'Demo2', opening: '开场。', sceneTime: '夜晚', sceneLocation: '大厅',
     playerCharacter: { name: '玩家', persona: '人设。', currentState: '状态。' },

@@ -6,7 +6,7 @@ import test from 'node:test'
 import { ProviderConfigStore } from '../src/provider-config.ts'
 
 test('provider config persists keys server-side and exposes only redacted public data', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-provider-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-provider-'))
   const path = join(root, 'providers.json')
   const store = new ProviderConfigStore(path)
   store.save({ id: 'local', name: '本地服务', baseUrl: 'http://model.test/v1', apiKey: 'secret', models: [], responseFormat: 'json_object' })

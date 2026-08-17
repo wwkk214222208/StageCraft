@@ -7,7 +7,7 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import { Store } from '../src/store.ts'
 
 test('approved Draft can update only the player current state through player key', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-player-state-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-player-state-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store)

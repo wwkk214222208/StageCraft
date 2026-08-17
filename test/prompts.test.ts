@@ -20,7 +20,7 @@ test('renderPrompt substitutes placeholders and keeps unknown ones', () => {
 })
 
 test('loadPrompts supports a custom file via PROMPTS_FILE', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-prompts-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-prompts-'))
   const custom = join(root, 'custom.json')
   writeFileSync(custom, JSON.stringify({ role: { prefix: '自定义前缀 {roleName}', system: '{prefix}\n记忆：{memoryTimeline}\n{roleIdeals}', user: 'u', retrySystem: 'rs', retryUser: 'ru' }, director: { request: '{directorIdeals}\n草稿', retrySystem: 'rs', retryUser: 'ru' }, consult: { user: 'cu' }, skills: { director: '{directorIdeals}\n思维链六步', consultation: 'sc' } }))
   const prompts = loadPrompts(custom)
@@ -29,7 +29,7 @@ test('loadPrompts supports a custom file via PROMPTS_FILE', () => {
 })
 
 test('custom prompts files: save/list/activate/inject', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-ideology-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-ideology-'))
   const custom = join(root, 'prompts.json')
   writeFileSync(custom, JSON.stringify({ role: { prefix: 'p', system: 'base\n{roleIdeals}', user: 'u', retrySystem: 'rs', retryUser: 'ru' }, director: { request: 'r', retrySystem: 'rs', retryUser: 'ru' }, consult: { user: 'cu' }, skills: { director: 'base\n{directorIdeals}', consultation: 'sc' } }))
   // 无任何 custom 文件：占位符替换为空，无泄漏
@@ -51,7 +51,7 @@ test('custom prompts files: save/list/activate/inject', () => {
 })
 
 test('prompts file rename/delete with active sync and protection', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-ideology-crud-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-ideology-crud-'))
   const custom = join(root, 'prompts.json')
   writeFileSync(custom, JSON.stringify({ role: { prefix: 'p', system: 'base\n{roleIdeals}', user: 'u', retrySystem: 'rs', retryUser: 'ru' }, director: { request: 'r', retrySystem: 'rs', retryUser: 'ru' }, consult: { user: 'cu' }, skills: { director: 'base\n{directorIdeals}', consultation: 'sc' } }))
   saveIdeologyFile('世界观A', { roleIdeals: 'A', directorIdeals: 'DA' }, custom)

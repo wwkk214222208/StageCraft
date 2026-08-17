@@ -31,7 +31,7 @@ test('Eldoria default story package loads with Seraphina and expanded lore', () 
 })
 
 test('seed with Eldoria creates Eldoria as the default startup room', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-eldoria-seed-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-eldoria-seed-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed(loadStoryPackage(stories, 'eldoria'))
   const room = store.getRoom(roomId)!
@@ -62,7 +62,7 @@ test('七女神纪元 story package loads with all roles and lore', () => {
 
 test('a package creates an independent initialized room whose opening is the first history scene', () => {
   const story = loadStoryPackage(fixtures, 'royal-festival')
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-story-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-story-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.createRoomFromPackage(story, 'custom-festival')
   const room = store.getRoom(roomId)!
@@ -76,7 +76,7 @@ test('a package creates an independent initialized room whose opening is the fir
 
 test('restarting a room seeds the opening as the first history scene', () => {
   const story = loadStoryPackage(stories, '七女神纪元')
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-story-restart-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-story-restart-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.createRoomFromPackage(story, 'restart-test')
   store.restartRoom(roomId, story)

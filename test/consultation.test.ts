@@ -8,7 +8,7 @@ import { Store } from '../src/store.ts'
 import { fakeWorkers, type WorkerSet } from '../src/workers.ts'
 
 function fixture(workers: WorkerSet = fakeWorkers) {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-consult-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-consult-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   return { runtime: new RoomRuntime(store, workers), roomId }

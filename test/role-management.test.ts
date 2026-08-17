@@ -8,7 +8,7 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import type { RoleProposal } from '../src/types.ts'
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-roles-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-roles-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store, {
@@ -48,7 +48,7 @@ test('presence toggle updates role and participation roster', async () => {
 })
 
 test('director roleProposals create roles on approve', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-roleprop-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-roleprop-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store, {
@@ -71,7 +71,7 @@ test('director roleProposals create roles on approve', async () => {
 })
 
 test('director roleProposal with conflicting id is rejected', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-roleprop-bad-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-roleprop-bad-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store, {

@@ -1,6 +1,6 @@
-# dsh-rp —— Character Tavern 的 Cordis/dsh 适配壳
+# dsh-rp —— StageCraft 的 Cordis/dsh 适配壳
 
-把[角色酒馆](..)（Character Tavern）包成一个**自包含 Cordis 插件**，让 dsh 用户用 dsh 自己的插件体系装上并启动酒馆——蹭 DeepSeek Harness 的热度与分发渠道，核心代码零改动、零 dsh 服务依赖。
+把[角色酒馆](..)（StageCraft）包成一个**自包含 Cordis 插件**，让 dsh 用户用 dsh 自己的插件体系装上并启动酒馆——蹭 DeepSeek Harness 的热度与分发渠道，核心代码零改动、零 dsh 服务依赖。
 
 ## 为什么是"壳"而不是重写
 

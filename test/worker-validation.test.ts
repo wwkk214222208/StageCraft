@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 function fixture(workers: WorkerSet) {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-draft-validation-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-draft-validation-'))
   const store = new Store(join(root, 'app.sqlite'))
   return { runtime: new RoomRuntime(store, workers), roomId: store.seed() }
 }

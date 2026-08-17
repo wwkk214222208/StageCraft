@@ -11,7 +11,7 @@ const stories = join(import.meta.dirname, '..', 'stories')
 const fixtures = join(import.meta.dirname, 'fixtures')
 
 test('restart atomically clears the current room and applies the selected story package', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-restart-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-restart-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store)
@@ -30,7 +30,7 @@ test('restart atomically clears the current room and applies the selected story 
 })
 
 test('restart is allowed while the room is awaiting approval and clears the draft', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-restart-busy-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-restart-busy-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store)

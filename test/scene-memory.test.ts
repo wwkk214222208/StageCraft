@@ -9,7 +9,7 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import { Store, mergeTimelineEvent } from '../src/store.ts'
 
 function fixture(seedScene = true) {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-scene-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-scene-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   return { runtime: new RoomRuntime(store), store, roomId, root }
@@ -40,7 +40,7 @@ test('approved scene reaction lands in the memory timeline under the current sce
 })
 
 test('director sceneUpdates propose time/location; approval applies them and re-buckets later reactions', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-scene-upd-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-scene-upd-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store, {
@@ -63,7 +63,7 @@ test('director sceneUpdates propose time/location; approval applies them and re-
 })
 
 test('worker prompts inject scene context and memory timeline', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-prompt-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-prompt-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const prompts: string[] = []
@@ -88,7 +88,7 @@ test('worker prompts inject scene context and memory timeline', async () => {
 })
 
 test('legacy databases migrate scene and memory timeline columns', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-migrate-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-migrate-'))
   const db = new DatabaseSync(join(root, 'legacy.sqlite'))
   db.exec(`CREATE TABLE rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, player_name TEXT NOT NULL DEFAULT '玩家', player_persona TEXT NOT NULL DEFAULT '由玩家自由定义的参与者。', player_state TEXT NOT NULL DEFAULT '刚刚进入当前场景。', phase TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, player_contribution TEXT, last_error TEXT) STRICT; CREATE TABLE roles (room_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, portrait_ref TEXT NOT NULL, current_state TEXT NOT NULL, presence TEXT NOT NULL, private_memory TEXT NOT NULL, self_model TEXT NOT NULL, PRIMARY KEY (room_id, id)) STRICT; CREATE TABLE drafts (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, turn_id TEXT NOT NULL, text TEXT NOT NULL, state_updates TEXT NOT NULL, created_at TEXT NOT NULL) STRICT;`)
   db.exec("INSERT INTO rooms (id, title, phase) VALUES ('r1', '旧房', 'awaiting-player-input')")
@@ -104,7 +104,7 @@ test('legacy databases migrate scene and memory timeline columns', () => {
 })
 
 test('each published scene snapshots the scene time/location at approval', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-scene-snapshot-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-scene-snapshot-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store, {

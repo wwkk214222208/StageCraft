@@ -7,7 +7,7 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import { Store } from '../src/store.ts'
 
 test('story package player character is persisted and can be hot-edited while idle', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-player-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-player-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store)
@@ -17,7 +17,7 @@ test('story package player character is persisted and can be hot-edited while id
 })
 
 test('player character hot-edit is rejected during an active turn', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-player-busy-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-player-busy-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store)

@@ -26,7 +26,7 @@ test('role tag line with 中文冒号 also parses; missing role means always-on'
 })
 
 test('loadStoryPackageWithTxt merges txt world book, JSON lore wins on name conflict', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-wbtxt-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-wbtxt-'))
   writeFileSync(join(root, 'demo.json'), JSON.stringify({
     id: 'demo', title: 'Demo', opening: '开场。', playerCharacter: { name: '玩家', persona: '人设。', currentState: '状态。' },
     roles: [{ id: 'aria', name: 'Aria', portraitRef: '/a.svg', currentState: '在场。', presence: 'present', memoryTimeline: {}, selfModel: '克制。' }],
@@ -40,7 +40,7 @@ test('loadStoryPackageWithTxt merges txt world book, JSON lore wins on name conf
 })
 
 test('saveStoryPackage writes JSON back preserving lore', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-wbsave-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-wbsave-'))
   writeFileSync(join(root, 'demo.json'), JSON.stringify({
     id: 'demo', title: 'Demo', opening: '开场。', playerCharacter: { name: '玩家', persona: '人设。', currentState: '状态。' },
     roles: [{ id: 'aria', name: 'Aria', portraitRef: '/a.svg', currentState: '在场。', presence: 'present', memoryTimeline: {}, selfModel: '克制。' }],

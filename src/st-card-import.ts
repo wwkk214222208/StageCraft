@@ -5,7 +5,7 @@
  *   - 独立 JSON（chara_card_v2 / chara_card_v3：name/description/personality/scenario/first_mes/system_prompt/character_book…）
  *   - PNG 内嵌卡（tEXt 块关键字 `chara`，内容为 JSON，可能是 base64 编码 / zlib 压缩）
  *
- * 映射目标：character-tavern 的角色（selfModel 拼装角色卡公开面，
+ * 映射目标：stagecraft 的角色（selfModel 拼装角色卡公开面，
  * 开场白/后续指令作为私有段附尾；角色书映射为世界书条目）。
  * 这是"坯子"：只保证能抽出标准卡，字段映射以可读为准，不做语义级重塑。
  */
@@ -135,7 +135,7 @@ export function parseStCharacterCard(value: Record<string, unknown>): StCardPars
 const PRIVATE_MARKER = '====='
 const PRIVATE_TRAILER = '# 私有段结束 ====='
 
-/** 把 ST 卡映射为 character-tavern 角色（selfModel 拼装 + 角色书 → 世界书） */
+/** 把 ST 卡映射为 stagecraft 角色（selfModel 拼装 + 角色书 → 世界书） */
 export function mapStCardToRole(card: StCardParsed, options: { roleId?: string } = {}): { role: Role; lore: LoreEntry[]; warnings: string[] } {
   const warnings: string[] = []
   const sections: Array<[string, string | undefined]> = [

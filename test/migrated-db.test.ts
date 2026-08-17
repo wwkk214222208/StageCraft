@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -12,7 +12,10 @@ import { Store } from '../src/store.ts'
 test('migrated live DB works with new code end-to-end', async () => {
   const root = mkdtempSync(join(tmpdir(), 'ct-migrated-'))
   const snapshot = join(root, 'snapshot.sqlite')
-  const src = new DatabaseSync('data/character-tavern.sqlite', { readOnly: true })
+  // live 库可能仍是旧名（更名前的运行实例尚未重启迁移）
+  const live = ['data/stagecraft.sqlite', 'data/character-tavern.sqlite'].find(path => existsSync(path))
+  assert.ok(live, 'data/ 下应有 live 数据库（stagecraft.sqlite 或 character-tavern.sqlite）')
+  const src = new DatabaseSync(live, { readOnly: true })
   src.exec(`VACUUM INTO '${snapshot.replaceAll("'", "''")}'`)
   src.close()
   const store = new Store(snapshot)

@@ -20,7 +20,7 @@ test('incomplete Director JSON is rejected with an actionable error', async () =
 })
 
 test('Director failure can be retried without rerunning role decisions', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-director-retry-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-director-retry-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   let attempts = 0

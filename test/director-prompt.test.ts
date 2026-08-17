@@ -10,7 +10,7 @@ import type { Decision, Role } from '../src/types.ts'
 import { fakeWorkers, type WorkerSet } from '../src/workers.ts'
 
 function fixture(workers: WorkerSet = fakeWorkers) {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-dir-prompt-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-dir-prompt-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   return { runtime: new RoomRuntime(store, workers), roomId }
@@ -89,7 +89,7 @@ test('角色决策的 identity 字段经 normalize 进入 Decision', async () =>
 
 /** fix 7 新机制：publicIdentity 持久化并在快照中还原（导演重试/修订复用同一批决策时不会丢） */
 test('publicIdentity 持久化并在房间快照中还原', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-identity-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-identity-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const turnId = 'turn-identity'

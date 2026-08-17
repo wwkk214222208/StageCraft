@@ -8,7 +8,7 @@ import { Store } from '../src/store.ts'
 import type { WorkerSet } from '../src/workers.ts'
 
 test('NPC reaction previews are transient and removed after approval', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-preview-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-preview-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   let resolveDraft: ((value: any) => void) | undefined
@@ -36,7 +36,7 @@ test('NPC reaction previews are transient and removed after approval', async () 
 })
 
 test('cancelling a turn removes its transient reaction previews', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-preview-cancel-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-preview-cancel-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const workers: WorkerSet = {

@@ -1,5 +1,5 @@
 /**
- * dsh-rp —— Character Tavern 的 Cordis/dsh 适配壳（L2 蹭热度原型）。
+ * dsh-rp —— StageCraft 的 Cordis/dsh 适配壳（L2 蹭热度原型）。
  *
  * 把现有自包含应用（Store + RoomRuntime + ModelGateway + node:http 服务器，
  * 见 ../../src/app-boot.ts 的 startTavern()）包成一个 Cordis 插件：

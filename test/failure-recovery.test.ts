@@ -9,7 +9,7 @@ import { fakeWorkers, type WorkerSet } from '../src/workers.ts'
 import type { Decision } from '../src/types.ts'
 
 function fixture(workers: WorkerSet = fakeWorkers) {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-failure-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-failure-'))
   const path = join(root, 'app.sqlite')
   const store = new Store(path)
   const roomId = store.seed()

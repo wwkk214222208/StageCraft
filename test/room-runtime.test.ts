@@ -7,7 +7,7 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import { Store } from '../src/store.ts'
 
 function fixture(): { runtime: RoomRuntime; roomId: string; databasePath: string } {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-'))
   const databasePath = join(root, 'app.sqlite')
   const store = new Store(databasePath)
   return { runtime: new RoomRuntime(store), roomId: store.seed(), databasePath }

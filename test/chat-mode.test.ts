@@ -8,14 +8,14 @@ import { Store } from '../src/store.ts'
 import type { StoryPackage } from '../src/story-packages.ts'
 
 function fixture(): { runtime: RoomRuntime; roomId: string; databasePath: string } {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-'))
   const databasePath = join(root, 'app.sqlite')
   const store = new Store(databasePath)
   return { runtime: new RoomRuntime(store), roomId: store.seed(), databasePath }
 }
 
 test('旧库迁移：rooms 获得 mode / auto_publish / speech 列', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-migrate-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-migrate-'))
   const databasePath = join(root, 'app.sqlite')
   const store = new Store(databasePath)
   const roomId = store.seed()

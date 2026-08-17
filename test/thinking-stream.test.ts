@@ -96,7 +96,7 @@ test('real workers capture reasoning into decision and draft', async () => {
 })
 
 test('runtime pushes thinking events and persists thinking with decisions and drafts', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-thinking-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-thinking-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const events: ThinkingEvent[] = []

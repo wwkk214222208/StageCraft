@@ -10,7 +10,7 @@ import { createRealWorkers, ModelGateway } from '../src/model-gateway.ts'
 import type { LoreEntry } from '../src/types.ts'
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-lore-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-lore-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store, {
@@ -33,7 +33,7 @@ test('parseWorldBookTxt parses === entries with optional role tags', () => {
 })
 
 test('loadStoryPackageWithTxt merges txt world book entries not in JSON', () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-lore-txt-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-lore-txt-'))
   writeFileSync(join(root, 'demo.json'), JSON.stringify({
     id: 'demo', title: 'Demo', opening: '开场。', playerCharacter: { name: '玩家', persona: '人设。', currentState: '状态。' },
     roles: [{ id: 'aria', name: 'Aria', portraitRef: '/a.svg', currentState: '在场。', presence: 'present', memoryTimeline: { '未标注时间': ['记忆。'] }, selfModel: '克制。' }],
@@ -70,7 +70,7 @@ test('world book injected in prompt: 常开 + 角色条目 + 人物卡 + 记忆'
     }
   }
   const workers = createRealWorkers(new SpyGateway() as unknown as ModelGateway)
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-lore-prompt-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-lore-prompt-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   store.saveLore(roomId, lore)
@@ -101,7 +101,7 @@ test('role prompt prefix is cached across turns', async () => {
     }
   }
   const workers = createRealWorkers(new SpyGateway() as unknown as ModelGateway)
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-lore-cache-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-lore-cache-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   store.saveLore(roomId, [{ name: '常开', content: '法则。' }])

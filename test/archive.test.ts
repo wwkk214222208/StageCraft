@@ -7,7 +7,7 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import { Store } from '../src/store.ts'
 
 test('room archive round-trips canonical scenes and roles', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'character-tavern-archive-'))
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-archive-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.seed()
   const runtime = new RoomRuntime(store)
