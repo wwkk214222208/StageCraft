@@ -5,7 +5,7 @@ let reconsideringRoleIds = new Set()
 let activeAction = null
 let skipArmed = false
 let sidebarTab = 'roles' // 左侧栏标签：roles | lore
-const TOKEN_PREFS_KEY = 'character-tavern-token-count'
+const TOKEN_PREFS_KEY = 'stagecraft-token-count'
 let tokenCountEnabled = false
 try { tokenCountEnabled = localStorage.getItem(TOKEN_PREFS_KEY) === '1' } catch {}
 const $ = selector => document.querySelector(selector)
@@ -20,7 +20,7 @@ function tokenNoteHtml(kind, usage) {
 }
 
 // ── 思维链显示（ST 风格：流式 Thinking + 折叠/展开 + 显隐开关） ──
-const THINKING_PREFS_KEY = 'character-tavern-thinking-prefs'
+const THINKING_PREFS_KEY = 'stagecraft-thinking-prefs'
 let thinkingPrefs = { show: true, autoExpand: false }
 try { thinkingPrefs = { ...thinkingPrefs, ...JSON.parse(localStorage.getItem(THINKING_PREFS_KEY) || '{}') } } catch {}
 const thinkingStreams = new Map() // key: 'role:xxx' | 'director' -> { text, done }
@@ -76,6 +76,13 @@ function setContribution(text) { const input = $('#contribution'); input.value =
 function render(next) {
   room = next
   focalRoleIds = new Set([...focalRoleIds].filter(id => room.roles.some(role => role.id === id && role.presence === 'present')))
+  // 防御：角色设置窗口（live 模式）正打开，但所编辑的角色已不在房间内（如被删除、或程序外直接删库），
+  // 自动关闭该窗口，避免“角色没了但弹窗关不掉”的卡死。剧本编辑模式（storyEditRoleIndex≠null）不在此列。
+  if (storyEditRoleIndex === null) {
+    const modal = $('#role-modal')
+    const openId = $('#inspector-role-id')?.value
+    if (modal?.open && openId && !room.roles.some(role => role.id === openId)) closeInspectorModals()
+  }
   if (room.phase === 'awaiting-player-input') clearThinkingStreams()
   const states = { present: '在场', absent: '离场', unavailable: '离场' }
   $('#room-title').textContent = room.title
@@ -114,7 +121,18 @@ function render(next) {
     return `<article class="lore-entry"${readOnly ? '' : ` data-lore="${index}"`}><div class="lore-heading"><b>${escape(entry.name)}</b><small>${escape(tags)}</small></div><p>${escape(entry.content)}</p></article>`
   }).join('')
   $('#roles').innerHTML = `<div class="sidebar-tabs"><button data-tab="roles" class="${sidebarTab === 'roles' ? 'active' : ''}">角色</button><button data-tab="lore" class="${sidebarTab === 'lore' ? 'active' : ''}">世界书</button></div><div id="roles-list" ${sidebarTab === 'roles' ? '' : 'hidden'}>${roleCards || '<p class="hint">暂无角色</p>'}<button id="role-add" class="role-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新建人物</button></div><div id="lore-list" ${sidebarTab === 'lore' ? '' : 'hidden'}><button id="lore-add" class="lore-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新增条目</button>${loreCards || '<p class="hint">暂无世界书条目</p>'}</div>`
-  $('#scenes').innerHTML = room.scenes.length ? room.scenes.map(scene => { const snapshot = [scene.sceneTime ? `🕐 ${escape(scene.sceneTime)}` : '', scene.sceneLocation ? `📍 ${escape(scene.sceneLocation)}` : ''].filter(Boolean).join('　'); const meta = snapshot ? `<time class="scene-snapshot">${snapshot}</time>` : `<time>${new Date(scene.createdAt).toLocaleString()}</time>`; return `<article class="scene">${meta}<div class="scene-text">${escape(scene.text)}</div>${tokenNoteHtml('scene', scene.usage)}</article>` }).join('') : ''
+  $('#scenes').innerHTML = room.scenes.length ? room.scenes.map(scene => {
+    const snapshot = [scene.sceneTime ? `🕐 ${escape(scene.sceneTime)}` : '', scene.sceneLocation ? `📍 ${escape(scene.sceneLocation)}` : ''].filter(Boolean).join('　')
+    const meta = snapshot ? `<time class="scene-snapshot">${snapshot}</time>` : `<time>${new Date(scene.createdAt).toLocaleString()}</time>`
+    if (scene.speaker) {
+      const isPlayer = scene.speaker === 'player'
+      const role = isPlayer ? null : room.roles.find(item => item.id === scene.speaker)
+      const name = isPlayer ? room.playerCharacter.name : (role?.name ?? scene.speaker)
+      const avatar = isPlayer ? (room.playerCharacter.portraitRef || '/assets/default.svg') : (role?.portraitRef || '/assets/default.svg')
+      return `<div class="scene scene-msg">${meta}<div class="chat-msg ${isPlayer ? 'me' : ''}"><img class="avatar" src="${escape(avatar)}" onerror="this.onerror=null;this.src='/assets/default.svg'"><div class="bubble"><div class="bubble-name">${escape(name)}</div><div class="bubble-text">${escape(scene.text)}</div></div></div>${tokenNoteHtml('scene', scene.usage)}</div>`
+    }
+    return `<article class="scene narration">${meta}<div class="scene-text">${escape(scene.text)}</div>${tokenNoteHtml('scene', scene.usage)}</article>`
+  }).join('') : ''
   const decisionsDone = room.decisions.length > 0 && room.decisions.every(decision => decision.status !== 'pending')
   const display = $('#turn-display')
   display.hidden = room.phase === 'awaiting-player-input'
@@ -124,7 +142,13 @@ function render(next) {
     const allStates = [{ id: 'player', label: `${room.playerCharacter.name} 当前状态`, value: room.draft?.stateUpdates.player ?? room.playerCharacter.currentState }, ...room.roles.map(role => ({ id: role.id, label: `${role.name} 当前状态`, value: room.draft?.stateUpdates[role.id] ?? role.currentState }))]
     const draft = room.draft ? `<article class="director-draft-record"><header><h2>导演草稿记录 <small>待定</small></h2><time>${new Date(room.draft.createdAt).toLocaleString()}</time></header>${thinkingBlockHtml('导演思维链', room.draft.thinking)}${tokenNoteHtml('director', room.draft.usage)}<textarea id="center-draft-text">${escape(room.draft.text)}</textarea><details class="scene-edits"><summary>场景更新</summary><label>时间<input id="scene-time-input" value="${escape(room.draft.sceneUpdates?.time ?? room.sceneTime ?? '')}" placeholder="如：深夜"></label><label>地点<input id="scene-location-input" value="${escape(room.draft.sceneUpdates?.location ?? room.sceneLocation ?? '')}" placeholder="如：祭典主厅门口"></label></details><details class="state-edits"><summary>状态更新</summary>${allStates.map(state => `<label>${escape(state.label)}<textarea data-state-update="${escape(state.id)}">${escape(state.value)}</textarea></label>`).join('')}</details>${(room.draft.roleProposals?.length ?? 0) ? `<div class="role-proposals"><h4 class="section-title">导演提议新人物：批准后将创建</h4><ul>${room.draft.roleProposals.map(proposal => `<li><div class="proposal-heading"><b>${escape(proposal.name)}</b><small>${states[proposal.presence] ?? escape(proposal.presence)}</small></div><p>${escape(proposal.currentState)}</p></li>`).join('')}</ul></div>` : ''}<div class="draft-actions"><button id="center-reconsider">重考</button><button id="center-approve">批准发布</button></div></article>` : ''
     const speechApproval = isChat && room.phase === 'awaiting-approval' && room.speech
-      ? `<article class="director-draft-record speech-approval"><header><h2>台词待审批 <small>群聊</small></h2></header>${thinkingBlockHtml(`${room.roles.find(r => r.id === room.speech.roleId)?.name ?? room.speech.roleId} 思维链`, room.speech.thinking)}${tokenNoteHtml('speech', room.speech.usage)}<textarea id="speech-text">${escape(room.speech.text)}</textarea><div class="draft-actions"><button id="speech-cancel">放弃</button><button id="speech-approve">批准发布</button></div></article>` : ''
+      ? (() => {
+          const rid = room.speech.roleId
+          const role = room.roles.find(item => item.id === rid)
+          const name = role?.name ?? rid
+          const avatar = role?.portraitRef || '/assets/default.svg'
+          return `<div class="scene scene-msg speech-approval"><div class="chat-msg"><img class="avatar" src="${escape(avatar)}" onerror="this.onerror=null;this.src='/assets/default.svg'"><div class="bubble"><div class="bubble-name">${escape(name)} <small>台词待审批</small></div></div></div>${thinkingBlockHtml(`${name} 思维链`, room.speech.thinking)}${tokenNoteHtml('speech', room.speech.usage)}<textarea id="speech-text" class="speech-textarea">${escape(room.speech.text)}</textarea><div class="draft-actions"><button id="speech-cancel">放弃</button><button id="speech-approve">批准发布</button></div></div>`
+        })() : ''
     const heading = isChat ? '<h2>本回合</h2>' : reactions.length ? '<h2>本回合</h2>' : '<h2>本回合 <small>等待角色回应</small></h2>'
     const proceedBtn = room.phase === 'collecting-decisions' && decisionsDone ? '<div class="draft-actions"><button id="center-proceed-draft">拟定草稿</button></div>' : ''
     display.innerHTML = `${heading}<div class="reaction-list">${bubbles}</div>${proceedBtn}${speechApproval}${draft}`
@@ -162,7 +186,30 @@ async function loadProviders() { const data = await (await fetch('/api/providers
 function updateModels(provider, selector, selected) { $(selector).innerHTML = (provider?.models ?? []).map(model => `<option>${escape(model)}</option>`).join(''); $(selector).value = selected ?? provider?.selectedModel ?? provider?.models?.[0] ?? '' }
 
 $('#connection-settings').onclick = () => $('#connection-modal').showModal()
-$('#player-settings').onclick = () => { const player = room.playerCharacter; $('#player-name').value = player.name; $('#player-persona').value = player.persona; $('#player-state').value = player.currentState; $('#player-modal').showModal() }
+$('#player-settings').onclick = () => { const player = room.playerCharacter; $('#player-name').value = player.name; $('#player-persona').value = player.persona; $('#player-state').value = player.currentState; $('#player-avatar-preview').src = player.portraitRef || '/assets/default.svg'; $('#player-modal').showModal() }
+// ── 主角肖像导入（与角色头像同一套保存逻辑）──
+$('#player-avatar-upload').onclick = () => $('#player-avatar-file').click()
+$('#player-avatar-file').onchange = event => {
+  const file = event.target.files?.[0]
+  if (!file) return
+  if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) { alert('仅支持 png / jpeg / gif / webp 图片。'); return }
+  const reader = new FileReader()
+  reader.onload = async () => {
+    try {
+      const ok = await api('/api/player/avatar', { dataUrl: String(reader.result) })
+      if (ok) { $('#player-avatar-preview').src = ok.portraitRef ?? $('#player-avatar-preview').src; refreshRoom() }
+    } finally { event.target.value = '' }
+  }
+  reader.readAsDataURL(file)
+}
+$('#player-avatar-url').onclick = async () => {
+  const url = prompt('输入图片 URL（将下载为主角肖像）：')
+  if (!url || !url.trim()) return
+  try {
+    const ok = await api('/api/player/avatar', { url: url.trim() })
+    if (ok) { $('#player-avatar-preview').src = ok.portraitRef ?? $('#player-avatar-preview').src; refreshRoom() }
+  } catch { /* api() 已 alert */ }
+}
 $('#story-settings').onclick = () => { refreshArchiveList(); const storySelect = $('#story-select'); if (room?.storyId && [...storySelect.options].some(option => option.value === room.storyId)) storySelect.value = room.storyId; const modeLabel = room?.mode === 'chat' ? '群聊' : '导演'; $('#archive-name').value = room?.title?.trim() ? `${room.title.trim()}-${modeLabel}` : (room?.storyId ?? ''); $('#room-mode-select').value = room?.mode ?? 'director'; $('#room-auto-publish').checked = !!room?.autoPublish; $('#story-modal').showModal() }
 $('#app-settings').onclick = () => { $('#settings-auto-publish').checked = !!room?.autoPublish; $('#settings-token-count').checked = tokenCountEnabled; $('#settings-debug').checked = !$('#debug-stream').hidden; $('#settings-modal').showModal() }
 $('#settings-auto-publish').onchange = () => api('/api/room-config', { autoPublish: $('#settings-auto-publish').checked })
@@ -400,7 +447,7 @@ function openStoryRoleEditor(index) {
   $('#inspector-story-state').value = role.currentState ?? ''
   $('#inspector-avatar-preview').src = role.portraitRef ?? '/assets/default.svg'
   $('#inspector-avatar-preview').onerror = function () { this.onerror = null; this.src = '/assets/default.svg' }
-  positionInspectorModals(true)
+  positionInspectorModals()
 }
 function renderStoryLore() {
   const list = $('#story-lore-list')
@@ -512,30 +559,24 @@ function collectGoalsInput(selector) {
 function collectGoalsFromEdit() { return collectGoalsInput('#inspector-goals') }
 function parseTimelineFromEdit(text) {
   const timeline = {}
+  const ensure = label => { if (!timeline[label]) timeline[label] = []; return timeline[label] }
   let current = null
   for (const line of String(text).split('\n')) {
     const match = line.match(/^【(.+?)】$/)
-    if (match) { current = match[1]; timeline[current] = timeline[current] ?? []; continue }
-    if (current !== null && line.trim()) timeline[current].push(line.replace(/^-\s*/, '').trim())
+    if (match) { current = match[1].trim(); ensure(current); continue }
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    // 不符合「【时间标签】」格式的行（如没有分桶头就直接写记忆）一律归入「未标注时间」桶，避免被静默丢弃
+    ensure(current ?? '未标注时间').push(trimmed.replace(/^-\s*/, ''))
   }
   return timeline
 }
-function closeInspectorModals() { const avatar = $('#role-avatar-modal'); const info = $('#role-modal'); if (avatar?.open) avatar.close(); if (info?.open) info.close() }
-function positionInspectorModals(asModal = false) {
-  const avatarW = 240, gap = 10
-  const viewportW = window.innerWidth
-  const infoW = Math.max(280, Math.min(920, viewportW - avatarW - gap - 24))
-  const total = avatarW + gap + infoW
-  const left = Math.max(8, (viewportW - total) / 2)
-  const top = Math.max(8, (window.innerHeight - 620) / 2)
-  const avatar = $('#role-avatar-modal')
+function closeInspectorModals() { const info = $('#role-modal'); if (info?.open) info.close() }
+function positionInspectorModals() {
   const info = $('#role-modal')
-  avatar.style.left = `${left}px`; avatar.style.top = `${top}px`
-  info.style.left = `${left + avatarW + gap}px`; info.style.top = `${top}px`
-  // 重复打开（点击第二个角色等）时先关闭再打开，避免对已打开的 dialog 调用 show/showModal 抛 InvalidStateError
-  if (avatar.open) avatar.close()
+  // 重复打开（点击第二个角色等）时先关闭再打开，避免对已打开的 dialog 调用 showModal 抛 InvalidStateError
   if (info.open) info.close()
-  if (asModal) { avatar.showModal(); info.showModal() } else { avatar.show(); info.show() }
+  info.showModal()
 }
 function renderImpressionsFrom(impressions) {
   const list = $('#inspector-impressions-list')
@@ -588,7 +629,7 @@ $('#inspector-save').onclick = event => {
   api('/api/roles/intervene', { roleId: $('#inspector-role-id').value, selfModel: $('#inspector-self-model').value, memoryTimeline: JSON.stringify(parsed), providerId: $('#inspector-provider').value, modelOverride: $('#inspector-model').value, impressions: JSON.stringify(impressions), goals: JSON.stringify(collectGoalsFromEdit()) }).then(ok => { if (ok) closeInspectorModals() })
 }
 $('#inspector-close').onclick = () => closeInspectorModals()
-$('#inspector-avatar-close').onclick = () => closeInspectorModals()
+// 左侧肖像面板已并入 #role-modal，单独关闭按钮已移除
 $('#inspector-sync-story').onclick = event => {
   event.preventDefault()
   const roleId = $('#inspector-role-id').value
@@ -630,7 +671,8 @@ $('#inspector-delete').onclick = event => {
   event.preventDefault()
   const roleId = $('#inspector-role-id').value
   if (!roleId || !confirm('确定删除该角色？此操作不可恢复。')) return
-  api('/api/roles/delete', { roleId }).then(ok => { if (ok) closeInspectorModals() })
+  // 无论删除成功与否（含角色已被程序外删除的情况），都关闭窗口，避免卡死
+  api('/api/roles/delete', { roleId }).finally(() => closeInspectorModals())
 }
 let pendingCreateAvatar = null // 新建角色时暂存的肖像（data URL 或 URL）
 function openCreateRoleModal() {

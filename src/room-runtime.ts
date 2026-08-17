@@ -67,8 +67,10 @@ export class RoomRuntime {
     const room = this.get(roomId)
     if (room.phase !== 'awaiting-player-input') throw new Error(`Room is busy: ${room.phase}`)
     if (room.mode === 'chat') {
-      // 群聊模式：提交的贡献只作为上下文暂存，等待玩家点选角色「发言」
+      // 群聊模式：提交的贡献存入上下文，同时作为一条玩家气泡插入对话流（类似酒馆，玩家发言直接上屏）
+      if (!input.text.trim()) { this.emit(roomId); return }
       this.store.setContribution(roomId, input.text)
+      this.store.addPlayerScene(roomId, input.text)
       this.emit(roomId)
       return
     }
@@ -133,9 +135,11 @@ export class RoomRuntime {
     if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
     if (room.phase !== 'awaiting-approval' || !room.speech) throw new Error('当前没有待审批的台词。')
     const speech = room.speech
+    const playerText = room.playerContribution ?? ''
     this.store.approveSpeech(roomId, text)
     this.emit(roomId)
-    await this.digestAfterSpeech(roomId, text.trim())
+    // 记忆消化时把玩家发言一并并入，否则角色只记得自己的台词、记不住玩家说了什么
+    await this.digestAfterSpeech(roomId, [playerText, text.trim()].filter(Boolean).join('\n'))
   }
 
   /** 群聊模式：台词发布后，所有在场角色各跑一次消化调用，把记忆并入时间线 */
@@ -328,6 +332,11 @@ export class RoomRuntime {
 
   updatePlayerCharacter(roomId: string, player: { name: string; persona: string; currentState: string }): void {
     this.store.updatePlayerCharacter(roomId, player)
+    this.emit(roomId)
+  }
+
+  setPlayerAvatar(roomId: string, portraitRef: string): void {
+    this.store.setPlayerAvatar(roomId, portraitRef)
     this.emit(roomId)
   }
 

@@ -69,28 +69,20 @@
 .role[draggable="true"]:active{cursor:grabbing}
 .role.drag-over{border-color:#b7c8fe;box-shadow:0 0 0 1px #b7c8fe}
 
-/* ── 追加：角色头像导入（ST 风格）── */
-.avatar-upload{display:flex;align-items:center;gap:12px}
-#inspector-avatar-preview{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #3a4a6e;background:#1a2134}
-.avatar-upload-buttons{display:flex;flex-direction:column;gap:6px}
-.avatar-upload-buttons button{font-size:12px;padding:4px 10px}
-
-/* ── 追加：ST 式头像显示（原图 + object-fit 裁剪）── */
-.role img{object-fit:cover}
-#inspector-avatar-preview{object-fit:cover}
-
-/* ── 追加：角色编辑双窗（左头像窗 + 右信息窗）── */
-#role-avatar-modal,#role-modal{position:fixed;margin:0;padding:0;border:1px solid #3a4a6e;border-radius:8px;background:#222a3d;color:#e4edfd;box-shadow:0 6px 28px rgba(0,0,0,.55);z-index:1000}
-#role-modal{max-height:88vh;overflow:hidden;display:flex;flex-direction:column}
-#role-avatar-modal{width:240px}
-#role-avatar-modal .avatar-panel{display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px}
-#role-avatar-modal .avatar-panel h4{margin:0;color:#b7c8fe;font:600 15px Georgia,serif}
-#inspector-avatar-preview{width:208px;height:208px;object-fit:cover;border-radius:10px;border:1px solid #3a4a6e;background:#1a2134;display:block}
+/* ── 角色/玩家编辑：左肖像面板 + 右信息面板（单对话框）── */
+#role-modal,#player-modal{position:fixed;inset:0;margin:auto;padding:0;border:1px solid #3a4a6e;border-radius:8px;background:#222a3d;color:#e4edfd;box-shadow:0 6px 28px rgba(0,0,0,.55);z-index:1000}
+#role-modal,#player-modal{max-height:88vh;overflow:hidden;display:flex;flex-direction:column}
+#role-modal{width:1080px;max-width:95vw}
+#player-modal{width:720px;max-width:94vw}
+#role-modal form,#player-modal form{display:flex;flex-direction:column;gap:0;padding:0;flex:1 1 auto;overflow:hidden;min-height:0}
+#role-modal .inspector-body,#player-modal .inspector-body{display:flex;gap:0;flex:1 1 auto;overflow:hidden;min-height:0}
+.inspector-portrait-panel{flex:0 0 240px;display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 16px;border-right:1px solid #3a4a6e;background:#1f2740;overflow-y:auto}
+.inspector-portrait-panel h4{margin:0;color:#b7c8fe;font:600 15px Georgia,serif}
+.inspector-portrait-panel .hint{color:#7f90b8;font-size:11px;text-align:center;margin:0}
+#inspector-avatar-preview,#player-avatar-preview{width:180px;height:180px;object-fit:cover;border-radius:8px;border:1px solid #3a4a6e;background:#1a2134;display:block}
 .avatar-upload-buttons{display:flex;flex-direction:column;gap:6px;width:100%}
-.avatar-upload-buttons button{font-size:12px;padding:4px 10px;width:100%}
-#role-modal{width:920px;max-width:94vw}
-#role-modal form{display:flex;flex-direction:column;gap:0;padding:0;flex:1 1 auto;overflow:hidden;min-height:0}
-#role-modal .inspector-fields{display:flex;flex-direction:column;gap:10px;flex:1 1 auto;overflow-y:auto;min-height:0;padding:14px 16px}
+.avatar-upload-buttons button{font-size:12px;padding:5px 10px;width:100%}
+#role-modal .inspector-fields,#player-modal .inspector-fields{display:flex;flex-direction:column;gap:10px;flex:1 1 auto;overflow-y:auto;min-height:0;padding:14px 16px}
 #role-modal .inspector-two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
 #role-modal .inspector-fields textarea{min-height:120px}
 #role-modal .inspector-two-col textarea{min-height:190px;resize:vertical}
@@ -190,3 +182,27 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 .st-import-panel h3{margin-top:0}
 .st-import-ok{color:#b7c8fe;font-weight:600}
 .st-import-warnings{color:#d5a66e;font-size:12px;line-height:1.6;padding-left:20px;margin:8px 0}
+
+/* ── 聊天气泡（角色/玩家头像+名字气泡，ST 风格）── */
+.chat-msg{display:flex;gap:10px;align-items:flex-start;margin:10px 0}
+.chat-msg .avatar{width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid #3a4a6e;background:#161c2b;flex-shrink:0}
+.chat-msg.me{flex-direction:row-reverse}
+.chat-msg.me .bubble{background:#2e4a86;border-color:#5686fe}
+.bubble{background:#252d41;border:1px solid #3a4a6e;border-radius:14px;padding:8px 12px;max-width:78%;min-width:0}
+.bubble-name{font:600 13px Georgia,serif;color:#b7c8fe;margin-bottom:3px}
+.chat-msg.me .bubble-name{text-align:right;color:#d3e2ff}
+.bubble-text{color:#e4edfd;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+.scene-msg{margin:6px 0}
+/* 旁白（开场 / 导演正文）：保留原本的整段叙述样式 */
+.scene.narration .scene-text{white-space:pre-wrap;line-height:1.8}
+/* 待审批台词：气泡头 + 可编辑正文 + 操作 */
+.speech-approval{border:1px solid #4868b2;border-radius:14px;padding:8px 10px;background:#2b3247;margin:10px 0}
+.speech-textarea{width:100%;min-height:110px;background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:6px;padding:8px 10px;font:13px/1.6 inherit;resize:vertical;margin-top:8px}
+.speech-approval .draft-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+
+/* ── 头像：仅左栏与对话气泡用圆形；完整肖像保持方形原图 ── */
+.role img{border-radius:50%;object-fit:cover}
+.chat-msg .avatar{border-radius:50%}
+.story-role-card img{border-radius:4px}
+.create-avatar img{border-radius:4px}
+/* #inspector-avatar-preview / #player-avatar-preview 已在编辑面板中设为方形，此处不再强制圆形 */

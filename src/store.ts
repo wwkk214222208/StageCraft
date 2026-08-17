@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import type { ConsultationMessage, Decision, Draft, PendingMindUpdate, Role, RoomPhase, RoomSnapshot, Scene } from './types.ts'
 import type { StoryPackage } from './story-packages.ts'
@@ -194,20 +195,22 @@ export class Store {
     if (!columns.has('lore')) this.db.exec("ALTER TABLE rooms ADD COLUMN lore TEXT NOT NULL DEFAULT '[]'")
   }
 
-  /** 旧库迁移：rooms.scene_time / scene_location（旧列名 current_time/current_location 与 SQLite 内置 CURRENT_TIME 冲突） */
+  /** 旧库迁移：rooms.scene_time / scene_location（旧列名 current_time/current_location 与 SQLite 内置 CURRENT_TIME 冲突）；scenes.speaker 为群聊气泡发言者标记 */
   private ensureSceneColumns(): void {
-    const columns = new Set(this.db.prepare('PRAGMA table_info(rooms)').all().map((row: any) => row.name as string))
+    const roomColumns = new Set(this.db.prepare('PRAGMA table_info(rooms)').all().map((row: any) => row.name as string))
     for (const name of ['scene_time', 'scene_location']) {
-      if (!columns.has(name)) this.db.exec(`ALTER TABLE rooms ADD COLUMN ${name} TEXT`)
+      if (!roomColumns.has(name)) this.db.exec(`ALTER TABLE rooms ADD COLUMN ${name} TEXT`)
     }
-    if (columns.has('current_time')) {
+    if (roomColumns.has('current_time')) {
       this.db.prepare('UPDATE rooms SET scene_time = "current_time" WHERE scene_time IS NULL').run()
       this.db.exec('ALTER TABLE rooms DROP COLUMN current_time')
     }
-    if (columns.has('current_location')) {
+    if (roomColumns.has('current_location')) {
       this.db.prepare('UPDATE rooms SET scene_location = "current_location" WHERE scene_location IS NULL').run()
       this.db.exec('ALTER TABLE rooms DROP COLUMN current_location')
     }
+    const sceneColumns = new Set(this.db.prepare('PRAGMA table_info(scenes)').all().map((row: any) => row.name as string))
+    if (!sceneColumns.has('speaker')) this.db.exec('ALTER TABLE scenes ADD COLUMN speaker TEXT')
   }
 
   /** 旧库迁移：roles.memory_timeline、drafts.scene_updates；旧 private_memory 列并入「未标注时间」桶后删列 */
@@ -247,7 +250,7 @@ export class Store {
 
   private ensurePlayerColumns(): void {
     const columns = new Set(this.db.prepare('PRAGMA table_info(rooms)').all().map((row: any) => row.name as string))
-    for (const [name, sql] of [['player_name', "TEXT NOT NULL DEFAULT '玩家'"], ['player_persona', "TEXT NOT NULL DEFAULT '由玩家自由定义的参与者。'"], ['player_state', "TEXT NOT NULL DEFAULT '刚刚进入当前场景。'"]] as const) {
+    for (const [name, sql] of [['player_name', "TEXT NOT NULL DEFAULT '玩家'"], ['player_persona', "TEXT NOT NULL DEFAULT '由玩家自由定义的参与者。'"], ['player_state', "TEXT NOT NULL DEFAULT '刚刚进入当前场景。'"], ['player_portrait_ref', "TEXT NOT NULL DEFAULT '/assets/default.svg'"]] as const) {
       if (!columns.has(name)) this.db.exec(`ALTER TABLE rooms ADD COLUMN ${name} ${sql}`)
     }
   }
@@ -328,10 +331,10 @@ export class Store {
     this.withTransaction(() => {
       this.db.prepare('DELETE FROM decisions WHERE turn_id IN (SELECT id FROM turns WHERE room_id = ?)').run(roomId)
       for (const table of ['turns', 'drafts', 'scenes', 'consultations', 'pending_mind_updates', 'reaction_previews', 'roles']) this.db.prepare(`DELETE FROM ${table} WHERE room_id = ?`).run(roomId)
-      this.db.prepare('UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, scene_time = ?, scene_location = ?, phase = ?, revision = ?, player_contribution = ?, last_error = ?, lore = ?, story_id = ? WHERE id = ?').run(source.title, source.playerCharacter?.name ?? '玩家', source.playerCharacter?.persona ?? '由玩家自由定义的参与者。', source.playerCharacter?.currentState ?? '刚刚进入当前场景。', source.sceneTime ?? null, source.sceneLocation ?? null, source.phase, source.revision, source.playerContribution ?? null, source.lastError ?? null, JSON.stringify(source.lore ?? []), source.storyId ?? null, roomId)
+      this.db.prepare('UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, player_portrait_ref = ?, scene_time = ?, scene_location = ?, phase = ?, revision = ?, player_contribution = ?, last_error = ?, lore = ?, story_id = ? WHERE id = ?').run(source.title, source.playerCharacter?.name ?? '玩家', source.playerCharacter?.persona ?? '由玩家自由定义的参与者。', source.playerCharacter?.currentState ?? '刚刚进入当前场景。', source.playerCharacter?.portraitRef ?? '/assets/default.svg', source.sceneTime ?? null, source.sceneLocation ?? null, source.phase, source.revision, source.playerContribution ?? null, source.lastError ?? null, JSON.stringify(source.lore ?? []), source.storyId ?? null, roomId)
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       for (const role of source.roles) insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {}))
-      for (const scene of source.scenes) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(scene.id, roomId, scene.turnId, scene.text, scene.sceneTime ?? null, scene.sceneLocation ?? null, scene.createdAt)
+      for (const scene of source.scenes) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(scene.id, roomId, scene.turnId, scene.text, scene.sceneTime ?? null, scene.sceneLocation ?? null, scene.createdAt, scene.speaker ?? null)
     })
   }
 
@@ -356,7 +359,7 @@ export class Store {
 
   getRoom(roomId: string): RoomSnapshot | undefined {
     const room = this.db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId) as {
-      id: string; title: string; player_name: string; player_persona: string; player_state: string; scene_time: string | null; scene_location: string | null; phase: RoomPhase; revision: number; player_contribution: string | null; last_error: string | null; mode: string; auto_publish: number; speech: string | null
+      id: string; title: string; player_name: string; player_persona: string; player_state: string; player_portrait_ref: string; scene_time: string | null; scene_location: string | null; phase: RoomPhase; revision: number; player_contribution: string | null; last_error: string | null; mode: string; auto_publish: number; speech: string | null
     } | undefined
     if (!room) return undefined
     const roles = this.db.prepare('SELECT * FROM roles WHERE room_id = ? ORDER BY sort_order, rowid').all(roomId).map(rowToRole)
@@ -374,7 +377,7 @@ export class Store {
       mode: room.mode === 'chat' ? 'chat' : 'director',
       autoPublish: room.auto_publish === 1,
       ...(speech ? { speech } : {}),
-      playerCharacter: { name: room.player_name, persona: room.player_persona, currentState: room.player_state },
+      playerCharacter: { name: room.player_name, persona: room.player_persona, currentState: room.player_state, ...(room.player_portrait_ref && room.player_portrait_ref !== '/assets/default.svg' ? { portraitRef: room.player_portrait_ref } : {}) },
       phase: room.phase,
       revision: room.revision,
       ...(room.player_contribution ? { playerContribution: room.player_contribution } : {}),
@@ -449,6 +452,24 @@ export class Store {
   }
 
   /**
+   * 群聊模式：把玩家提交的行动作为一条气泡插入对话流（speaker = 'player'）。
+   * 类似酒馆——玩家发送的信息立即显示在屏幕上，而非仅存为隐藏的 player_contribution。
+   */
+  addPlayerScene(roomId: string, text: string): void {
+    const room = this.db.prepare('SELECT phase, scene_time, scene_location FROM rooms WHERE id = ?').get(roomId) as { phase: string; scene_time: string | null; scene_location: string | null } | undefined
+    if (!room) throw new Error('Room not found.')
+    if (room.phase !== 'awaiting-player-input') throw new Error('当前无法提交玩家消息。')
+    const trimmed = String(text ?? '').trim()
+    if (!trimmed) return
+    const turnId = randomUUID()
+    const effectiveTime = room.scene_time?.trim() || '未标注时间'
+    const effectiveLocation = room.scene_location?.trim() || ''
+    this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)')
+      .run(`scene-${Date.now()}`, roomId, turnId, trimmed, effectiveTime || null, effectiveLocation || null, new Date().toISOString(), 'player')
+    this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
+  }
+
+  /**
    * 群聊模式：批准台词并发布为 Scene（玩家可在批准前编辑正文）。
    * 发布后清空 speech 与玩家贡献；记忆同步由调用方触发 digest（在场角色并行消化）。
    */
@@ -462,8 +483,8 @@ export class Store {
     this.withTransaction(() => {
       const effectiveTime = room.scene_time?.trim() || '未标注时间'
       const effectiveLocation = room.scene_location?.trim() || ''
-      this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(`scene-${Date.now()}`, roomId, speech.turnId, trimmed, effectiveTime || null, effectiveLocation || null, JSON.stringify(usage ?? speech.usage ?? { promptTokens: 0, completionTokens: 0 }), new Date().toISOString())
+      this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(`scene-${Date.now()}`, roomId, speech.turnId, trimmed, effectiveTime || null, effectiveLocation || null, JSON.stringify(usage ?? speech.usage ?? { promptTokens: 0, completionTokens: 0 }), new Date().toISOString(), speech.roleId)
       this.db.prepare("UPDATE rooms SET speech = NULL, phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL WHERE id = ?").run(roomId)
     })
   }
@@ -658,6 +679,12 @@ export class Store {
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
+  /** 更新主角（玩家角色）肖像引用 */
+  setPlayerAvatar(roomId: string, portraitRef: string): void {
+    const result = this.db.prepare('UPDATE rooms SET player_portrait_ref = ?, revision = revision + 1 WHERE id = ?').run(portraitRef, roomId)
+    if (Number(result.changes) !== 1) throw new Error('Room not found.')
+  }
+
   /** 直接修改角色当前状态（玩家点击角色状态失焦确认） */
   setRoleCurrentState(roomId: string, roleId: string, currentState: string): void {
     const result = this.db.prepare('UPDATE roles SET current_state = ? WHERE room_id = ? AND id = ?').run(currentState, roomId, roleId)
@@ -779,7 +806,7 @@ function rowToDraft(row: any): Draft {
   }
 }
 function rowToScene(row: any): Scene {
-  return { id: row.id, turnId: row.turn_id, text: row.text, ...(row.scene_time ? { sceneTime: row.scene_time } : {}), ...(row.scene_location ? { sceneLocation: row.scene_location } : {}), ...(row.usage ? { usage: JSON.parse(row.usage) } : {}), createdAt: row.created_at }
+  return { id: row.id, turnId: row.turn_id, text: row.text, ...(row.speaker ? { speaker: row.speaker } : {}), ...(row.scene_time ? { sceneTime: row.scene_time } : {}), ...(row.scene_location ? { sceneLocation: row.scene_location } : {}), ...(row.usage ? { usage: JSON.parse(row.usage) } : {}), createdAt: row.created_at }
 }
 function rowToConsultation(row: any): ConsultationMessage {
   return { role: row.role, text: row.text, ...(row.usage ? { usage: JSON.parse(row.usage) } : {}), createdAt: row.created_at }

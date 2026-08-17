@@ -120,6 +120,8 @@ export interface Scene {
   id: string
   turnId: string
   text: string
+  /** 发言者：角色 id 或 'player'；未设置（旧数据 / 导演正文 / 开场）按旁白处理 */
+  speaker?: string
   /** 本段正文发布当时的场景时间（快照） */
   sceneTime?: string
   /** 本段正文发布当时的场景地点（快照） */
@@ -147,6 +149,8 @@ export interface PlayerCharacter {
   name: string
   persona: string
   currentState: string
+  /** 主角肖像引用（上传/URL 导入后写入；缺省时前端回退到 /assets/default.svg） */
+  portraitRef?: string
 }
 
 /** 世界书条目：`roles` 缺省或为空数组 = 常开（注入所有角色）；否则只注入列出的角色 */

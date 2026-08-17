@@ -1,12 +1,12 @@
 /**
- * Character Tavern 应用启动器：把 Store + RoomRuntime + ModelGateway + node:http
+ * StageCraft 应用启动器：把 Store + RoomRuntime + ModelGateway + node:http
  * 服务器组装成一个自包含应用，供两种宿主复用：
  *   - 独立入口 src/server.ts（npm run dev）
  *   - dsh-rp 插件壳（Cordis/dsh profile 里跑同一套应用，核心零改动）
  *
  * 本模块保持框架无关：不 import cordis/dsh，只导出纯函数。
  */
-import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -60,7 +60,17 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   mkdirSync(saveRoot, { recursive: true })
   mkdirSync(dataDir, { recursive: true })
 
-  const store = new Store(join(dataDir, 'character-tavern.sqlite'))
+    // 更名迁移：旧库 character-tavern.sqlite → stagecraft.sqlite（保留数据）
+  const legacyDb = join(dataDir, 'character-tavern.sqlite')
+  const dbPath = join(dataDir, 'stagecraft.sqlite')
+  if (!existsSync(dbPath) && existsSync(legacyDb)) {
+    for (const suffix of ['', '-wal', '-shm']) {
+      const from = `${legacyDb}${suffix}`
+      if (existsSync(from)) renameSync(from, `${dbPath}${suffix}`)
+    }
+    console.log('检测到旧数据库，已迁移到 stagecraft.sqlite。')
+  }
+  const store = new Store(dbPath)
   let roomId = store.seed(loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'))
   store.recoverInterruptedRooms()
 
@@ -266,6 +276,15 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         const body = await readJson(request)
         runtime.updatePlayerCharacter(roomId, { name: String(body.name ?? ''), persona: String(body.persona ?? ''), currentState: String(body.currentState ?? '') })
         return json(response, 200, { ok: true, room: runtime.get(roomId) })
+      }
+      if (url.pathname === '/api/player/avatar' && request.method === 'POST') {
+        const body = await readJson(request)
+        const dataUrl = typeof body.dataUrl === 'string' ? body.dataUrl : ''
+        const url = typeof body.url === 'string' ? body.url : ''
+        if (!dataUrl && !url) throw new Error('缺少头像数据（dataUrl 或 url）。')
+        const portraitRef = await saveAvatar('player', dataUrl || '', url || '')
+        runtime.setPlayerAvatar(roomId, portraitRef)
+        return json(response, 200, { ok: true, portraitRef })
       }
       if (url.pathname === '/api/roles/intervene' && request.method === 'POST') {
         const body = await readJson(request)
@@ -512,7 +531,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   server.listen(port, host, () => {
     const address = server.address()
     const actualPort = typeof address === 'object' && address ? address.port : port
-    console.log(`DeepPlugin Harness running at http://${host}:${actualPort} (room: ${roomId})`)
+    console.log(`StageCraft running at http://${host}:${actualPort} (room: ${roomId})`)
   })
 
   return {
