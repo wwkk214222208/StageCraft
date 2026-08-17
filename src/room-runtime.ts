@@ -164,10 +164,14 @@ export class RoomRuntime {
       const snapshot = this.store.getRoom(roomId)
       if (!snapshot) return
       const present = snapshot.roles.filter(role => role.presence === 'present')
+      // 记忆一律按「当前场景时间」归档，丢弃 LLM 自行理解的语义标签（如「情感」「重要约定」），
+      // 保证时间线是以场景时间为序的事实记录，而非语义分组。
+      const sceneTime = (snapshot.sceneTime ?? '').trim() || '未标注时间'
       await Promise.all(present.map(async role => {
         try {
           const digest = await this.workers.digest!(role, sceneText)
-          this.store.appendMemoryEvents(roomId, role.id, digest.events, { fuzzy: false })
+          const events = Object.values(digest.events ?? {}).flat().map(item => String(item ?? '').trim()).filter(Boolean)
+          if (events.length) this.store.appendMemoryEvents(roomId, role.id, { [sceneTime]: events }, { fuzzy: false })
         } catch (error) {
           console.error(`[memory digest failed] ${role.id}: ${error}`)
         }
