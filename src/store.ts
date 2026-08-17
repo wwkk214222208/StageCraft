@@ -449,6 +449,10 @@ export class Store {
   saveSpeech(roomId: string, speech: import('./types.ts').ChatSpeech): void {
     this.db.prepare("UPDATE rooms SET speech = ?, phase = 'awaiting-approval', last_error = NULL, revision = revision + 1 WHERE id = ?")
       .run(JSON.stringify(speech), roomId)
+    // 该角色已产出台词 → 决策标记完成，避免左侧栏停留在「正在回应」
+    if (speech.turnId && speech.roleId) {
+      this.db.prepare("UPDATE decisions SET status = 'completed' WHERE turn_id = ? AND role_id = ?").run(speech.turnId, speech.roleId)
+    }
   }
 
   /**

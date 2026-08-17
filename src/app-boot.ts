@@ -236,6 +236,10 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         await runtime.approveSpeech(roomId, String(body.text ?? ''))
         return json(response, 200, { ok: true })
       }
+      if (url.pathname === '/api/chat/retry' && request.method === 'POST') {
+        await runtime.retrySpeak(roomId)
+        return json(response, 200, { ok: true })
+      }
       if (url.pathname === '/api/st-cards/import' && request.method === 'POST') {
         const body = await readJson(request)
         const result = importStCard(String(body.content ?? ''), String(body.filename ?? 'card.json'))

@@ -121,12 +121,25 @@ export class RoomRuntime {
     } catch (error) {
       this.emitThinking(roomId, { actor: 'role', roleId, turnId, text: '', done: true })
       if (this.cancelledTurns.has(turnId)) return
+      // 标记该角色决策为「回应失败」，左侧栏据此显示「回应失败」并暴露重试入口
+      this.store.saveDecision(turnId, { roleId, participation: 'required', status: 'unavailable', error: String(error) })
       this.store.failRoom(roomId, `角色发言失败：${String(error)}`)
       this.emit(roomId)
     } finally {
       this.activeTurns.delete(roomId)
       this.turnIds.delete(roomId)
     }
+  }
+
+  /** 群聊模式：发言失败后重试——复位到可发言的空闲态，再重新让同一角色发言 */
+  async retrySpeak(roomId: string): Promise<void> {
+    const room = this.get(roomId)
+    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
+    const failed = room.decisions.find(decision => decision.status === 'unavailable')
+    if (!failed) throw new Error('没有可重试的发言。')
+    // 清除上一轮残留的错误与 speech，回到空闲态以便重新发言
+    this.store.cancelTurn(roomId)
+    await this.speak(roomId, failed.roleId)
   }
 
   /** 群聊模式：玩家批准（可先编辑）台词 → 发布 → 在场角色并行消化记忆 */
