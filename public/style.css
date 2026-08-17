@@ -72,6 +72,8 @@
 /* ── 角色/玩家编辑：左肖像面板 + 右信息面板（单对话框）── */
 #role-modal,#player-modal{position:fixed;inset:0;margin:auto;padding:0;border:1px solid #3a4a6e;border-radius:8px;background:#222a3d;color:#e4edfd;box-shadow:0 6px 28px rgba(0,0,0,.55);z-index:1000}
 #role-modal,#player-modal{max-height:88vh;overflow:hidden;display:flex;flex-direction:column}
+/* dialog 默认在未打开时隐藏；避免 flex 布局覆盖浏览器的隐藏规则 */
+#role-modal:not([open]),#player-modal:not([open]){display:none}
 #role-modal{width:1080px;max-width:95vw}
 #player-modal{width:720px;max-width:94vw}
 #role-modal form,#player-modal form{display:flex;flex-direction:column;gap:0;padding:0;flex:1 1 auto;overflow:hidden;min-height:0}

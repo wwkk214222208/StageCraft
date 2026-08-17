@@ -76,13 +76,6 @@ function setContribution(text) { const input = $('#contribution'); input.value =
 function render(next) {
   room = next
   focalRoleIds = new Set([...focalRoleIds].filter(id => room.roles.some(role => role.id === id && role.presence === 'present')))
-  // 防御：角色设置窗口（live 模式）正打开，但所编辑的角色已不在房间内（如被删除、或程序外直接删库），
-  // 自动关闭该窗口，避免“角色没了但弹窗关不掉”的卡死。剧本编辑模式（storyEditRoleIndex≠null）不在此列。
-  if (storyEditRoleIndex === null) {
-    const modal = $('#role-modal')
-    const openId = $('#inspector-role-id')?.value
-    if (modal?.open && openId && !room.roles.some(role => role.id === openId)) closeInspectorModals()
-  }
   if (room.phase === 'awaiting-player-input') clearThinkingStreams()
   const states = { present: '在场', absent: '离场', unavailable: '离场' }
   $('#room-title').textContent = room.title
