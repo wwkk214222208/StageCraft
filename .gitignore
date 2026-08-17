@@ -16,3 +16,5 @@ stories/custom/*
 *backup*
 # 私有剧本头像
 public/assets/custom/
+prompts/custom/*
+!prompts/custom/.gitkeep

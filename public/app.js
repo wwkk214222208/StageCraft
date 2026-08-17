@@ -227,6 +227,8 @@ $('#prompts-edit').onclick = async () => {
     $('#prompt-director-retrySystem').value = data.director?.retrySystem ?? ''
     $('#prompt-director-retryUser').value = data.director?.retryUser ?? ''
     $('#prompt-consult-user').value = data.consult?.user ?? ''
+    $('#prompt-ideology-role').value = data.ideology?.roleIdeals ?? ''
+    $('#prompt-ideology-director').value = data.ideology?.directorIdeals ?? ''
   } catch { alert('加载提示词失败：无法连接服务器。') }
 }
 $('#prompts-save').onclick = event => {
@@ -236,6 +238,7 @@ $('#prompts-save').onclick = event => {
     director: { request: $('#prompt-director-request').value, retrySystem: $('#prompt-director-retrySystem').value, retryUser: $('#prompt-director-retryUser').value },
     consult: { user: $('#prompt-consult-user').value },
     skills: { director: $('#prompt-skills-director').value, consultation: $('#prompt-skills-consultation').value },
+    ideology: { roleIdeals: $('#prompt-ideology-role').value, directorIdeals: $('#prompt-ideology-director').value },
   }
   api('/api/prompts', body).then(ok => { if (ok) { alert('提示词已保存并生效'); $('#prompts-modal').close() } })
 }
@@ -351,8 +354,7 @@ function openStoryRoleEditor(index) {
   $('#inspector-provider').innerHTML = '<option value="">使用默认</option>'
   $('#inspector-model').innerHTML = '<option value="">使用默认</option>'
   $('#inspector-self-model').value = role.selfModel ?? ''
-  $('#inspector-goals').value = (role.goals ?? []).join('
-')
+  $('#inspector-goals').value = (role.goals ?? []).join('\n')
   $('#inspector-memory').value = formatTimelineForEdit(role)
   renderImpressionsFrom(role.impressions ?? {})
   $('#inspector-story-fields').hidden = false
@@ -522,8 +524,7 @@ function setInspectorReadOnly(on) {
   document.querySelectorAll('#role-modal .impression-row input').forEach(input => { input.disabled = on })
   document.querySelectorAll('#role-modal .impression-row .impression-del').forEach(button => { button.disabled = on })
 }
-function openInspector(roleId) { inspectedRole = room.roles.find(role => role.id === roleId); if (!inspectedRole) return; storyEditRoleIndex = null; $('#inspector-story-fields').hidden = true; $('#role-modal-title').textContent = `${inspectedRole.name} 角色设置`; $('#inspector-role-id').value = roleId; $('#inspector-provider').innerHTML = `<option value="">使用默认</option>${providers.map(provider => `<option value="${escape(provider.id)}">${escape(provider.name)}</option>`).join('')}`; $('#inspector-provider').value = inspectedRole.providerId ?? ''; updateInspectorModels(); $('#inspector-model').value = inspectedRole.modelOverride ?? ''; $('#inspector-self-model').value = inspectedRole.selfModel; $('#inspector-goals').value = (inspectedRole.goals ?? []).join('
-'); $('#inspector-memory').value = formatTimelineForEdit(inspectedRole); renderImpressionsList(); $('#inspector-avatar-preview').src = inspectedRole.portraitRef; $('#inspector-avatar-preview').onerror = function () { this.onerror = null; this.src = '/assets/default.svg' }; // 沉浸模式：角色面板只读
+function openInspector(roleId) { inspectedRole = room.roles.find(role => role.id === roleId); if (!inspectedRole) return; storyEditRoleIndex = null; $('#inspector-story-fields').hidden = true; $('#role-modal-title').textContent = `${inspectedRole.name} 角色设置`; $('#inspector-role-id').value = roleId; $('#inspector-provider').innerHTML = `<option value="">使用默认</option>${providers.map(provider => `<option value="${escape(provider.id)}">${escape(provider.name)}</option>`).join('')}`; $('#inspector-provider').value = inspectedRole.providerId ?? ''; updateInspectorModels(); $('#inspector-model').value = inspectedRole.modelOverride ?? ''; $('#inspector-self-model').value = inspectedRole.selfModel; $('#inspector-goals').value = (inspectedRole.goals ?? []).join('\\n'); $('#inspector-memory').value = formatTimelineForEdit(inspectedRole); renderImpressionsList(); $('#inspector-avatar-preview').src = inspectedRole.portraitRef; $('#inspector-avatar-preview').onerror = function () { this.onerror = null; this.src = '/assets/default.svg' }; // 沉浸模式：角色面板只读
   setInspectorReadOnly(!!room?.autoPublish && storyEditRoleIndex === null);
   positionInspectorModals() }
 $('#inspector-save').onclick = event => {

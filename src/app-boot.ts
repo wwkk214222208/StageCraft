@@ -15,7 +15,7 @@ import { RoomRuntime } from './room-runtime.ts'
 import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } from './model-gateway.ts'
 import { listStoryPackages, loadStoryPackage, saveStoryPackage, type StoryPackage } from './story-packages.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
-import { loadPrompts, type PromptTemplates } from './prompts.ts'
+import { loadIdeology, loadPrompts, saveIdeology, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
 
 export interface TavernOptions {
@@ -173,11 +173,13 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       if (url.pathname === '/api/usage') return json(response, 200, gateway?.usage() ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, mode: 'fake' })
       if (url.pathname === '/api/prompts' && request.method === 'GET') {
         const prompts = loadPrompts()
+        const ideology = loadIdeology(promptsFilePath)
         return json(response, 200, {
           role: { system: prompts.role.system, user: prompts.role.user, retrySystem: prompts.role.retrySystem, retryUser: prompts.role.retryUser },
           director: { request: prompts.director.request, retrySystem: prompts.director.retrySystem, retryUser: prompts.director.retryUser },
           consult: { user: prompts.consult.user },
           skills: { director: prompts.skills.director, consultation: prompts.skills.consultation },
+          ideology: { roleIdeals: ideology.roleIdeals ?? '', directorIdeals: ideology.directorIdeals ?? '' },
         })
       }
       if (url.pathname === '/api/prompts' && request.method === 'POST') {
@@ -194,6 +196,10 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         patch(prompts.consult as unknown as Record<string, string>, body.consult)
         patch(prompts.skills as unknown as Record<string, string>, body.skills)
         writeFileSync(promptsFilePath, `${JSON.stringify(prompts, null, 2)}\n`, 'utf8')
+        // 创作理念单独存私有文件（仓库保留 prompts/custom/ 目录但不提交内容）
+        if (body.ideology && typeof body.ideology === 'object') {
+          saveIdeology({ roleIdeals: String(body.ideology.roleIdeals ?? ''), directorIdeals: String(body.ideology.directorIdeals ?? '') }, promptsFilePath)
+        }
         reloadPrompts()
         return json(response, 200, { ok: true })
       }
