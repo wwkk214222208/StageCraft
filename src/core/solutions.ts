@@ -77,10 +77,10 @@ export function workflowInstancesFromRoom(room: WorkflowRoom): WorkflowInstance[
     return [instance(room, directorTurnWorkflow, room.phase, room.phase === 'awaiting-player-input' || room.phase === 'awaiting-approval' || room.phase === 'consulting-director' ? 'waiting' : 'running')]
   }
   const speechStep = chatSpeechPhaseToStep[room.phase] ?? room.phase
-  const speechActive = ['role-speaking', 'awaiting-approval', 'world-change-approval'].includes(speechStep)
+  const speechActive = Boolean(room.speech) && ['role-speaking', 'awaiting-approval', 'world-change-approval'].includes(speechStep)
   const workflows = [instance(room, chatSpeechWorkflow, speechStep, speechStep === 'awaiting-player-input' || speechStep === 'awaiting-approval' || speechStep === 'world-change-approval' ? 'waiting' : 'running')]
   // 导演咨询与发言共存：非活跃时仅注册为可启动的等待实例，不能重复生成玩家输入控件。
-  workflows.push(instance(room, chatDirectorWorkflow, speechActive ? 'awaiting-suggestion' : 'awaiting-suggestion', 'waiting', { dormant: speechActive }))
+  workflows.push(instance(room, chatDirectorWorkflow, room.phase === 'world-change-approval' && !speechActive ? 'awaiting-world-change-approval' : 'awaiting-suggestion', 'waiting', { dormant: speechActive }))
   return workflows
 }
 
