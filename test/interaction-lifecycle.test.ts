@@ -28,8 +28,8 @@ test('Core interaction is pending, validates command type, then resolves after l
 
     await assert.rejects(() => core.dispatch({ id: 'bad', actor: 'player', interactionId: interaction.id, type: 'approve' }), /not allowed/)
     await core.dispatch({ id: 'good', actor: 'player', interactionId: interaction.id, type: 'submit-text', payload: { text: '行动' } })
-    assert.equal(core.getView().interactions.length, 0)
-    assert.equal(core.getView().workflows[0].pendingInteractionIds.length, 0)
+    assert.equal(core.getView().interactions.some(item => item.id === interaction.id), false)
+    assert.equal(core.getView().workflows[0].pendingInteractionIds.includes(interaction.id), false)
     assert.equal(store.listWorkflowInstances(roomId)[0].pendingInteractionIds.length, 0)
   } finally {
     store?.close()

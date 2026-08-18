@@ -42,6 +42,10 @@ export async function dispatchLegacyCommand(context: CoreCommandContext, command
         await runtime.approveSpeech(roomId, String(payload.text ?? ''), worldChange)
         return
       }
+      if (action === 'decisions') {
+        await runtime.proceedToDraft(roomId)
+        return
+      }
       if (action === 'world-change') {
         const worldChange = payload.worldChange && typeof payload.worldChange === 'object' ? payload.worldChange as WorldChangeRequest : null
         await runtime.approveWorldChange(roomId, worldChange)

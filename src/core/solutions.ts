@@ -51,9 +51,9 @@ export const directorTurnWorkflow: WorkflowDefinition = {
     'consulting-director': { id: 'consulting-director', actions: [{ type: 'human-interaction', interactionKind: 'text', label: '与导演讨论' }, { type: 'model-interaction', capability: 'director.chat', contractId: 'director.consult', promptProfile: 'director.consult', stream: true }] },
   },
   transitions: [
-    { from: 'awaiting-player-input', event: 'player.submitted', to: 'collecting-decisions' },
-    { from: 'collecting-decisions', event: 'decisions.completed', to: 'drafting' },
-    { from: 'drafting', event: 'draft.created', to: 'awaiting-approval' },
+    { from: 'awaiting-player-input', event: 'player.contribution.submitted', to: 'collecting-decisions' },
+    { from: 'collecting-decisions', event: 'role.decision.completed', to: 'drafting' },
+    { from: 'drafting', event: 'director.draft.generated', to: 'awaiting-approval' },
     { from: 'awaiting-approval', event: 'draft.approved', to: 'awaiting-player-input' },
     { from: 'awaiting-approval', event: 'director.consulted', to: 'consulting-director' },
   ],
@@ -74,7 +74,8 @@ function instance(room: WorkflowRoom, definition: WorkflowDefinition, step: stri
 /** 将一个旧房间映射为其活跃工作流和可并行待命的工作流。 */
 export function workflowInstancesFromRoom(room: WorkflowRoom): WorkflowInstance[] {
   if (room.mode === 'director') {
-    return [instance(room, directorTurnWorkflow, room.phase, room.phase === 'awaiting-player-input' || room.phase === 'awaiting-approval' || room.phase === 'consulting-director' ? 'waiting' : 'running')]
+    const directorStep = room.phase === 'drafting' ? 'awaiting-approval' : room.phase
+    return [instance(room, directorTurnWorkflow, directorStep, directorStep === 'awaiting-player-input' || directorStep === 'awaiting-approval' || directorStep === 'consulting-director' || directorStep === 'collecting-decisions' ? 'waiting' : 'running')]
   }
   const speechStep = chatSpeechPhaseToStep[room.phase] ?? room.phase
   const speechActive = Boolean(room.speech) && ['role-speaking', 'awaiting-approval', 'world-change-approval'].includes(speechStep)
@@ -96,6 +97,7 @@ export function directorSuggestionInteraction(roomId: string): InteractionReques
 export function interactionFromRoom(room: WorkflowRoom): InteractionRequest | undefined {
   if (room.mode === 'director') {
     if (room.phase === 'awaiting-player-input') return textInteraction(room.id, 'player-input', '玩家行动', '输入本轮行动或发言。', '提交')
+    if (room.phase === 'collecting-decisions') return approvalInteraction(room.id, 'decision-approval', '确认角色反馈', '确认角色反馈后进入导演起草。')
     if (room.phase === 'awaiting-approval') return approvalInteraction(room.id, 'draft-approval', '批准场景草稿', '确认、编辑或要求重新起草当前导演草稿。')
     if (room.phase === 'consulting-director') return textInteraction(room.id, 'director-consult', '与导演讨论', '说明需要调整的剧情、设定或草稿问题。', '发送')
     return undefined

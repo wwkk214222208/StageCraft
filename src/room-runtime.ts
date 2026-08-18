@@ -85,6 +85,7 @@ export class RoomRuntime {
       return
     }
     this.activeTurns.add(roomId)
+    this.core?.emitDomainEvent(domainEvent('player.contribution.submitted', { roomId, text: input.text }))
     try {
       await this.processTurn(roomId, input)
     } finally {
@@ -375,6 +376,7 @@ export class RoomRuntime {
       return
     }
 
+    this.core?.emitDomainEvent(domainEvent('role.decision.completed', { roomId, turnId }))
     // 角色决策完成：停下等用户确认/修改角色反馈，再由 proceedToDraft 触发导演起草（避免导演返工）。
     // 沉浸模式：跳过确认，决策完直接连续起草并自动发布（全程 AI 主导）。
     if (this.get(roomId).autoPublish) {
@@ -403,6 +405,7 @@ export class RoomRuntime {
       if (this.cancelledTurns.has(turnId)) return
       validateDraft(draft, turnId, latest.roles)
       this.store.saveDraft(roomId, draft)
+      this.core?.emitDomainEvent(domainEvent('director.draft.generated', { roomId, draftId: draft.id, turnId }))
       this.emit(roomId)
       // 沉浸模式：跳过审批，草稿直接发布（AI 主导）
       if (this.get(roomId).autoPublish) {
