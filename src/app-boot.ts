@@ -19,6 +19,7 @@ import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile,
 import { importStCard } from './st-card-import.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
 import type { CoreEvent } from './core/protocol.ts'
+import { ModelGatewayRouterAdapter } from './core/model-router-adapter.ts'
 
 export interface TavernOptions {
   /** 仓库根目录（默认：本文件所在目录的上一级） */
@@ -104,6 +105,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
     if (!config?.apiKey) { gateway = undefined; return }
     const defaults = providerStore.defaults()
     gateway = gatewayFromProvider(config, defaults.directorModel ?? config.selectedModel ?? config.models[0] ?? envRoute.model)
+    core.attachLlmRouter(new ModelGatewayRouterAdapter(gateway))
     runtime.setWorkers(createRealWorkers(gateway, role => {
       const defaults = providerStore.defaults()
       const fallbackProvider = providerStore.getDefaultRole()

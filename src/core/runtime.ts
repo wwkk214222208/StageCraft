@@ -2,6 +2,7 @@ import type { RoomSnapshot } from '../types.ts'
 import { defaultStateCategories, projectRoomSnapshot, roomSnapshotEvent, type StateCategoryDefinition } from './state.ts'
 import type { RoomRuntime } from '../room-runtime.ts'
 import { dispatchLegacyCommand } from './command-adapter.ts'
+import type { CoreLlmRouterPlugin, Disposable } from './plugins.ts'
 import {
   CORE_PROTOCOL_VERSION,
   type CoreEvent,
@@ -32,6 +33,8 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   private readonly definitions = new Map<string, WorkflowDefinition>()
   private readonly categories = new Map<string, StateCategoryDefinition>(defaultStateCategories.map(category => [category.id, category]))
   private legacyRuntime?: { runtime: RoomRuntime; defaultRoomId: string }
+  private llmRouter?: CoreLlmRouterPlugin
+  private llmRouterDisposable?: Disposable
 
   registerCategory(category: StateCategoryDefinition): void {
     if (!category.id.trim()) throw new Error('State category id is required.')
@@ -71,6 +74,20 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     }
   }
 
+  attachLlmRouter(router: CoreLlmRouterPlugin): void {
+    this.llmRouterDisposable?.dispose()
+    this.llmRouter = router
+    this.llmRouterDisposable = router.install({
+      submitModelResult: result => this.submitModelResult(result),
+      publishModelEvent: event => this.emit(event),
+    })
+  }
+
+  async requestModel(request: import('./protocol.ts').ModelRequest): Promise<void> {
+    if (!this.llmRouter) throw new Error('Core has no LLM router.')
+    await this.llmRouter.request(request)
+  }
+
   async submitModelResult(result: ModelResult): Promise<void> {
     this.emit({ type: 'model.completed', revision: this.revision, result })
   }
@@ -93,8 +110,8 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     return () => this.listeners.delete(listener)
   }
 
-  async cancel(_requestId?: string): Promise<void> {
-    // 取消语义将在 Workflow Executor 接入后实现；接口先固定下来供 adapter 使用。
+  async cancel(requestId?: string): Promise<void> {
+    if (requestId && this.llmRouter) await this.llmRouter.cancel(requestId)
   }
 
   protected appendStateEvents(events: StateEvent[]): void {

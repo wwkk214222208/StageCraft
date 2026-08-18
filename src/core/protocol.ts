@@ -196,6 +196,7 @@ export type CoreEventListener = (event: CoreEvent) => void
 
 export interface CoreRuntimePort {
   dispatch(command: HumanCommand): Promise<void>
+  requestModel(request: ModelRequest): Promise<void>
   submitModelResult(result: ModelResult): Promise<void>
   getView(): CoreView
   subscribe(listener: CoreEventListener): () => void
