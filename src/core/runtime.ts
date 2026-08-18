@@ -6,6 +6,7 @@ import { chatDirectorWorkflow, chatSpeechWorkflow, directorTurnWorkflow, interac
 import type { CoreEventLog } from './event-log.ts'
 import type { DomainEvent } from './domain-events.ts'
 import { WorkflowExecutor, WorkflowRegistry } from './workflow-engine.ts'
+import { directorSuggestionInteraction } from './solutions.ts'
 import type { WorkflowInstanceStore } from './workflow-store.ts'
 import type { CoreLlmRouterPlugin, Disposable } from './plugins.ts'
 import {
@@ -95,6 +96,10 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     for (const workflow of workflows) this.actions.push(...this.workflowExecutor.plan(workflow))
     const interaction = interactionFromRoom(room)
     this.interactions.clear()
+    if (room.mode === 'chat') {
+      const director = workflows.find(item => item.definitionId === chatDirectorWorkflow.id)
+      if (director?.step === 'awaiting-suggestion') this.interactions.set(`interaction:${room.id}:director-suggestion`, directorSuggestionInteraction(room.id))
+    }
     if (interaction) {
       this.interactions.set(interaction.id, interaction)
       const workflow = workflows.find(item => this.interactionBelongsToWorkflow(interaction, item))
@@ -128,6 +133,10 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   async dispatch(command: HumanCommand): Promise<void> {
     const interaction = command.interactionId ? this.interactions.get(command.interactionId) : undefined
     if (command.interactionId && !interaction) throw new Error(`Interaction is not pending: ${command.interactionId}`)
+    if (interaction?.id.endsWith(':director-suggestion') && command.type === 'submit-text') {
+      const payload = command.payload && typeof command.payload === 'object' ? command.payload as { text?: unknown } : {}
+      command = { ...command, type: 'submit-text', payload: { text: String(payload.text ?? ''), action: 'director-chat' } }
+    }
     if (interaction && !this.commandMatchesInteraction(command, interaction)) throw new Error(`Command ${command.type} is not allowed for interaction: ${interaction.id}`)
     if (!this.legacyRuntime) {
       this.emit({ type: 'error', revision: this.revision, message: `Core command has no runtime adapter: ${command.type}` })
@@ -166,6 +175,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     if (interaction.kind === 'text') return command.type === 'submit-text'
     if (interaction.kind === 'role-select') return command.type === 'select-role'
     if (interaction.kind === 'approval') return command.type === 'approve' || command.type === 'reject' || command.type === 'cancel'
+    if (interaction.kind === 'text') return command.type === 'submit-text'
     return false
   }
 

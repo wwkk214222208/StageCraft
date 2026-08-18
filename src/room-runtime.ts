@@ -197,6 +197,7 @@ export class RoomRuntime {
     if (!this.workers.directorChat) throw new Error('当前模型服务不支持导演对话。')
     const playerText = String(text ?? '').trim()
     if (!playerText) throw new Error('请输入你想对导演说的话。')
+    this.core?.emitDomainEvent(domainEvent('director.suggestion.submitted', { roomId, text: playerText }))
     this.activeTurns.add(roomId)
     this.activeDirectorChats.add(roomId)
     try {
@@ -219,6 +220,7 @@ export class RoomRuntime {
       if (!reply) throw new Error('导演没有产出回复。')
       this.store.addConsultation(roomId, null, 'player', playerText)
       this.store.addConsultation(roomId, null, 'director', reply, result.usage, result.thinking)
+      this.core?.emitDomainEvent(domainEvent('director.reply.generated', { roomId, text: reply }))
       if (result.worldChange) {
         if (this.get(roomId).autoPublish) {
           // 沉浸模式：直接落地 + 写叙述 + 在场角色消化

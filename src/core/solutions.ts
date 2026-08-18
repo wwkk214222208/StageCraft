@@ -33,7 +33,8 @@ export const chatDirectorWorkflow: WorkflowDefinition = {
     'awaiting-world-change-approval': { id: 'awaiting-world-change-approval', actions: [{ type: 'human-interaction', interactionKind: 'approval', label: '批准导演建议的世界变更' }] },
   },
   transitions: [
-    { from: 'awaiting-suggestion', event: 'player.suggested', to: 'director-consulting' },
+    { from: 'awaiting-suggestion', event: 'director.suggestion.submitted', to: 'director-consulting' },
+    { from: 'director-consulting', event: 'director.reply.generated', to: 'awaiting-suggestion' },
     { from: 'director-consulting', event: 'world-change.proposed', to: 'awaiting-world-change-approval' },
     { from: 'awaiting-world-change-approval', event: 'world-change.approved', to: 'awaiting-suggestion' },
   ],
@@ -86,6 +87,10 @@ export function workflowInstancesFromRoom(room: WorkflowRoom): WorkflowInstance[
 /** 兼容旧调用方：返回房间主工作流。 */
 export function workflowInstanceFromRoom(room: WorkflowRoom): WorkflowInstance {
   return workflowInstancesFromRoom(room)[0]
+}
+
+export function directorSuggestionInteraction(roomId: string): InteractionRequest {
+  return textInteraction(roomId, 'director-suggestion', '向导演建议', '描述希望推进的时间、场景或世界变化。', '发送')
 }
 
 export function interactionFromRoom(room: WorkflowRoom): InteractionRequest | undefined {

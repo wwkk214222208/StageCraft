@@ -11,6 +11,8 @@ export type DomainEventType =
   | 'world-change.approved'
   | 'world-change.rejected'
   | 'scene.published'
+  | 'director.suggestion.submitted'
+  | 'director.reply.generated'
 
 export interface DomainEventPayloads {
   'player.contribution.submitted': { roomId: string; text: string }
@@ -22,6 +24,8 @@ export interface DomainEventPayloads {
   'world-change.approved': { roomId: string; change: WorldChangeRequest }
   'world-change.rejected': { roomId: string; change?: WorldChangeRequest }
   'scene.published': { roomId: string; sceneId?: string; speaker?: string; text: string }
+  'director.suggestion.submitted': { roomId: string; text: string }
+  'director.reply.generated': { roomId: string; text: string }
 }
 
 export type DomainEvent = {
@@ -30,7 +34,7 @@ export type DomainEvent = {
 
 const domainEventTypes = new Set<DomainEventType>([
   'player.contribution.submitted', 'role.speech.requested', 'role.speech.generated', 'speech.approved', 'speech.rejected',
-  'world-change.proposed', 'world-change.approved', 'world-change.rejected', 'scene.published',
+  'world-change.proposed', 'world-change.approved', 'world-change.rejected', 'scene.published', 'director.suggestion.submitted', 'director.reply.generated',
 ])
 
 export function isDomainEvent(event: StateEvent): event is DomainEvent {

@@ -23,6 +23,10 @@ export async function dispatchLegacyCommand(context: CoreCommandContext, command
 
   switch (command.type) {
     case 'submit-text':
+      if (payload.action === 'director-chat') {
+        await runtime.directorChat(roomId, String(payload.text ?? ''))
+        return
+      }
       await runtime.submitTurn(roomId, { text: String(payload.text ?? '') })
       return
     case 'select-role':
