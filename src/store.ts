@@ -53,6 +53,9 @@ export class Store {
         model_api_key TEXT,
         PRIMARY KEY (room_id, id)
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS npc_memories (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, role_id TEXT NOT NULL, scene_id TEXT, turn_id TEXT, world_change_id TEXT, occurred_at TEXT NOT NULL, occurred_location TEXT, source TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, subjects TEXT NOT NULL DEFAULT '[]', visibility TEXT NOT NULL DEFAULT 'private', salience INTEGER NOT NULL DEFAULT 3, confidence REAL NOT NULL DEFAULT 1.0, status TEXT NOT NULL DEFAULT 'active', supersedes TEXT NOT NULL DEFAULT '[]', superseded_by TEXT, dedupe_key TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (room_id, role_id, dedupe_key)) STRICT;
+      CREATE INDEX IF NOT EXISTS npc_memories_role_active ON npc_memories(room_id, role_id, status, occurred_at);
+      CREATE INDEX IF NOT EXISTS npc_memories_world_change ON npc_memories(room_id, world_change_id);
       CREATE TABLE IF NOT EXISTS reaction_previews (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         room_id TEXT NOT NULL,
@@ -434,12 +437,26 @@ export class Store {
     })
   }
 
+  listNpcMemories(roomId: string, roleId: string, includeInactive = false): import('./types.ts').NpcMemory[] {
+    const rows = this.db.prepare(`SELECT * FROM npc_memories WHERE room_id = ? AND role_id = ?${includeInactive ? '' : " AND status = 'active'"} ORDER BY occurred_at, created_at`).all(roomId, roleId) as any[]
+    return rows.map(rowToNpcMemory)
+  }
+
+  insertNpcMemories(roomId: string, roleId: string, entries: Array<{ id: string; sceneId?: string; turnId?: string; worldChangeId?: string; occurredAt: string; occurredLocation?: string; source: import('./types.ts').MemorySource; kind: import('./types.ts').MemoryKind; text: string; subjects: string[]; salience: number; confidence: number }>): void {
+    const now = new Date().toISOString()
+    const insert = this.db.prepare(`INSERT OR IGNORE INTO npc_memories (id, room_id, role_id, scene_id, turn_id, world_change_id, occurred_at, occurred_location, source, kind, text, subjects, salience, confidence, dedupe_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    for (const entry of entries) { const text = entry.text.trim(); if (!text) continue; const dedupe = `${entry.sceneId ?? entry.turnId ?? 'manual'}:${entry.kind}:${text}`; insert.run(entry.id, roomId, roleId, entry.sceneId ?? null, entry.turnId ?? null, entry.worldChangeId ?? null, entry.occurredAt || '未标注时间', entry.occurredLocation ?? null, entry.source, entry.kind, text, JSON.stringify(entry.subjects ?? []), Math.max(1, Math.min(5, Math.round(entry.salience))), Math.max(0, Math.min(1, entry.confidence)), dedupe, now, now) }
+    this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
+  }
+
+  retractNpcMemory(roomId: string, memoryId: string): void { this.db.prepare("UPDATE npc_memories SET status = 'retracted', updated_at = ? WHERE room_id = ? AND id = ?").run(new Date().toISOString(), roomId, memoryId) }
+
   getRoom(roomId: string): RoomSnapshot | undefined {
     const room = this.db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId) as {
       id: string; title: string; player_name: string; player_persona: string; player_state: string; player_portrait_ref: string; scene_time: string | null; scene_location: string | null; phase: RoomPhase; revision: number; player_contribution: string | null; last_error: string | null; mode: string; auto_publish: number; speech: string | null; pending_world_change: string | null; pending_narration: string | null
     } | undefined
     if (!room) return undefined
-    const roles = this.db.prepare('SELECT * FROM roles WHERE room_id = ? ORDER BY sort_order, rowid').all(roomId).map(rowToRole)
+    const roles = this.db.prepare('SELECT * FROM roles WHERE room_id = ? ORDER BY sort_order, rowid').all(roomId).map((row: any) => ({ ...rowToRole(row), memories: this.listNpcMemories(roomId, String(row.id)) }))
     const turn = this.db.prepare('SELECT id FROM turns WHERE room_id = ? ORDER BY created_at DESC LIMIT 1').get(roomId) as { id: string } | undefined
     const decisions = turn ? this.db.prepare('SELECT * FROM decisions WHERE turn_id = ? ORDER BY rowid').all(turn.id).map(rowToDecision) : []
     const reactions = turn ? this.db.prepare('SELECT turn_id, role_id, text, created_at FROM reaction_previews WHERE turn_id = ? ORDER BY id').all(turn.id).map((row: any) => ({ turnId: row.turn_id, roleId: row.role_id, text: row.text, createdAt: row.created_at })) : []
@@ -970,6 +987,8 @@ export function mergeTimelineEvent(timeline: Record<string, string[]>, when: str
   timeline[when] = bucket
   return true
 }
+
+function rowToNpcMemory(row: any): import('./types.ts').NpcMemory { return { id: row.id, roomId: row.room_id, roleId: row.role_id, ...(row.scene_id ? { sceneId: row.scene_id } : {}), ...(row.turn_id ? { turnId: row.turn_id } : {}), ...(row.world_change_id ? { worldChangeId: row.world_change_id } : {}), occurredAt: row.occurred_at, ...(row.occurred_location ? { occurredLocation: row.occurred_location } : {}), source: row.source, kind: row.kind, text: row.text, subjects: JSON.parse(row.subjects ?? '[]'), visibility: 'private', salience: Number(row.salience), confidence: Number(row.confidence), status: row.status, supersedes: JSON.parse(row.supersedes ?? '[]'), ...(row.superseded_by ? { supersededBy: row.superseded_by } : {}), dedupeKey: row.dedupe_key, createdAt: row.created_at, updatedAt: row.updated_at } }
 
 function rowToRole(row: any): Role {
   const impressions = JSON.parse(row.impressions ?? '{}') as Record<string, string>

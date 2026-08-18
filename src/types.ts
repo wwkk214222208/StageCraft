@@ -208,10 +208,12 @@ export interface WorldNarration {
   usage?: TokenUsage
 }
 
-/** 角色"消化"一条已批准正文后产生的记忆事件：时间标签 → 事件列表 */
-export interface MemoryDigest {
-  events: Record<string, string[]>
-}
+export type MemorySource = 'story' | 'world_change' | 'role_reaction' | 'manual' | 'import'
+export type MemoryKind = 'fact' | 'observation' | 'interaction' | 'promise' | 'relationship' | 'belief' | 'emotion' | 'goal_update'
+export type MemoryStatus = 'active' | 'superseded' | 'retracted' | 'archived'
+export interface MemoryDigestEntry { kind: MemoryKind; text: string; subjects: string[]; salience: 1 | 2 | 3 | 4 | 5; confidence: 0 | 0.25 | 0.5 | 0.75 | 1 }
+export interface MemoryDigest { entries?: MemoryDigestEntry[]; events?: Record<string, string[]> }
+export interface NpcMemory { id: string; roomId: string; roleId: string; sceneId?: string; turnId?: string; worldChangeId?: string; occurredAt: string; occurredLocation?: string; source: MemorySource; kind: MemoryKind; text: string; subjects: string[]; visibility: 'private'; salience: number; confidence: number; status: MemoryStatus; supersedes: string[]; supersededBy?: string; dedupeKey: string; createdAt: string; updatedAt: string }
 
 export interface RoomSnapshot {
   id: string
