@@ -95,7 +95,15 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     for (const workflow of workflows) this.actions.push(...this.workflowExecutor.plan(workflow))
     const interaction = interactionFromRoom(room)
     this.interactions.clear()
-    if (interaction) this.interactions.set(interaction.id, interaction)
+    if (interaction) {
+      this.interactions.set(interaction.id, interaction)
+      const workflow = workflows.find(item => this.interactionBelongsToWorkflow(interaction, item))
+      if (workflow) {
+        const pending = { ...workflow, pendingInteractionIds: [interaction.id], updatedAt: new Date().toISOString() }
+        this.workflows.set(pending.id, pending)
+        this.workflowStore?.save(room.id, pending)
+      }
+    }
     const event = roomSnapshotEvent(room, causedBy)
     this.eventLog?.append(room.id, room.revision, event)
     this.recentEvents.push(event)
@@ -118,16 +126,46 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   }
 
   async dispatch(command: HumanCommand): Promise<void> {
+    const interaction = command.interactionId ? this.interactions.get(command.interactionId) : undefined
+    if (command.interactionId && !interaction) throw new Error(`Interaction is not pending: ${command.interactionId}`)
+    if (interaction && !this.commandMatchesInteraction(command, interaction)) throw new Error(`Command ${command.type} is not allowed for interaction: ${interaction.id}`)
     if (!this.legacyRuntime) {
       this.emit({ type: 'error', revision: this.revision, message: `Core command has no runtime adapter: ${command.type}` })
       return
     }
     try {
       await dispatchLegacyCommand(this.legacyRuntime, command)
+      if (interaction) this.resolveInteraction(interaction, command)
     } catch (error) {
       this.emit({ type: 'error', revision: this.revision, message: error instanceof Error ? error.message : String(error) })
       throw error
     }
+  }
+
+  private resolveInteraction(interaction: import('./protocol.ts').InteractionRequest, command: HumanCommand): void {
+    this.interactions.delete(interaction.id)
+    for (const [id, workflow] of this.workflows) {
+      if (!workflow.pendingInteractionIds.includes(interaction.id)) continue
+      const next = { ...workflow, pendingInteractionIds: workflow.pendingInteractionIds.filter(id => id !== interaction.id), updatedAt: new Date().toISOString() }
+      this.workflows.set(id, next)
+      const roomId = String(next.locals.roomId ?? '')
+      if (roomId) this.workflowStore?.save(roomId, next)
+      this.emit({ type: 'workflow.changed', revision: this.revision, workflow: next })
+    }
+    this.emit({ type: 'interaction.resolved', revision: this.revision, interactionId: interaction.id, command })
+  }
+
+  private interactionBelongsToWorkflow(interaction: import('./protocol.ts').InteractionRequest, workflow: WorkflowInstance): boolean {
+    if (interaction.id.includes('speech')) return workflow.definitionId === chatSpeechWorkflow.id
+    if (interaction.id.includes('world-change')) return workflow.definitionId === chatSpeechWorkflow.id || workflow.definitionId === chatDirectorWorkflow.id
+    if (interaction.id.includes('draft') || interaction.id.includes('director-consult')) return workflow.definitionId === directorTurnWorkflow.id
+    return workflow.step === 'awaiting-player-input'
+  }
+
+  private commandMatchesInteraction(command: HumanCommand, interaction: import('./protocol.ts').InteractionRequest): boolean {
+    if (interaction.kind === 'text') return command.type === 'submit-text'
+    if (interaction.kind === 'approval') return command.type === 'approve' || command.type === 'reject' || command.type === 'cancel'
+    return false
   }
 
   attachLlmRouter(router: CoreLlmRouterPlugin): void {
@@ -168,6 +206,18 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     this.emit({ type: 'model.completed', revision: this.revision, result })
   }
 
+  private availableCommands(): Array<{ type: HumanCommand['type']; label: string; enabled: boolean }> {
+    const commands = new Map<HumanCommand['type'], string>()
+    for (const interaction of this.interactions.values()) {
+      if (interaction.kind === 'text') commands.set('submit-text', interaction.submitLabel ?? '提交')
+      if (interaction.kind === 'approval') {
+        commands.set('approve', interaction.submitLabel ?? '批准')
+        commands.set('reject', '拒绝')
+      }
+    }
+    return [...commands].map(([type, label]) => ({ type, label, enabled: true }))
+  }
+
   private replanActions(): void {
     this.actions.length = 0
     for (const instance of this.workflows.values()) this.actions.push(...this.workflowExecutor.plan(instance))
@@ -181,7 +231,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
       workflows: [...this.workflows.values()].map(workflow => structuredClone(workflow)),
       interactions: [...this.interactions.values()].map(interaction => structuredClone(interaction)),
       actions: structuredClone(this.actions),
-      availableCommands: [],
+      availableCommands: this.availableCommands(),
       recentEvents: structuredClone(this.recentEvents),
     }
   }
