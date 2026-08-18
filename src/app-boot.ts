@@ -17,6 +17,8 @@ import { listStoryPackages, loadStoryPackage, saveStoryPackage, type StoryPackag
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
 import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
+import { CoreRuntimeSkeleton } from './core/runtime.ts'
+import type { CoreEvent } from './core/protocol.ts'
 
 export interface TavernOptions {
   /** 仓库根目录（默认：本文件所在目录的上一级） */
@@ -42,6 +44,7 @@ export interface TavernOptions {
 export interface TavernApp {
   store: Store
   runtime: RoomRuntime
+  core: CoreRuntimeSkeleton
   roomId: string
   gateway: ModelGateway | undefined
   providerStore: ProviderConfigStore
@@ -110,13 +113,26 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       return gatewayFromProvider(selectedProvider, role.modelOverride ?? fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)
     }, { directorThinkingStrength: providerStore.directorThinking() }))
   }
-  const runtime = new RoomRuntime(store)
+  const core = new CoreRuntimeSkeleton()
+  const runtime = new RoomRuntime(store, undefined, core)
   if (providerStore.getDirector()?.apiKey) activateProvider()
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     try {
       if (url.pathname === '/api/room') return json(response, 200, runtime.get(url.searchParams.get('id') ?? roomId))
+      
+      // 新架构：Core Runtime 协议端点（兼容层，不替换旧 API）
+      if (url.pathname === '/api/core/view' && request.method === 'GET') return json(response, 200, core.getView())
+      if (url.pathname === '/api/core/events' && request.method === 'GET') {
+        response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
+        const unsubscribe = core.subscribe((event: CoreEvent) => {
+          response.write(`data: ${JSON.stringify(event)}\n\n`)
+        })
+        request.on('close', unsubscribe)
+        return
+      }
+      
       if (url.pathname === '/api/archive/export' && request.method === 'GET') return json(response, 200, runtime.exportArchive(roomId))
       if (url.pathname === '/api/archive/import' && request.method === 'POST') { runtime.importArchive(roomId, await readJson(request) as { room?: import('./types.ts').RoomSnapshot }); return json(response, 200, { ok: true }) }
       if (url.pathname === '/api/archive/save' && request.method === 'POST') {
