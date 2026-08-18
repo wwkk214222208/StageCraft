@@ -4,6 +4,7 @@ import type { RoomRuntime } from '../room-runtime.ts'
 import { dispatchLegacyCommand } from './command-adapter.ts'
 import { chatDirectorWorkflow, chatSpeechWorkflow, directorTurnWorkflow, interactionFromRoom, workflowInstancesFromRoom } from './solutions.ts'
 import type { CoreEventLog } from './event-log.ts'
+import type { DomainEvent } from './domain-events.ts'
 import type { CoreLlmRouterPlugin, Disposable } from './plugins.ts'
 import {
   CORE_PROTOCOL_VERSION,
@@ -113,6 +114,12 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   async requestModel(request: import('./protocol.ts').ModelRequest): Promise<void> {
     if (!this.llmRouter) throw new Error('Core has no LLM router.')
     await this.llmRouter.request(request)
+  }
+
+  emitDomainEvent(event: DomainEvent): void {
+    const payload = event.payload as { roomId?: unknown }
+    if (payload.roomId) this.eventLog?.appendDomain(String(payload.roomId), this.revision, event)
+    this.emit({ type: 'domain.event', revision: this.revision, event })
   }
 
   async submitModelResult(result: ModelResult): Promise<void> {

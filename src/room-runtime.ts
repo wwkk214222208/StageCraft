@@ -4,6 +4,7 @@ import { Store } from './store.ts'
 import { fakeWorkers } from './workers.ts'
 import type { WorkerSet } from './workers.ts'
 import type { CoreRuntimePort } from './core/protocol.ts'
+import { domainEvent } from './core/domain-events.ts'
 
 type Listener = (snapshot: RoomSnapshot) => void
 export type ThinkingListener = (event: ThinkingEvent) => void
@@ -79,6 +80,7 @@ export class RoomRuntime {
       if (!input.text.trim()) { this.emit(roomId); return }
       this.store.setContribution(roomId, input.text)
       this.store.addPlayerScene(roomId, input.text)
+      this.core?.emitDomainEvent(domainEvent('player.contribution.submitted', { roomId, text: input.text }))
       this.emit(roomId)
       return
     }
@@ -106,6 +108,7 @@ export class RoomRuntime {
     this.cancelledTurns.delete(turnId)
     // 单个 required 决策 = 被点选角色的发言
     this.store.createTurn(roomId, turnId, room.playerContribution ?? '', [{ roleId, participation: 'required', status: 'pending' }], 'role-speaking')
+    this.core?.emitDomainEvent(domainEvent('role.speech.requested', { roomId, roleId, turnId }))
     this.emit(roomId)
     try {
       const latest = this.get(roomId)
@@ -120,7 +123,10 @@ export class RoomRuntime {
       if (this.cancelledTurns.has(turnId)) return
       const text = result.text?.trim()
       if (!text) throw new Error('角色没有产出发言内容。')
-      this.store.saveSpeech(roomId, { roleId, text, ...(result.thinking ? { thinking: result.thinking } : {}), ...(result.usage ? { usage: result.usage } : {}), ...(result.worldChange ? { worldChange: result.worldChange } : {}), turnId })
+      const speech = { roleId, text, ...(result.thinking ? { thinking: result.thinking } : {}), ...(result.usage ? { usage: result.usage } : {}), ...(result.worldChange ? { worldChange: result.worldChange } : {}), turnId }
+      this.store.saveSpeech(roomId, speech)
+      this.core?.emitDomainEvent(domainEvent('role.speech.generated', { roomId, speech }))
+      if (result.worldChange) this.core?.emitDomainEvent(domainEvent('world-change.proposed', { roomId, change: result.worldChange, source: 'speech' }))
       this.emit(roomId)
       // 沉浸模式：跳过审批，自动发布并触发在场角色消化
       if (this.get(roomId).autoPublish) {
@@ -157,7 +163,11 @@ export class RoomRuntime {
     if (!['awaiting-approval', 'world-change-approval'].includes(room.phase) || !room.speech) throw new Error('当前没有待审批的台词。')
     const speech = room.speech
     const playerText = room.playerContribution ?? ''
+    const worldChange = worldChangeOverride ?? speech.worldChange ?? null
     this.store.approveSpeech(roomId, text, undefined, worldChangeOverride)
+    this.core?.emitDomainEvent(domainEvent('speech.approved', { roomId, text, worldChange }))
+    if (worldChange) this.core?.emitDomainEvent(domainEvent('world-change.approved', { roomId, change: worldChange }))
+    this.core?.emitDomainEvent(domainEvent('scene.published', { roomId, speaker: speech.roleId, text: text.trim() }))
     this.emit(roomId)
     // 记忆消化时把玩家发言一并并入，否则角色只记得自己的台词、记不住玩家说了什么
     await this.digestAfterSpeech(roomId, [playerText, text.trim()].filter(Boolean).join('\n'))
@@ -232,7 +242,9 @@ export class RoomRuntime {
     if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
     if (room.phase !== 'world-change-approval' || room.speech) throw new Error('当前没有待确认的世界变更申请。')
     const narration = room.pendingNarration
+    const change = override ?? room.pendingWorldChange ?? {}
     this.store.approveWorldChange(roomId, override)
+    this.core?.emitDomainEvent(domainEvent('world-change.approved', { roomId, change }))
     if (narration?.trim()) {
       this.store.addNarrationScene(roomId, narration)
       this.emit(roomId)
@@ -248,6 +260,7 @@ export class RoomRuntime {
     if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
     if (room.phase !== 'world-change-approval' || room.speech) throw new Error('当前没有待确认的世界变更申请。')
     this.store.rejectWorldChange(roomId)
+    this.core?.emitDomainEvent(domainEvent('world-change.rejected', { roomId, change: room.pendingWorldChange }))
     this.emit(roomId)
   }
 
@@ -290,7 +303,10 @@ export class RoomRuntime {
     if (turnId) this.cancelledRequests.add(turnId)
     if (turnId) this.cancelledTurns.add(turnId)
     // 导演对话期间房间 phase 仍是 awaiting-player-input，无需（也无法）回退 store 阶段
-    if (!directorChatActive) this.store.cancelTurn(roomId)
+    if (!directorChatActive) {
+      this.store.cancelTurn(roomId)
+      if (room.speech) this.core?.emitDomainEvent(domainEvent('speech.rejected', { roomId, roleId: room.speech.roleId, turnId: room.speech.turnId }))
+    }
     this.emit(roomId)
   }
 

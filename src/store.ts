@@ -6,6 +6,7 @@ import type { ConsultationMessage, Decision, Draft, PendingMindUpdate, Role, Roo
 import type { StoryPackage } from './story-packages.ts'
 import { normalizeStateUpdateKeys } from './model-gateway.ts'
 import type { StateEvent } from './core/protocol.ts'
+import { isDomainEvent, type DomainEvent } from './core/domain-events.ts'
 
 export class Store {
   private readonly db: DatabaseSync
@@ -167,6 +168,14 @@ export class Store {
   listCoreEvents(roomId: string, limit = 100): StateEvent[] {
     const rows = this.db.prepare('SELECT event_id, event_type, event_source, caused_by, workflow_id, payload, created_at FROM core_events WHERE room_id = ? ORDER BY sequence ASC LIMIT ?').all(roomId, Math.max(1, limit)) as Array<{ event_id: string; event_type: string; event_source: StateEvent['source']; caused_by: string | null; workflow_id: string | null; payload: string; created_at: string }>
     return rows.map(row => ({ id: row.event_id, type: row.event_type, source: row.event_source, payload: JSON.parse(row.payload), ...(row.caused_by ? { causedBy: row.caused_by } : {}), ...(row.workflow_id ? { workflowId: row.workflow_id } : {}), createdAt: row.created_at }))
+  }
+
+  appendCoreDomainEvent(roomId: string, revision: number, event: DomainEvent): void {
+    this.appendCoreEvent(roomId, revision, event)
+  }
+
+  listCoreDomainEvents(roomId: string, limit = 100): DomainEvent[] {
+    return this.listCoreEvents(roomId, limit).filter(isDomainEvent)
   }
 
   /** 旧库迁移：roles.impressions（该角色对他人的印象，姓名 → 文字） */

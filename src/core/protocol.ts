@@ -1,4 +1,5 @@
 import type { TokenUsage } from '../types.ts'
+import type { DomainEvent } from './domain-events.ts'
 
 /** 核心协议版本；外部 adapter 以此版本协商，不直接依赖内部 RoomRuntime。 */
 export const CORE_PROTOCOL_VERSION = '1.0'
@@ -184,6 +185,7 @@ export interface CoreView {
 
 export type CoreEvent =
   | { type: 'state.changed'; revision: number; transition: StateTransition }
+  | { type: 'domain.event'; revision: number; event: DomainEvent }
   | { type: 'workflow.changed'; revision: number; workflow: WorkflowInstance }
   | { type: 'interaction.created'; revision: number; interaction: InteractionRequest }
   | { type: 'interaction.resolved'; revision: number; interactionId: string; command: HumanCommand }
@@ -197,6 +199,7 @@ export type CoreEventListener = (event: CoreEvent) => void
 export interface CoreRuntimePort {
   dispatch(command: HumanCommand): Promise<void>
   requestModel(request: ModelRequest): Promise<void>
+  emitDomainEvent(event: DomainEvent): void
   submitModelResult(result: ModelResult): Promise<void>
   getView(): CoreView
   subscribe(listener: CoreEventListener): () => void
