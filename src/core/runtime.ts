@@ -3,6 +3,7 @@ import { defaultStateCategories, projectRoomSnapshot, roomSnapshotEvent, type St
 import type { RoomRuntime } from '../room-runtime.ts'
 import { dispatchLegacyCommand } from './command-adapter.ts'
 import { chatDirectorWorkflow, chatSpeechWorkflow, directorTurnWorkflow, interactionFromRoom, workflowInstancesFromRoom } from './solutions.ts'
+import type { CoreEventLog } from './event-log.ts'
 import type { CoreLlmRouterPlugin, Disposable } from './plugins.ts'
 import {
   CORE_PROTOCOL_VERSION,
@@ -40,6 +41,17 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   private legacyRuntime?: { runtime: RoomRuntime; defaultRoomId: string }
   private llmRouter?: CoreLlmRouterPlugin
   private llmRouterDisposable?: Disposable
+  private eventLog?: CoreEventLog
+
+  attachEventLog(eventLog: CoreEventLog): void {
+    this.eventLog = eventLog
+  }
+
+  restoreEventHistory(roomId: string, limit = 100): void {
+    if (!this.eventLog) return
+    this.recentEvents.length = 0
+    this.recentEvents.push(...this.eventLog.list(roomId, limit))
+  }
 
   registerCategory(category: StateCategoryDefinition): void {
     if (!category.id.trim()) throw new Error('State category id is required.')
@@ -57,6 +69,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     this.interactions.clear()
     if (interaction) this.interactions.set(interaction.id, interaction)
     const event = roomSnapshotEvent(room, causedBy)
+    this.eventLog?.append(room.id, room.revision, event)
     this.recentEvents.push(event)
     while (this.recentEvents.length > 100) this.recentEvents.shift()
     this.emit({ type: 'state.changed', revision: this.revision, transition: { revision: this.revision, events: [event], changes: [] } })

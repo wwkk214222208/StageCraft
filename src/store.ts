@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import type { ConsultationMessage, Decision, Draft, PendingMindUpdate, Role, RoomPhase, RoomSnapshot, Scene } from './types.ts'
 import type { StoryPackage } from './story-packages.ts'
 import { normalizeStateUpdateKeys } from './model-gateway.ts'
+import type { StateEvent } from './core/protocol.ts'
 
 export class Store {
   private readonly db: DatabaseSync
@@ -118,6 +119,20 @@ export class Store {
         private_reaction TEXT NOT NULL,
         created_at TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS core_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        room_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        event_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        event_source TEXT NOT NULL,
+        caused_by TEXT,
+        workflow_id TEXT,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(room_id, event_id)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS core_events_room_sequence ON core_events(room_id, sequence DESC);
     `)
     this.ensureDraftColumns()
     this.ensureRoleConfigColumns()
@@ -142,6 +157,16 @@ export class Store {
     if (this.closed) return
     this.closed = true
     this.db.close()
+  }
+
+  appendCoreEvent(roomId: string, revision: number, event: StateEvent): void {
+    this.db.prepare('INSERT OR IGNORE INTO core_events (room_id, revision, event_id, event_type, event_source, caused_by, workflow_id, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(roomId, revision, event.id, event.type, event.source, event.causedBy ?? null, event.workflowId ?? null, JSON.stringify(event.payload), event.createdAt)
+  }
+
+  listCoreEvents(roomId: string, limit = 100): StateEvent[] {
+    const rows = this.db.prepare('SELECT event_id, event_type, event_source, caused_by, workflow_id, payload, created_at FROM core_events WHERE room_id = ? ORDER BY sequence ASC LIMIT ?').all(roomId, Math.max(1, limit)) as Array<{ event_id: string; event_type: string; event_source: StateEvent['source']; caused_by: string | null; workflow_id: string | null; payload: string; created_at: string }>
+    return rows.map(row => ({ id: row.event_id, type: row.event_type, source: row.event_source, payload: JSON.parse(row.payload), ...(row.caused_by ? { causedBy: row.caused_by } : {}), ...(row.workflow_id ? { workflowId: row.workflow_id } : {}), createdAt: row.created_at }))
   }
 
   /** 旧库迁移：roles.impressions（该角色对他人的印象，姓名 → 文字） */

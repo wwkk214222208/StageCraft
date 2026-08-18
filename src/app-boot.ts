@@ -116,8 +116,10 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
     }, { directorThinkingStrength: providerStore.directorThinking() }))
   }
   const core = new CoreRuntimeSkeleton()
+  core.attachEventLog({ append: (id, revision, event) => store.appendCoreEvent(id, revision, event), list: (id, limit) => store.listCoreEvents(id, limit) })
   const runtime = new RoomRuntime(store, undefined, core)
   core.attachLegacyRuntime(runtime, roomId)
+  core.restoreEventHistory(roomId)
   core.projectRoom(runtime.get(roomId), 'app-boot:init')
   if (providerStore.getDirector()?.apiKey) activateProvider()
 
