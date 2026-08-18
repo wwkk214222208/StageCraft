@@ -1,6 +1,8 @@
 import { CoreClient } from './core-client.js'
+import { CoreInteractionPanel } from './core-interactions.js'
 
 const coreClient = new CoreClient()
+const coreInteractionPanel = new CoreInteractionPanel({ client: coreClient })
 window.stagecraftCore = coreClient
 
 let room
@@ -744,7 +746,7 @@ $('#create-role-save').onclick = event => {
 }
 $('#sync-roles').onclick = event => { event.preventDefault(); api('/api/story/sync-roles', { storyId: $('#story-select').value }).then(ok => { if (ok) alert('已同步到初始剧本') }) }
 const debugEvents = new EventSource('/api/debug-events'); debugEvents.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
-Promise.all([fetch('/api/room').then(response => response.json()), coreClient.getView().catch(() => null)]).then(async ([value]) => { render(value); await loadStories(); await loadProviders() })
+Promise.all([fetch('/api/room').then(response => response.json()), coreClient.getView().catch(() => null)]).then(async ([value]) => { render(value); await loadStories(); await loadProviders(); await coreInteractionPanel.start() })
 const events = new EventSource('/api/events'); events.addEventListener('room', event => render(JSON.parse(event.data)))
 // Core Event 通道先只更新客户端缓存；旧 RoomSnapshot SSE 继续驱动现有页面，保证兼容。
 coreClient.subscribe(event => {
