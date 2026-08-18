@@ -573,6 +573,8 @@ document.addEventListener('dragover', event => { const card = event.target.close
 document.addEventListener('drop', event => { const target = event.target.closest('[data-role-drag]'); if (!target || !draggingRoleId) return; event.preventDefault(); const targetId = target.dataset.roleDrag; if (targetId === draggingRoleId) return; const ids = room.roles.map(role => role.id); const from = ids.indexOf(draggingRoleId); const to = ids.indexOf(targetId); if (from < 0 || to < 0) return; ids.splice(from, 1); ids.splice(to, 0, draggingRoleId); draggingRoleId = null; render({ ...room, roles: ids.map(id => room.roles.find(role => role.id === id)).filter(Boolean) }); api('/api/roles/reorder', { roleIds: ids }) })
 $('#contribution').addEventListener('input', () => { if (skipArmed && $('#contribution').value.trim()) { skipArmed = false; render(room) } })
 let inspectedRole
+function setInspectorTab(tab) { document.querySelectorAll('[data-inspector-tab]').forEach(button => button.classList.toggle('active', button.dataset.inspectorTab === tab)); document.querySelectorAll('[data-inspector-panel]').forEach(panel => { panel.hidden = panel.dataset.inspectorPanel !== tab }) }
+document.addEventListener('click', event => { const button = event.target.closest('[data-inspector-tab]'); if (button) setInspectorTab(button.dataset.inspectorTab) })
 function updateInspectorModels() { const provider = providers.find(item => item.id === $('#inspector-provider').value); $('#inspector-model').innerHTML = `<option value="">使用默认模型</option>${(provider?.models ?? []).map(model => `<option value="${escape(model)}">${escape(model)}</option>`).join('')}` }
 $('#inspector-provider').onchange = updateInspectorModels
 function formatTimelineForEdit(role) {
