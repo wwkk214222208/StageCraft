@@ -115,6 +115,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   }
   const core = new CoreRuntimeSkeleton()
   const runtime = new RoomRuntime(store, undefined, core)
+  core.projectRoom(runtime.get(roomId), 'app-boot:init')
   if (providerStore.getDirector()?.apiKey) activateProvider()
 
   const server = createServer(async (request, response) => {
