@@ -15,7 +15,12 @@ let sidebarTab = 'roles' // 左侧栏标签：roles | lore
 const TOKEN_PREFS_KEY = 'stagecraft-token-count'
 let tokenCountEnabled = false
 try { tokenCountEnabled = localStorage.getItem(TOKEN_PREFS_KEY) === '1' } catch {}
-const $ = selector => document.querySelector(selector)
+const missingElement = new Proxy({ hidden: true, value: '', checked: false, innerHTML: '', textContent: '', disabled: false, dataset: {} }, { get(target, property) {
+  if (property === 'addEventListener' || property === 'click' || property === 'focus' || property === 'blur' || property === 'showModal' || property === 'close') return () => {}
+  if (property === 'querySelector' || property === 'querySelectorAll') return () => property === 'querySelectorAll' ? [] : null
+  return target[property] ?? (() => {})
+} })
+const $ = selector => document.querySelector(selector) ?? missingElement
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 
 // ── token 计数小字（可开关；只展示，不进入正文） ──
