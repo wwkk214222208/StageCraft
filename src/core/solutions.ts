@@ -16,8 +16,11 @@ export const chatSpeechWorkflow: WorkflowDefinition = {
     { from: 'role-speaking', event: 'role.speech.generated', to: 'awaiting-approval' },
     { from: 'role-speaking', event: 'world-change.proposed', to: 'world-change-approval' },
     { from: 'role-speaking', event: 'speech.approved', to: 'awaiting-player-input' },
+    { from: 'awaiting-approval', event: 'world-change.proposed', to: 'world-change-approval' },
     { from: 'awaiting-approval', event: 'speech.approved', to: 'awaiting-player-input' },
     { from: 'world-change-approval', event: 'world-change.approved', to: 'awaiting-player-input' },
+    { from: 'world-change-approval', event: 'speech.approved', to: 'awaiting-player-input' },
+    { from: 'world-change-approval', event: 'speech.rejected', to: 'awaiting-player-input' },
   ],
 }
 
