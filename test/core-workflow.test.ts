@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { Store } from '../src/store.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
-import { chatSpeechWorkflow } from '../src/core/solutions.ts'
+import { chatDirectorWorkflow, chatSpeechWorkflow, directorTurnWorkflow, workflowInstancesFromRoom } from '../src/core/solutions.ts'
 
 test('chat.speech is registered and projected from legacy room phase', () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-workflow-'))
@@ -20,10 +20,17 @@ test('chat.speech is registered and projected from legacy room phase', () => {
     core.projectRoom(room)
     const view = core.getView()
     assert.equal(chatSpeechWorkflow.id, 'stagecraft.chat.speech')
+    assert.equal(chatDirectorWorkflow.id, 'stagecraft.chat.director')
+    assert.equal(directorTurnWorkflow.id, 'stagecraft.director.turn')
     assert.equal(view.workflows.length, 1)
-    assert.equal(view.workflows[0].definitionId, chatSpeechWorkflow.id)
+    assert.equal(view.workflows[0].definitionId, directorTurnWorkflow.id)
     assert.equal(view.workflows[0].step, 'awaiting-player-input')
     assert.equal(view.interactions[0].kind, 'text')
+
+    const chatWorkflows = workflowInstancesFromRoom({ ...room, mode: 'chat' })
+    assert.equal(chatWorkflows.length, 2)
+    assert.equal(chatWorkflows[0].definitionId, chatSpeechWorkflow.id)
+    assert.equal(chatWorkflows[1].definitionId, chatDirectorWorkflow.id)
   } finally {
     store?.close()
     rmSync(root, { recursive: true, force: true })

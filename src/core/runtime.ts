@@ -2,7 +2,7 @@ import type { RoomSnapshot } from '../types.ts'
 import { defaultStateCategories, projectRoomSnapshot, roomSnapshotEvent, type StateCategoryDefinition } from './state.ts'
 import type { RoomRuntime } from '../room-runtime.ts'
 import { dispatchLegacyCommand } from './command-adapter.ts'
-import { chatSpeechWorkflow, interactionFromRoom, workflowInstanceFromRoom } from './solutions.ts'
+import { chatDirectorWorkflow, chatSpeechWorkflow, directorTurnWorkflow, interactionFromRoom, workflowInstancesFromRoom } from './solutions.ts'
 import type { CoreLlmRouterPlugin, Disposable } from './plugins.ts'
 import {
   CORE_PROTOCOL_VERSION,
@@ -31,7 +31,11 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   private readonly actions: import('./protocol.ts').CoreAction[] = []
   private readonly recentEvents: StateEvent[] = []
   private readonly listeners = new Set<CoreEventListener>()
-  private readonly definitions = new Map<string, WorkflowDefinition>([[chatSpeechWorkflow.id, chatSpeechWorkflow]])
+  private readonly definitions = new Map<string, WorkflowDefinition>([
+    [chatSpeechWorkflow.id, chatSpeechWorkflow],
+    [chatDirectorWorkflow.id, chatDirectorWorkflow],
+    [directorTurnWorkflow.id, directorTurnWorkflow],
+  ])
   private readonly categories = new Map<string, StateCategoryDefinition>(defaultStateCategories.map(category => [category.id, category]))
   private legacyRuntime?: { runtime: RoomRuntime; defaultRoomId: string }
   private llmRouter?: CoreLlmRouterPlugin
@@ -46,8 +50,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   projectRoom(room: RoomSnapshot, causedBy = 'legacy-room-runtime'): void {
     this.state = projectRoomSnapshot(room).categories
     this.revision = room.revision
-    const workflow = workflowInstanceFromRoom(room)
-    this.workflows.set(workflow.id, workflow)
+    const workflows = workflowInstancesFromRoom(room)
+    this.workflows.clear()
+    for (const workflow of workflows) this.workflows.set(workflow.id, workflow)
     const interaction = interactionFromRoom(room)
     this.interactions.clear()
     if (interaction) this.interactions.set(interaction.id, interaction)
@@ -55,7 +60,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     this.recentEvents.push(event)
     while (this.recentEvents.length > 100) this.recentEvents.shift()
     this.emit({ type: 'state.changed', revision: this.revision, transition: { revision: this.revision, events: [event], changes: [] } })
-    this.emit({ type: 'workflow.changed', revision: this.revision, workflow })
+    for (const workflow of workflows) this.emit({ type: 'workflow.changed', revision: this.revision, workflow })
     if (interaction) this.emit({ type: 'interaction.created', revision: this.revision, interaction })
   }
 
