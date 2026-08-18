@@ -1,5 +1,7 @@
 import type { RoomSnapshot } from '../types.ts'
 import { defaultStateCategories, projectRoomSnapshot, roomSnapshotEvent, type StateCategoryDefinition } from './state.ts'
+import type { RoomRuntime } from '../room-runtime.ts'
+import { dispatchLegacyCommand } from './command-adapter.ts'
 import {
   CORE_PROTOCOL_VERSION,
   type CoreEvent,
@@ -29,6 +31,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   private readonly listeners = new Set<CoreEventListener>()
   private readonly definitions = new Map<string, WorkflowDefinition>()
   private readonly categories = new Map<string, StateCategoryDefinition>(defaultStateCategories.map(category => [category.id, category]))
+  private legacyRuntime?: { runtime: RoomRuntime; defaultRoomId: string }
 
   registerCategory(category: StateCategoryDefinition): void {
     if (!category.id.trim()) throw new Error('State category id is required.')
@@ -51,9 +54,21 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     this.definitions.set(definition.id, definition)
   }
 
+  attachLegacyRuntime(runtime: RoomRuntime, defaultRoomId: string): void {
+    this.legacyRuntime = { runtime, defaultRoomId }
+  }
+
   async dispatch(command: HumanCommand): Promise<void> {
-    // 第一阶段只保留协议入口；旧 Runtime facade 仍是实际业务执行者。
-    this.emit({ type: 'error', revision: this.revision, message: `Core command is not wired yet: ${command.type}` })
+    if (!this.legacyRuntime) {
+      this.emit({ type: 'error', revision: this.revision, message: `Core command has no runtime adapter: ${command.type}` })
+      return
+    }
+    try {
+      await dispatchLegacyCommand(this.legacyRuntime, command)
+    } catch (error) {
+      this.emit({ type: 'error', revision: this.revision, message: error instanceof Error ? error.message : String(error) })
+      throw error
+    }
   }
 
   async submitModelResult(result: ModelResult): Promise<void> {
