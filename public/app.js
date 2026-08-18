@@ -1,3 +1,8 @@
+import { CoreClient } from './core-client.js'
+
+const coreClient = new CoreClient()
+window.stagecraftCore = coreClient
+
 let room
 let providers = []
 let focalRoleIds = new Set()
@@ -739,8 +744,15 @@ $('#create-role-save').onclick = event => {
 }
 $('#sync-roles').onclick = event => { event.preventDefault(); api('/api/story/sync-roles', { storyId: $('#story-select').value }).then(ok => { if (ok) alert('已同步到初始剧本') }) }
 const debugEvents = new EventSource('/api/debug-events'); debugEvents.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
-fetch('/api/room').then(response => response.json()).then(async value => { render(value); await loadStories(); await loadProviders() })
+Promise.all([fetch('/api/room').then(response => response.json()), coreClient.getView().catch(() => null)]).then(async ([value]) => { render(value); await loadStories(); await loadProviders() })
 const events = new EventSource('/api/events'); events.addEventListener('room', event => render(JSON.parse(event.data)))
+// Core Event 通道先只更新客户端缓存；旧 RoomSnapshot SSE 继续驱动现有页面，保证兼容。
+coreClient.subscribe(event => {
+  if (event.revision == null || !coreClient.view) return
+  if (event.type === 'state.changed' || event.type === 'workflow.changed' || event.type === 'interaction.created') {
+    coreClient.getView().catch(() => {})
+  }
+})
 
 // ── 思维链 SSE 订阅与设置 ──
 const thinkingEvents = new EventSource('/api/thinking-events')
