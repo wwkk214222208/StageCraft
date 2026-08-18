@@ -40,6 +40,17 @@ test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', asy
     assert.equal(coreView.state.room?.id, room.id)
     assert.equal(coreView.state.workflow?.phase, room.phase)
 
+    // Core Command：通过统一协议修改房间配置，旧 API 仍保持独立可用
+    const commandRes = await fetch(`${base}/api/core/commands`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'command-test', actor: 'player', type: 'role-management', payload: { operation: 'set-room-config', mode: 'chat', autoPublish: false } }),
+    })
+    assert.equal(commandRes.status, 200)
+    const commandResult = await commandRes.json() as { ok: boolean; view: { state: { room?: { mode?: string } } } }
+    assert.equal(commandResult.ok, true)
+    assert.equal(commandResult.view.state.room?.mode, 'chat')
+
     // REST：剧本列表与使用量
     const storiesRes = await fetch(`${base}/api/stories`)
     assert.equal(storiesRes.status, 200)

@@ -126,6 +126,11 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       
       // 新架构：Core Runtime 协议端点（兼容层，不替换旧 API）
       if (url.pathname === '/api/core/view' && request.method === 'GET') return json(response, 200, core.getView())
+      if (url.pathname === '/api/core/commands' && request.method === 'POST') {
+        const command = await readJson(request)
+        await core.dispatch(command as import('./core/protocol.ts').HumanCommand)
+        return json(response, 200, { ok: true, view: core.getView() })
+      }
       if (url.pathname === '/api/core/events' && request.method === 'GET') {
         response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
         const unsubscribe = core.subscribe((event: CoreEvent) => {

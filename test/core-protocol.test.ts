@@ -23,7 +23,7 @@ test('core runtime exposes versioned Core View and event subscription', async ()
   assert.deepEqual(events[0], {
     type: 'error',
     revision: 0,
-    message: 'Core command is not wired yet: submit-text',
+    message: 'Core command has no runtime adapter: submit-text',
   })
 })
 
