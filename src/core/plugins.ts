@@ -1,0 +1,51 @@
+import type {
+  CoreEvent,
+  CoreEventListener,
+  CoreRuntimePort,
+  HumanCommand,
+  ModelRequest,
+  ModelResult,
+} from './protocol.ts'
+
+/** 可逆资源句柄：HTTP、Cordis、SSE 等 adapter 安装后都必须能释放。 */
+export interface Disposable {
+  dispose(): void | Promise<void>
+}
+
+/** 人-核心交互插件：只处理输入输出协议，不直接访问业务 Store。 */
+export interface HumanCoreInteractionPlugin {
+  readonly id: string
+  install(core: CoreRuntimePort): Disposable
+  dispatch(command: HumanCommand): Promise<void>
+  publish(event: CoreEvent): void
+}
+
+/** 核心-LLM 路由插件：只负责 ModelRequest/ModelResult，不推进业务状态。 */
+export interface CoreLlmRouterPlugin {
+  readonly id: string
+  install(core: CoreLlmRouterHost): Disposable
+  request(request: ModelRequest): Promise<void>
+  cancel(requestId: string): Promise<void>
+}
+
+export interface CoreLlmRouterHost {
+  submitModelResult(result: ModelResult): Promise<void>
+  publishModelEvent(event: CoreEvent): void
+}
+
+/** 核心运行时插件：持有状态与 workflow，向外提供统一 Core Port。 */
+export interface CoreRuntimePlugin {
+  readonly id: 'stagecraft.core' | string
+  runtime: CoreRuntimePort
+  install(): Disposable
+}
+
+/** 宿主用于装配三类插件的最小容器；不绑定 Cordis 或 HTTP。 */
+export interface CorePluginContainer {
+  core: CoreRuntimePort
+  human?: HumanCoreInteractionPlugin[]
+  llm?: CoreLlmRouterPlugin[]
+  addHuman(plugin: HumanCoreInteractionPlugin): Disposable
+  addLlm(plugin: CoreLlmRouterPlugin): Disposable
+  subscribe(listener: CoreEventListener): Disposable
+}
