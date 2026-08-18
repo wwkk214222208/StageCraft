@@ -475,6 +475,9 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       if (url.pathname.startsWith('/assets/')) return asset(response, url.pathname)
       if (url.pathname === '/' || url.pathname === '/index.html') return staticFile(response, 'index.html', 'text/html; charset=utf-8')
       if (url.pathname === '/app.js') return staticFile(response, 'app.js', 'text/javascript; charset=utf-8')
+      if (url.pathname === '/core-client.js') return staticFile(response, 'core-client.js', 'text/javascript; charset=utf-8')
+      if (url.pathname === '/core-interactions.js') return staticFile(response, 'core-interactions.js', 'text/javascript; charset=utf-8')
+      if (url.pathname === '/core-interactions.css') return staticFile(response, 'core-interactions.css', 'text/css; charset=utf-8')
       if (url.pathname === '/style.css') return staticFile(response, 'style.css', 'text/css; charset=utf-8')
       json(response, 404, { error: 'Not found' })
     } catch (error) {
