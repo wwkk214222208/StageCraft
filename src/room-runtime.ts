@@ -508,6 +508,14 @@ export class RoomRuntime {
     this.emit(roomId)
   }
 
+  storeNpcMemories(roomId: string, roleId: string, entries: Array<{ id?: string; kind?: import('./types.ts').MemoryKind; text?: string; subjects?: string[]; occurredAt?: string; salience?: number; confidence?: number }>): void {
+    if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('管理 NPC 记忆需要在空闲时进行。')
+    this.store.insertNpcMemories(roomId, roleId, entries.map((entry, index) => ({ id: entry.id ?? `manual-${Date.now()}-${index}`, kind: entry.kind ?? 'fact', text: String(entry.text ?? ''), subjects: entry.subjects ?? [], occurredAt: entry.occurredAt ?? this.get(roomId).sceneTime ?? '未标注时间', salience: entry.salience ?? 3, confidence: entry.confidence ?? 1, source: 'manual' })))
+    this.emit(roomId)
+  }
+
+  retractNpcMemory(roomId: string, memoryId: string): void { this.store.retractNpcMemory(roomId, memoryId); this.emit(roomId) }
+
   saveLore(roomId: string, lore: import('./types.ts').LoreEntry[]): void {
     this.store.saveLore(roomId, lore)
     this.emit(roomId)
