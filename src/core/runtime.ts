@@ -1,3 +1,5 @@
+import type { RoomSnapshot } from '../types.ts'
+import { defaultStateCategories, projectRoomSnapshot, roomSnapshotEvent, type StateCategoryDefinition } from './state.ts'
 import {
   CORE_PROTOCOL_VERSION,
   type CoreEvent,
@@ -26,6 +28,21 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   private readonly recentEvents: StateEvent[] = []
   private readonly listeners = new Set<CoreEventListener>()
   private readonly definitions = new Map<string, WorkflowDefinition>()
+  private readonly categories = new Map<string, StateCategoryDefinition>(defaultStateCategories.map(category => [category.id, category]))
+
+  registerCategory(category: StateCategoryDefinition): void {
+    if (!category.id.trim()) throw new Error('State category id is required.')
+    if (this.categories.has(category.id)) throw new Error(`State category already registered: ${category.id}`)
+    this.categories.set(category.id, category)
+  }
+
+  projectRoom(room: RoomSnapshot, causedBy = 'legacy-room-runtime'): void {
+    this.state = projectRoomSnapshot(room).categories
+    this.revision = room.revision
+    this.recentEvents.push(roomSnapshotEvent(room, causedBy))
+    while (this.recentEvents.length > 100) this.recentEvents.shift()
+    this.emit({ type: 'state.changed', revision: this.revision, transition: { revision: this.revision, events: [roomSnapshotEvent(room, causedBy)], changes: [] } })
+  }
 
   registerWorkflow(definition: WorkflowDefinition): void {
     if (!definition.id || !definition.version || !definition.initialStep) throw new Error('Invalid workflow definition.')
