@@ -55,6 +55,10 @@ export async function dispatchLegacyCommand(context: CoreCommandContext, command
       return
     }
     case 'reject':
+      if (payload.action === 'draft') {
+        await runtime.rejectDraft(roomId)
+        return
+      }
       if (payload.action === 'speech') {
         await runtime.rejectSpeech(roomId)
         return

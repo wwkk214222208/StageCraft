@@ -15,6 +15,8 @@ export type DomainEventType =
   | 'director.reply.generated'
   | 'role.decision.completed'
   | 'director.draft.generated'
+  | 'draft.approved'
+  | 'draft.rejected'
 
 export interface DomainEventPayloads {
   'player.contribution.submitted': { roomId: string; text: string }
@@ -30,6 +32,8 @@ export interface DomainEventPayloads {
   'director.reply.generated': { roomId: string; text: string }
   'role.decision.completed': { roomId: string; turnId: string }
   'director.draft.generated': { roomId: string; draftId: string; turnId: string }
+  'draft.approved': { roomId: string; draftId: string; text: string }
+  'draft.rejected': { roomId: string; draftId?: string; reason?: string }
 }
 
 export type DomainEvent = {
@@ -38,7 +42,7 @@ export type DomainEvent = {
 
 const domainEventTypes = new Set<DomainEventType>([
   'player.contribution.submitted', 'role.speech.requested', 'role.speech.generated', 'speech.approved', 'speech.rejected',
-  'world-change.proposed', 'world-change.approved', 'world-change.rejected', 'scene.published', 'director.suggestion.submitted', 'director.reply.generated', 'role.decision.completed', 'director.draft.generated',
+  'world-change.proposed', 'world-change.approved', 'world-change.rejected', 'scene.published', 'director.suggestion.submitted', 'director.reply.generated', 'role.decision.completed', 'director.draft.generated', 'draft.approved', 'draft.rejected',
 ])
 
 export function isDomainEvent(event: StateEvent): event is DomainEvent {

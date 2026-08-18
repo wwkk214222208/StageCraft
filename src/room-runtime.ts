@@ -419,6 +419,15 @@ export class RoomRuntime {
     }
   }
 
+  async rejectDraft(roomId: string): Promise<void> {
+    const room = this.get(roomId)
+    if (room.phase !== 'awaiting-approval' || !room.draft) throw new Error('No draft is awaiting rejection.')
+    const draftId = room.draft.id
+    this.store.cancelTurn(roomId)
+    this.core?.emitDomainEvent(domainEvent('draft.rejected', { roomId, draftId, reason: 'player-rejected' }))
+    this.emit(roomId)
+  }
+
   async retryDirector(roomId: string): Promise<void> {
     const room = this.get(roomId)
     if (room.phase !== 'drafting') throw new Error('当前没有可重试的导演请求。')
@@ -613,6 +622,8 @@ export class RoomRuntime {
     const room = this.get(roomId)
     if (room.phase !== 'awaiting-approval') throw new Error('No draft is awaiting approval.')
     this.store.publish(roomId, draftId, text, stateUpdates, sceneUpdates)
+    this.core?.emitDomainEvent(domainEvent('draft.approved', { roomId, draftId, text }))
+    this.core?.emitDomainEvent(domainEvent('scene.published', { roomId, text }))
     this.emit(roomId)
   }
 

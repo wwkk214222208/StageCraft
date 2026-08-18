@@ -55,6 +55,7 @@ export const directorTurnWorkflow: WorkflowDefinition = {
     { from: 'collecting-decisions', event: 'role.decision.completed', to: 'drafting' },
     { from: 'drafting', event: 'director.draft.generated', to: 'awaiting-approval' },
     { from: 'awaiting-approval', event: 'draft.approved', to: 'awaiting-player-input' },
+    { from: 'awaiting-approval', event: 'draft.rejected', to: 'awaiting-player-input' },
     { from: 'awaiting-approval', event: 'director.consulted', to: 'consulting-director' },
   ],
 }

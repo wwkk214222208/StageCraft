@@ -37,7 +37,7 @@ test('CoreRuntime rejects unsupported command without changing legacy state', as
     const core = new CoreRuntimeSkeleton()
     const runtime = new RoomRuntime(store, undefined, core)
     core.attachLegacyRuntime(runtime, roomId)
-    await assert.rejects(() => core.dispatch({ id: 'cmd-2', actor: 'player', type: 'reject', payload: { action: 'draft' } }), /Unsupported reject action/)
+    await assert.rejects(() => core.dispatch({ id: 'cmd-2', actor: 'player', type: 'reject', payload: { action: 'draft' } }), /No draft is awaiting rejection|Unsupported reject action/)
     assert.equal(store.getRoom(roomId).phase, 'awaiting-player-input')
   } finally {
     store?.close()
