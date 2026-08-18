@@ -145,6 +145,16 @@ export class RoomRuntime {
     }
   }
 
+  /** 群聊模式：拒绝待审批台词及其附带世界变更，不发布正文。 */
+  async rejectSpeech(roomId: string): Promise<void> {
+    const room = this.get(roomId)
+    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
+    const speech = this.store.rejectSpeech(roomId)
+    this.core?.emitDomainEvent(domainEvent('speech.rejected', { roomId, roleId: speech.roleId, turnId: speech.turnId }))
+    if (speech.worldChange) this.core?.emitDomainEvent(domainEvent('world-change.rejected', { roomId, change: speech.worldChange }))
+    this.emit(roomId)
+  }
+
   /** 群聊模式：发言失败后重试——复位到可发言的空闲态，再重新让同一角色发言 */
   async retrySpeak(roomId: string): Promise<void> {
     const room = this.get(roomId)

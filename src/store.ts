@@ -590,6 +590,15 @@ export class Store {
     })
   }
 
+  rejectSpeech(roomId: string): import('./types.ts').ChatSpeech {
+    const room = this.db.prepare('SELECT speech, phase FROM rooms WHERE id = ?').get(roomId) as { speech: string | null; phase: string } | undefined
+    if (!room) throw new Error('Room not found.')
+    if (!['awaiting-approval', 'world-change-approval'].includes(room.phase) || !room.speech) throw new Error('当前没有待拒绝的台词。')
+    const speech = JSON.parse(room.speech) as import('./types.ts').ChatSpeech
+    this.db.prepare("UPDATE rooms SET speech = NULL, pending_world_change = NULL, pending_narration = NULL, phase = 'awaiting-player-input', revision = revision + 1 WHERE id = ?").run(roomId)
+    return speech
+  }
+
   /**
    * 在已有事务内落地一条世界变更申请（改场景时间/地点、创建新人物）。
    * 仅在 approveSpeech 的 withTransaction 内调用；不自行开启事务。
