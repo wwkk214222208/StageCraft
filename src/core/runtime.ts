@@ -71,6 +71,16 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     for (const instance of this.workflows.values()) this.actions.push(...this.workflowExecutor.plan(instance))
   }
 
+  restoreInteractionRequests(room: RoomSnapshot): void {
+    const interaction = interactionFromRoom(room)
+    this.interactions.clear()
+    if (interaction) this.interactions.set(interaction.id, interaction)
+    if (room.mode === 'chat') {
+      const director = this.workflows.get(`workflow:${room.id}:chat-director`)
+      if (director?.step === 'awaiting-suggestion') this.interactions.set(`interaction:${room.id}:director-suggestion`, directorSuggestionInteraction(room.id))
+    }
+  }
+
   restoreEventHistory(roomId: string, limit = 100): void {
     if (!this.eventLog) return
     this.recentEvents.length = 0
@@ -86,7 +96,13 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   projectRoom(room: RoomSnapshot, causedBy = 'legacy-room-runtime'): void {
     this.state = projectRoomSnapshot(room).categories
     this.revision = room.revision
-    const workflows = workflowInstancesFromRoom(room)
+    const projected = workflowInstancesFromRoom(room)
+    const workflows = projected.map(fresh => {
+      const existing = this.workflows.get(fresh.id)
+      if (!existing) return fresh
+      if (existing.definitionId !== fresh.definitionId || existing.definitionVersion !== fresh.definitionVersion) return fresh
+      return { ...fresh, step: existing.step, status: existing.status, locals: existing.locals, pendingInteractionIds: existing.pendingInteractionIds, pendingModelRequestIds: existing.pendingModelRequestIds, retryCount: existing.retryCount, createdAt: existing.createdAt, updatedAt: existing.updatedAt }
+    })
     this.workflows.clear()
     for (const workflow of workflows) {
       this.workflows.set(workflow.id, workflow)
@@ -95,7 +111,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     this.actions.length = 0
     for (const workflow of workflows) this.actions.push(...this.workflowExecutor.plan(workflow))
     const interaction = interactionFromRoom(room)
+    const restoredInteractions = new Map([...this.interactions].filter(([id]) => id.startsWith(`interaction:${room.id}:`)))
     this.interactions.clear()
+    for (const [id, pending] of restoredInteractions) this.interactions.set(id, pending)
     if (room.mode === 'chat') {
       const director = workflows.find(item => item.definitionId === chatDirectorWorkflow.id)
       if (director?.step === 'awaiting-suggestion') this.interactions.set(`interaction:${room.id}:director-suggestion`, directorSuggestionInteraction(room.id))
