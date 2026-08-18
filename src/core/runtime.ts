@@ -5,6 +5,7 @@ import { dispatchLegacyCommand } from './command-adapter.ts'
 import { chatDirectorWorkflow, chatSpeechWorkflow, directorTurnWorkflow, interactionFromRoom, workflowInstancesFromRoom } from './solutions.ts'
 import type { CoreEventLog } from './event-log.ts'
 import type { DomainEvent } from './domain-events.ts'
+import { WorkflowExecutor, WorkflowRegistry } from './workflow-engine.ts'
 import type { CoreLlmRouterPlugin, Disposable } from './plugins.ts'
 import {
   CORE_PROTOCOL_VERSION,
@@ -33,6 +34,8 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   private readonly actions: import('./protocol.ts').CoreAction[] = []
   private readonly recentEvents: StateEvent[] = []
   private readonly listeners = new Set<CoreEventListener>()
+  private readonly workflowRegistry = new WorkflowRegistry()
+  private readonly workflowExecutor: WorkflowExecutor
   private readonly definitions = new Map<string, WorkflowDefinition>([
     [chatSpeechWorkflow.id, chatSpeechWorkflow],
     [chatDirectorWorkflow.id, chatDirectorWorkflow],
@@ -43,6 +46,11 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   private llmRouter?: CoreLlmRouterPlugin
   private llmRouterDisposable?: Disposable
   private eventLog?: CoreEventLog
+
+  constructor() {
+    for (const definition of this.definitions.values()) this.workflowRegistry.register(definition)
+    this.workflowExecutor = new WorkflowExecutor(this.workflowRegistry)
+  }
 
   attachEventLog(eventLog: CoreEventLog): void {
     this.eventLog = eventLog
@@ -66,6 +74,8 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     const workflows = workflowInstancesFromRoom(room)
     this.workflows.clear()
     for (const workflow of workflows) this.workflows.set(workflow.id, workflow)
+    this.actions.length = 0
+    for (const workflow of workflows) this.actions.push(...this.workflowExecutor.plan(workflow))
     const interaction = interactionFromRoom(room)
     this.interactions.clear()
     if (interaction) this.interactions.set(interaction.id, interaction)
@@ -83,6 +93,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     if (!definition.steps[definition.initialStep]) throw new Error(`Workflow initial step is missing: ${definition.initialStep}`)
     if (this.definitions.has(definition.id)) throw new Error(`Workflow already registered: ${definition.id}`)
     this.definitions.set(definition.id, definition)
+    this.workflowRegistry.register(definition)
   }
 
   attachLegacyRuntime(runtime: RoomRuntime, defaultRoomId: string): void {
