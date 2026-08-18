@@ -19,7 +19,7 @@ export class CoreInteractionPanel {
 
   render() {
     // 旧 footer/导演输入框仍负责 text；本阶段只让通用面板接管审批，避免重复输入框。
-    const interactions = (this.view?.interactions ?? []).filter(interaction => interaction.kind === 'approval')
+    const interactions = (this.view?.interactions ?? []).filter(interaction => ['approval', 'text', 'role-select'].includes(interaction.kind))
     if (!this.root || !this.section || interactions.length === 0) return this.hide()
     this.section.hidden = false
     this.root.innerHTML = interactions.map(interaction => this.renderInteraction(interaction)).join('')
@@ -33,16 +33,18 @@ export class CoreInteractionPanel {
   renderInteraction(interaction) {
     const description = interaction.description ? `<p class="hint">${escapeHtml(interaction.description)}</p>` : ''
     if (interaction.kind === 'approval') {
-      const reject = interaction.id.includes('draft') ? '' : interaction.id.includes('speech') ? `<button data-core-command="cancel" data-interaction-id="${escapeHtml(interaction.id)}">放弃</button>` : `<button data-core-command="reject" data-interaction-id="${escapeHtml(interaction.id)}">拒绝</button>`
+      const reject = interaction.id.includes('speech') ? `<button data-core-command="reject" data-interaction-id="${escapeHtml(interaction.id)}">拒绝</button>` : `<button data-core-command="reject" data-interaction-id="${escapeHtml(interaction.id)}">拒绝</button>`
       return `<article class="core-interaction" data-id="${escapeHtml(interaction.id)}"><h3>${escapeHtml(interaction.title ?? '待确认')}</h3>${description}<div class="core-interaction-actions"><button data-core-command="approve" data-interaction-id="${escapeHtml(interaction.id)}">${escapeHtml(interaction.submitLabel ?? '批准')}</button>${reject}</div></article>`
     }
     if (interaction.kind === 'text') return `<article class="core-interaction" data-id="${escapeHtml(interaction.id)}"><h3>${escapeHtml(interaction.title ?? '输入')}</h3>${description}<textarea data-core-text="${escapeHtml(interaction.id)}" placeholder="输入内容"></textarea><button data-core-command="submit-text" data-interaction-id="${escapeHtml(interaction.id)}">${escapeHtml(interaction.submitLabel ?? '提交')}</button></article>`
+    if (interaction.kind === 'role-select') return `<article class="core-interaction" data-id="${escapeHtml(interaction.id)}"><h3>${escapeHtml(interaction.title ?? '选择角色')}</h3>${description}<select data-core-role="${escapeHtml(interaction.id)}">${(interaction.options ?? []).map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`).join('')}</select><button data-core-command="select-role" data-interaction-id="${escapeHtml(interaction.id)}">${escapeHtml(interaction.submitLabel ?? '发言')}</button></article>`
     return `<article class="core-interaction"><h3>${escapeHtml(interaction.title ?? interaction.kind)}</h3>${description}</article>`
   }
 
   async submit(type, interactionId) {
     const command = { id: `ui-${Date.now()}`, actor: 'player', interactionId, type, payload: {} }
     if (type === 'submit-text') command.payload.text = this.root.querySelector(`[data-core-text="${CSS.escape(interactionId)}"]`)?.value ?? ''
+    if (type === 'select-role') command.payload.roleId = this.root.querySelector(`[data-core-role="${CSS.escape(interactionId)}"]`)?.value ?? ''
     if (type === 'approve' || type === 'reject') {
       command.payload.action = interactionId.includes('world-change') ? 'world-change' : interactionId.includes('speech') ? 'speech' : 'draft'
       if (command.payload.action === 'speech') {
