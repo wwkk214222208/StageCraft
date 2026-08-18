@@ -3,6 +3,7 @@ import type { Decision, Draft, RoomSnapshot, SubmitTurnInput } from './types.ts'
 import { Store } from './store.ts'
 import { fakeWorkers } from './workers.ts'
 import type { WorkerSet } from './workers.ts'
+import type { CoreRuntimePort } from './core/protocol.ts'
 
 type Listener = (snapshot: RoomSnapshot) => void
 export type ThinkingListener = (event: ThinkingEvent) => void
@@ -27,10 +28,16 @@ export class RoomRuntime {
   private readonly digestingRooms = new Set<string>()
   private readonly store: Store
   private workers: WorkerSet
+  private core?: CoreRuntimePort
 
-  constructor(store: Store, workers: WorkerSet = fakeWorkers) {
+  constructor(store: Store, workers: WorkerSet = fakeWorkers, core?: CoreRuntimePort) {
     this.store = store
     this.workers = workers
+    this.core = core
+  }
+
+  setCoreRuntime(core: CoreRuntimePort): void {
+    this.core = core
   }
 
   setWorkers(workers: WorkerSet): void {
@@ -581,6 +588,10 @@ export class RoomRuntime {
     const snapshot = this.store.getRoom(roomId)
     if (!snapshot) return
     for (const listener of this.listeners.get(roomId) ?? []) listener(snapshot)
+    // 将旧快照投影到 Core State 并发布事件（兼容层：不改变业务流程，只添加事件流）
+    if (this.core && 'projectRoom' in this.core) {
+      (this.core as { projectRoom(room: RoomSnapshot, causedBy?: string): void }).projectRoom(snapshot, `room-runtime:${roomId}`)
+    }
   }
 }
 
