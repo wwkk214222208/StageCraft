@@ -122,9 +122,11 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
     list: (id, limit) => store.listCoreEvents(id, limit),
     listDomain: (id, limit) => store.listCoreDomainEvents(id, limit),
   })
+  core.attachWorkflowStore({ save: (id, instance) => store.saveWorkflowInstance(id, instance), list: id => store.listWorkflowInstances(id) })
   const runtime = new RoomRuntime(store, undefined, core)
   core.attachLegacyRuntime(runtime, roomId)
   core.restoreEventHistory(roomId)
+  core.restoreWorkflowInstances(roomId)
   core.projectRoom(runtime.get(roomId), 'app-boot:init')
   if (providerStore.getDirector()?.apiKey) activateProvider()
 

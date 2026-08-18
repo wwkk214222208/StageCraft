@@ -7,6 +7,7 @@ import type { StoryPackage } from './story-packages.ts'
 import { normalizeStateUpdateKeys } from './model-gateway.ts'
 import type { StateEvent } from './core/protocol.ts'
 import { isDomainEvent, type DomainEvent } from './core/domain-events.ts'
+import type { WorkflowInstance } from './core/protocol.ts'
 
 export class Store {
   private readonly db: DatabaseSync
@@ -134,6 +135,21 @@ export class Store {
         UNIQUE(room_id, event_id)
       ) STRICT;
       CREATE INDEX IF NOT EXISTS core_events_room_sequence ON core_events(room_id, sequence DESC);
+      CREATE TABLE IF NOT EXISTS workflow_instances (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
+        definition_id TEXT NOT NULL,
+        definition_version TEXT NOT NULL,
+        step TEXT NOT NULL,
+        status TEXT NOT NULL,
+        locals TEXT NOT NULL,
+        pending_interactions TEXT NOT NULL,
+        pending_model_requests TEXT NOT NULL,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS workflow_instances_room ON workflow_instances(room_id);
     `)
     this.ensureDraftColumns()
     this.ensureRoleConfigColumns()
@@ -158,6 +174,21 @@ export class Store {
     if (this.closed) return
     this.closed = true
     this.db.close()
+  }
+
+  saveWorkflowInstance(roomId: string, instance: WorkflowInstance): void {
+    this.db.prepare(`INSERT INTO workflow_instances (id, room_id, definition_id, definition_version, step, status, locals, pending_interactions, pending_model_requests, retry_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET definition_version = excluded.definition_version, step = excluded.step, status = excluded.status, locals = excluded.locals, pending_interactions = excluded.pending_interactions, pending_model_requests = excluded.pending_model_requests, retry_count = excluded.retry_count, updated_at = excluded.updated_at`)
+      .run(instance.id, roomId, instance.definitionId, instance.definitionVersion, instance.step, instance.status, JSON.stringify(instance.locals), JSON.stringify(instance.pendingInteractionIds), JSON.stringify(instance.pendingModelRequestIds), instance.retryCount, instance.createdAt, instance.updatedAt)
+  }
+
+  listWorkflowInstances(roomId: string): WorkflowInstance[] {
+    const rows = this.db.prepare('SELECT id, definition_id, definition_version, step, status, locals, pending_interactions, pending_model_requests, retry_count, created_at, updated_at FROM workflow_instances WHERE room_id = ? ORDER BY id').all(roomId) as Array<Record<string, unknown>>
+    return rows.map(row => ({
+      id: String(row.id), definitionId: String(row.definition_id), definitionVersion: String(row.definition_version), step: String(row.step), status: row.status as WorkflowInstance['status'],
+      locals: JSON.parse(String(row.locals)), pendingInteractionIds: JSON.parse(String(row.pending_interactions)), pendingModelRequestIds: JSON.parse(String(row.pending_model_requests)), retryCount: Number(row.retry_count), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+    }))
   }
 
   appendCoreEvent(roomId: string, revision: number, event: StateEvent): void {

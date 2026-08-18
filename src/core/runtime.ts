@@ -6,6 +6,7 @@ import { chatDirectorWorkflow, chatSpeechWorkflow, directorTurnWorkflow, interac
 import type { CoreEventLog } from './event-log.ts'
 import type { DomainEvent } from './domain-events.ts'
 import { WorkflowExecutor, WorkflowRegistry } from './workflow-engine.ts'
+import type { WorkflowInstanceStore } from './workflow-store.ts'
 import type { CoreLlmRouterPlugin, Disposable } from './plugins.ts'
 import {
   CORE_PROTOCOL_VERSION,
@@ -46,6 +47,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   private llmRouter?: CoreLlmRouterPlugin
   private llmRouterDisposable?: Disposable
   private eventLog?: CoreEventLog
+  private workflowStore?: WorkflowInstanceStore
 
   constructor() {
     for (const definition of this.definitions.values()) this.workflowRegistry.register(definition)
@@ -54,6 +56,18 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
 
   attachEventLog(eventLog: CoreEventLog): void {
     this.eventLog = eventLog
+  }
+
+  attachWorkflowStore(store: WorkflowInstanceStore): void {
+    this.workflowStore = store
+  }
+
+  restoreWorkflowInstances(roomId: string): void {
+    if (!this.workflowStore) return
+    this.workflows.clear()
+    for (const instance of this.workflowStore.list(roomId)) this.workflows.set(instance.id, instance)
+    this.actions.length = 0
+    for (const instance of this.workflows.values()) this.actions.push(...this.workflowExecutor.plan(instance))
   }
 
   restoreEventHistory(roomId: string, limit = 100): void {
@@ -73,7 +87,10 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     this.revision = room.revision
     const workflows = workflowInstancesFromRoom(room)
     this.workflows.clear()
-    for (const workflow of workflows) this.workflows.set(workflow.id, workflow)
+    for (const workflow of workflows) {
+      this.workflows.set(workflow.id, workflow)
+      this.workflowStore?.save(room.id, workflow)
+    }
     this.actions.length = 0
     for (const workflow of workflows) this.actions.push(...this.workflowExecutor.plan(workflow))
     const interaction = interactionFromRoom(room)
