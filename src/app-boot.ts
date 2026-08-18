@@ -269,13 +269,17 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       }
       if (url.pathname === '/api/chat/speak' && request.method === 'POST') {
         const body = await readJson(request)
-        await runtime.speak(roomId, String(body.roleId ?? ''))
+        await runtime.speak(roomId, String(body.roleId ?? ''), String(body.feedback ?? ''))
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/chat/approve-speech' && request.method === 'POST') {
         const body = await readJson(request)
         const wc = body?.worldChange
         await runtime.approveSpeech(roomId, String(body?.text ?? ''), (wc && typeof wc === 'object') ? wc as import('./types.ts').WorldChangeRequest : null)
+        return json(response, 200, { ok: true })
+      }
+      if (url.pathname === '/api/chat/reject-speech' && request.method === 'POST') {
+        await runtime.rejectSpeech(roomId)
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/chat/retry' && request.method === 'POST') {

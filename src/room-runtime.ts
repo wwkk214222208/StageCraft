@@ -95,7 +95,7 @@ export class RoomRuntime {
   }
 
   /** 群聊模式：点选角色发言——该角色一次决策产出台词，进入待审批 */
-  async speak(roomId: string, roleId: string): Promise<void> {
+  async speak(roomId: string, roleId: string, feedback = ''): Promise<void> {
     if (this.activeTurns.has(roomId)) throw new Error('A turn is already being processed for this room.')
     const room = this.get(roomId)
     if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
@@ -116,8 +116,9 @@ export class RoomRuntime {
       const speaking = latest.roles.find(item => item.id === roleId)!
       const contribution = latest.playerContribution ?? ''
       const contributionText = contribution.trim() ? contribution : '玩家没有说话，只是注视着你。'
+      const speechInstruction = feedback.trim() ? `${contributionText}\n\n玩家对上一版台词的批复意见：${feedback.trim()}\n请根据批复重新生成更合适的台词。` : contributionText
       if (!this.workers.speak) throw new Error('当前模型服务不支持群聊发言协议。')
-      const result = await this.workers.speak(speaking, contributionText, latest.roles, { time: latest.sceneTime, location: latest.sceneLocation }, (text) => {
+      const result = await this.workers.speak(speaking, speechInstruction, latest.roles, { time: latest.sceneTime, location: latest.sceneLocation }, (text) => {
         this.emitThinking(roomId, { actor: 'role', roleId, turnId, text, done: false })
       }, latest.lore, latest.scenes.at(-1)?.text)
       this.emitThinking(roomId, { actor: 'role', roleId, turnId, text: '', done: true })
