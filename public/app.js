@@ -87,6 +87,7 @@ function currentDraftText() { return $('#center-draft-text')?.value ?? room?.dra
 function setContribution(text) { const input = $('#contribution'); input.value = input.value ? `${input.value}\n${text}` : text; input.focus() }
 function render(next) {
   room = next
+  window.stagecraftRoom = next
   focalRoleIds = new Set([...focalRoleIds].filter(id => room.roles.some(role => role.id === id && role.presence === 'present')))
   if (room.phase === 'awaiting-player-input') clearThinkingStreams()
   const states = { present: '在场', absent: '离场', unavailable: '离场' }
