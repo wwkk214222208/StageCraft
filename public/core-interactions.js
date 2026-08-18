@@ -18,16 +18,9 @@ export class CoreInteractionPanel {
   }
 
   render() {
-    // 旧 footer/导演输入框仍负责 text；本阶段只让通用面板接管审批，避免重复输入框。
-    const interactions = (this.view?.interactions ?? []).filter(interaction => ['approval', 'text', 'role-select'].includes(interaction.kind))
-    if (!this.root || !this.section || interactions.length === 0) return this.hide()
-    this.section.hidden = false
-    this.root.innerHTML = interactions.map(interaction => this.renderInteraction(interaction)).join('')
-    // 审批由 Core Command 主通道处理；原按钮保留在 DOM，Core 不可用时会恢复为回退入口。
-    document.querySelectorAll('#speech-approve,#world-change-approve,#center-approve').forEach(button => { button.hidden = true })
-    for (const button of this.root.querySelectorAll('[data-core-command]')) {
-      button.addEventListener('click', () => this.submit(button.dataset.coreCommand, button.dataset.interactionId))
-    }
+    // 这些交互已有明确的领域 UI：导演建议框、底部玩家输入框、中央审批区和左侧角色按钮。
+    // Core Interaction Panel 只保留协议能力，不再抢占或复制前台控件。
+    this.hide()
   }
 
   renderInteraction(interaction) {
@@ -78,7 +71,7 @@ export class CoreInteractionPanel {
 
   hide() {
     if (this.section) this.section.hidden = true
-    document.querySelectorAll('#speech-approve,#world-change-approve,#center-approve').forEach(button => { button.hidden = false })
+    document.querySelectorAll('#speech-approve,#speech-cancel,#world-change-approve,#world-change-reject,#center-approve,#center-reconsider,#center-proceed-draft').forEach(button => { button.hidden = false })
   }
 }
 
