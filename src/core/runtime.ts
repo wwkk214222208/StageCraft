@@ -208,6 +208,16 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
 
   async requestModel(request: import('./protocol.ts').ModelRequest): Promise<void> {
     if (!this.llmRouter) throw new Error('Core has no LLM router.')
+    if (request.workflowId) {
+      const workflow = this.workflows.get(request.workflowId)
+      if (workflow) {
+        const next = { ...workflow, pendingModelRequestIds: [...new Set([...workflow.pendingModelRequestIds, request.requestId])], updatedAt: new Date().toISOString() }
+        this.workflows.set(workflow.id, next)
+        const roomId = String(next.locals.roomId ?? '')
+        if (roomId) this.workflowStore?.save(roomId, next)
+        this.emit({ type: 'workflow.changed', revision: this.revision, workflow: next })
+      }
+    }
     await this.llmRouter.request(request)
   }
 
@@ -232,6 +242,14 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   }
 
   async submitModelResult(result: ModelResult): Promise<void> {
+    for (const [id, workflow] of this.workflows) {
+      if (!workflow.pendingModelRequestIds.includes(result.requestId)) continue
+      const next = { ...workflow, pendingModelRequestIds: workflow.pendingModelRequestIds.filter(requestId => requestId !== result.requestId), updatedAt: new Date().toISOString() }
+      this.workflows.set(id, next)
+      const roomId = String(next.locals.roomId ?? '')
+      if (roomId) this.workflowStore?.save(roomId, next)
+      this.emit({ type: 'workflow.changed', revision: this.revision, workflow: next })
+    }
     this.emit({ type: 'model.completed', revision: this.revision, result })
   }
 
