@@ -1,7 +1,7 @@
-import type { RoomMode, RoomPhase } from '../types.ts'
+import type { Role, RoomMode, RoomPhase } from '../types.ts'
 import type { InteractionRequest, WorkflowDefinition, WorkflowInstance } from './protocol.ts'
 
-type WorkflowRoom = { id: string; mode: RoomMode; phase: RoomPhase; revision: number; draft?: unknown; speech?: unknown; pendingWorldChange?: unknown }
+type WorkflowRoom = { id: string; mode: RoomMode; phase: RoomPhase; revision: number; roles?: Role[]; draft?: unknown; speech?: unknown; pendingWorldChange?: unknown }
 
 export const chatSpeechWorkflow: WorkflowDefinition = {
   id: 'stagecraft.chat.speech', version: '1.0.0', initialStep: 'awaiting-player-input',
@@ -12,7 +12,7 @@ export const chatSpeechWorkflow: WorkflowDefinition = {
     'world-change-approval': { id: 'world-change-approval', actions: [{ type: 'human-interaction', interactionKind: 'approval', label: '批准世界变更' }] },
   },
   transitions: [
-    { from: 'awaiting-player-input', event: 'role.selected', to: 'role-speaking' },
+    { from: 'awaiting-player-input', event: 'role.speech.requested', to: 'role-speaking' },
     { from: 'role-speaking', event: 'role.speech.generated', to: 'awaiting-approval' },
     { from: 'role-speaking', event: 'world-change.proposed', to: 'world-change-approval' },
     { from: 'role-speaking', event: 'speech.approved', to: 'awaiting-player-input' },
@@ -92,7 +92,7 @@ export function interactionFromRoom(room: WorkflowRoom): InteractionRequest | un
     if (room.phase === 'consulting-director') return textInteraction(room.id, 'director-consult', '与导演讨论', '说明需要调整的剧情、设定或草稿问题。', '发送')
     return undefined
   }
-  if (room.phase === 'awaiting-player-input') return textInteraction(room.id, 'player-input', '玩家行动', '输入行动或选择角色发言；也可向导演建议世界变化。', '提交')
+  if (room.phase === 'awaiting-player-input') return roleSelectInteraction(room.id, room.roles ?? [])
   if (room.phase === 'awaiting-approval') return approvalInteraction(room.id, 'speech-approval', '批准角色台词', '确认或编辑角色刚生成的台词。')
   if (room.phase === 'world-change-approval') return approvalInteraction(room.id, 'world-change-approval', '批准世界变更', '确认角色或导演提出的时间、地点或角色状态变化。')
   return undefined
@@ -100,6 +100,10 @@ export function interactionFromRoom(room: WorkflowRoom): InteractionRequest | un
 
 function textInteraction(roomId: string, suffix: string, title: string, description: string, submitLabel: string): InteractionRequest {
   return { id: `interaction:${roomId}:${suffix}`, kind: 'text', title, description, fields: [{ id: 'text', type: 'textarea', label: '内容', required: true }], submitLabel, cancelable: false, createdAt: new Date().toISOString() }
+}
+function roleSelectInteraction(roomId: string, roles: Role[]): InteractionRequest {
+  const options = roles.filter(role => role.presence === 'present').map(role => ({ id: role.id, label: role.name, value: role.id }))
+  return { id: `interaction:${roomId}:role-select`, kind: 'role-select', title: '选择角色发言', description: '选择一名在场角色，由其生成下一段台词。', options, submitLabel: '发言', cancelable: false, createdAt: new Date().toISOString() }
 }
 function approvalInteraction(roomId: string, suffix: string, title: string, description: string): InteractionRequest {
   return { id: `interaction:${roomId}:${suffix}`, kind: 'approval', title, description, options: [{ id: 'approve', label: '批准' }, { id: 'reject', label: '拒绝' }], submitLabel: '批准', cancelable: true, createdAt: new Date().toISOString() }

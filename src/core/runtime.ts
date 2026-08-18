@@ -164,6 +164,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
 
   private commandMatchesInteraction(command: HumanCommand, interaction: import('./protocol.ts').InteractionRequest): boolean {
     if (interaction.kind === 'text') return command.type === 'submit-text'
+    if (interaction.kind === 'role-select') return command.type === 'select-role'
     if (interaction.kind === 'approval') return command.type === 'approve' || command.type === 'reject' || command.type === 'cancel'
     return false
   }
@@ -210,6 +211,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     const commands = new Map<HumanCommand['type'], string>()
     for (const interaction of this.interactions.values()) {
       if (interaction.kind === 'text') commands.set('submit-text', interaction.submitLabel ?? '提交')
+      if (interaction.kind === 'role-select') commands.set('select-role', interaction.submitLabel ?? '发言')
       if (interaction.kind === 'approval') {
         commands.set('approve', interaction.submitLabel ?? '批准')
         commands.set('reject', '拒绝')
