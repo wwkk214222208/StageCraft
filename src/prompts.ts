@@ -7,6 +7,7 @@ export interface PromptTemplates {
   director: { request: string; retrySystem: string; retryUser: string }
   consult: { user: string }
   skills: { director: string; consultation: string }
+  chat: { system: string; user: string; directorChatSystem: string; directorChatUser: string }
 }
 
 /** 创作理念（私有，随项目保留目录但不提交内容）：角色世界运行原则 + 导演创作宪法/文风 */
@@ -121,14 +122,19 @@ function loadIdeologyFile(path: string): PromptIdeology {
 function applyIdeology(templates: PromptTemplates, ideology: PromptIdeology): void {
   templates.role.system = templates.role.system.replace('{roleIdeals}', ideology.roleIdeals ?? '')
   templates.skills.director = templates.skills.director.replace('{directorIdeals}', ideology.directorIdeals ?? '')
+  templates.chat.directorChatSystem = templates.chat.directorChatSystem.replace('{directorIdeals}', ideology.directorIdeals ?? '')
 }
 
 /** 加载提示词模板；可用环境变量 PROMPTS_FILE 指向自定义文件；自动合并私有创作理念 */
 export function loadPrompts(filePath = process.env.PROMPTS_FILE ?? defaultPath): PromptTemplates {
   if (!existsSync(filePath)) throw new Error(`Prompts file not found: ${filePath}`)
-  const templates = JSON.parse(readFileSync(filePath, 'utf8')) as PromptTemplates
-  applyIdeology(templates, loadIdeology(filePath))
-  return templates
+  const templates = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<PromptTemplates>
+  const defaults = JSON.parse(readFileSync(defaultPath, 'utf8')) as PromptTemplates
+  // 兼容旧/部分自定义文件：缺失字段回退默认模板（尤其 chat.directorChatSystem / directorChatUser）
+  const merged: PromptTemplates = { ...defaults, ...templates }
+  merged.chat = { ...defaults.chat, ...(templates.chat ?? {}) }
+  applyIdeology(merged, loadIdeology(filePath))
+  return merged
 }
 
 /** 用 {占位符} 替换模板变量；未提供的占位符保留原样 */

@@ -108,7 +108,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       if (!selectedProvider?.apiKey) return gateway!
       const fallbackModel = selectedProvider.id === fallbackProvider?.id ? defaults.defaultRoleModel : undefined
       return gatewayFromProvider(selectedProvider, role.modelOverride ?? fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)
-    }))
+    }, { directorThinkingStrength: providerStore.directorThinking() }))
   }
   const runtime = new RoomRuntime(store)
   if (providerStore.getDirector()?.apiKey) activateProvider()
@@ -186,7 +186,14 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         activateProvider()
         return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults() })
       }
-      if (url.pathname === '/api/usage') return json(response, 200, gateway?.usage() ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, mode: 'fake' })
+      if (url.pathname === '/api/providers/director-thinking' && request.method === 'POST') {
+        const body = await readJson(request)
+        const thinking = String(body.thinking ?? '') as import('./types.ts').ThinkingStrength
+        providerStore.setDirectorThinking(thinking)
+        activateProvider()
+        return json(response, 200, { ok: true, defaults: providerStore.defaults() })
+      }
+      if (url.pathname === '/api/usage') return json(response, 200, gateway?.usage(true) ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake' })
       if (url.pathname === '/api/prompts' && request.method === 'GET') {
         return json(response, 200, { files: listIdeologyFiles(promptsFilePath) })
       }
@@ -233,11 +240,27 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       }
       if (url.pathname === '/api/chat/approve-speech' && request.method === 'POST') {
         const body = await readJson(request)
-        await runtime.approveSpeech(roomId, String(body.text ?? ''))
+        const wc = body?.worldChange
+        await runtime.approveSpeech(roomId, String(body?.text ?? ''), (wc && typeof wc === 'object') ? wc as import('./types.ts').WorldChangeRequest : null)
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/chat/retry' && request.method === 'POST') {
         await runtime.retrySpeak(roomId)
+        return json(response, 200, { ok: true })
+      }
+      if (url.pathname === '/api/chat/director-chat' && request.method === 'POST') {
+        const body = await readJson(request)
+        await runtime.directorChat(roomId, String(body?.text ?? ''))
+        return json(response, 200, { ok: true })
+      }
+      if (url.pathname === '/api/world-change/approve' && request.method === 'POST') {
+        const body = await readJson(request)
+        const wc = body?.worldChange
+        await runtime.approveWorldChange(roomId, (wc && typeof wc === 'object') ? wc as import('./types.ts').WorldChangeRequest : null)
+        return json(response, 200, { ok: true })
+      }
+      if (url.pathname === '/api/world-change/reject' && request.method === 'POST') {
+        await runtime.rejectWorldChange(roomId)
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/st-cards/import' && request.method === 'POST') {
@@ -292,7 +315,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       }
       if (url.pathname === '/api/roles/intervene' && request.method === 'POST') {
         const body = await readJson(request)
-        runtime.interveneRole(roomId, String(body.roleId), String(body.selfModel ?? ''), JSON.parse(String(body.memoryTimeline ?? '{}')) as Record<string, string[]>, { providerId: body.providerId ? String(body.providerId) : undefined, modelOverride: body.modelOverride ? String(body.modelOverride) : undefined, ...(typeof body.impressions === 'string' ? { impressions: JSON.parse(body.impressions) as Record<string, string> } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}) })
+        runtime.interveneRole(roomId, String(body.roleId), String(body.selfModel ?? ''), JSON.parse(String(body.memoryTimeline ?? '{}')) as Record<string, string[]>, { providerId: body.providerId ? String(body.providerId) : undefined, modelOverride: body.modelOverride ? String(body.modelOverride) : undefined, ...(typeof body.impressions === 'string' ? { impressions: JSON.parse(body.impressions) as Record<string, string> } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}), ...(body.thinkingStrength ? { thinkingStrength: String(body.thinkingStrength) as import('./types.ts').ThinkingStrength } : {}) })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/create' && request.method === 'POST') {
@@ -311,6 +334,12 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         const presence = String(body.presence)
         if (!['present', 'absent', 'unavailable'].includes(presence)) throw new Error('无效的在场状态。')
         runtime.setRolePresence(roomId, String(body.roleId), presence as 'present' | 'absent' | 'unavailable')
+        return json(response, 200, { ok: true })
+      }
+      if (url.pathname === '/api/roles/thinking' && request.method === 'POST') {
+        const body = await readJson(request)
+        const thinking = String(body.thinking ?? '') as import('./types.ts').ThinkingStrength
+        runtime.setRoleThinking(roomId, String(body.roleId), thinking)
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/reorder' && request.method === 'POST') {

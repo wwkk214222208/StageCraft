@@ -20,6 +20,7 @@ export class RoomRuntime {
   private readonly listeners = new Map<string, Set<Listener>>()
   private readonly thinkingListeners = new Map<string, Set<ThinkingListener>>()
   private readonly activeTurns = new Set<string>()
+  private readonly activeDirectorChats = new Set<string>()
   private readonly turnIds = new Map<string, string>()
   private readonly cancelledTurns = new Set<string>()
   private readonly cancelledRequests = new Set<string>()
@@ -112,7 +113,7 @@ export class RoomRuntime {
       if (this.cancelledTurns.has(turnId)) return
       const text = result.text?.trim()
       if (!text) throw new Error('角色没有产出发言内容。')
-      this.store.saveSpeech(roomId, { roleId, text, ...(result.thinking ? { thinking: result.thinking } : {}), ...(result.usage ? { usage: result.usage } : {}), turnId })
+      this.store.saveSpeech(roomId, { roleId, text, ...(result.thinking ? { thinking: result.thinking } : {}), ...(result.usage ? { usage: result.usage } : {}), ...(result.worldChange ? { worldChange: result.worldChange } : {}), turnId })
       this.emit(roomId)
       // 沉浸模式：跳过审批，自动发布并触发在场角色消化
       if (this.get(roomId).autoPublish) {
@@ -143,16 +144,104 @@ export class RoomRuntime {
   }
 
   /** 群聊模式：玩家批准（可先编辑）台词 → 发布 → 在场角色并行消化记忆 */
-  async approveSpeech(roomId: string, text: string): Promise<void> {
+  async approveSpeech(roomId: string, text: string, worldChangeOverride?: import('./types.ts').WorldChangeRequest | null): Promise<void> {
     const room = this.get(roomId)
     if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
-    if (room.phase !== 'awaiting-approval' || !room.speech) throw new Error('当前没有待审批的台词。')
+    if (!['awaiting-approval', 'world-change-approval'].includes(room.phase) || !room.speech) throw new Error('当前没有待审批的台词。')
     const speech = room.speech
     const playerText = room.playerContribution ?? ''
-    this.store.approveSpeech(roomId, text)
+    this.store.approveSpeech(roomId, text, undefined, worldChangeOverride)
     this.emit(roomId)
     // 记忆消化时把玩家发言一并并入，否则角色只记得自己的台词、记不住玩家说了什么
     await this.digestAfterSpeech(roomId, [playerText, text.trim()].filter(Boolean).join('\n'))
+  }
+
+  /**
+   * 群聊模式：玩家用自然语言向导演建议世界变更（推进时间/换场景/人物进出场/新人物）。
+   * 导演一次调用产出回复 + 可选世界变更申请 + 叙述：
+   * - 上帝模式（autoPublish=false）：申请进入待确认，玩家批准后落地并写叙述；
+   * - 沉浸模式（autoPublish=true）：申请直接落地并写叙述。
+   */
+  async directorChat(roomId: string, text: string): Promise<void> {
+    if (this.activeTurns.has(roomId)) throw new Error('A turn is already being processed for this room.')
+    const room = this.get(roomId)
+    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
+    if (room.phase !== 'awaiting-player-input') throw new Error(`Room is busy: ${room.phase}`)
+    if (!this.workers.directorChat) throw new Error('当前模型服务不支持导演对话。')
+    const playerText = String(text ?? '').trim()
+    if (!playerText) throw new Error('请输入你想对导演说的话。')
+    this.activeTurns.add(roomId)
+    this.activeDirectorChats.add(roomId)
+    try {
+      const context: import('./workers.ts').DirectorChatContext = {
+        sceneTime: room.sceneTime,
+        sceneLocation: room.sceneLocation,
+        playerName: room.playerCharacter.name,
+        playerContribution: room.playerContribution ?? '',
+        recentScene: room.scenes.at(-1)?.text,
+        roles: room.roles,
+        lore: room.lore,
+        history: room.consultations,
+      }
+      const result = await this.workers.directorChat(playerText, context, (thinkingText) => {
+        this.emitThinking(roomId, { actor: 'director', turnId: `director-${Date.now()}`, text: thinkingText, done: false })
+      })
+      this.emitThinking(roomId, { actor: 'director', turnId: 'director', text: '', done: true })
+      if (this.cancelledRequests.has(roomId)) return
+      const reply = result.reply?.trim()
+      if (!reply) throw new Error('导演没有产出回复。')
+      this.store.addConsultation(roomId, null, 'player', playerText)
+      this.store.addConsultation(roomId, null, 'director', reply, result.usage, result.thinking)
+      if (result.worldChange) {
+        if (this.get(roomId).autoPublish) {
+          // 沉浸模式：直接落地 + 写叙述 + 在场角色消化
+          this.store.saveWorldChange(roomId, result.worldChange, result.narration)
+          this.store.approveWorldChange(roomId)
+          if (result.narration?.trim()) {
+            this.store.addNarrationScene(roomId, result.narration, result.usage)
+            this.emit(roomId)
+            await this.digestAfterSpeech(roomId, result.narration)
+          } else {
+            this.emit(roomId)
+          }
+        } else {
+          // 上帝模式：进入待确认，玩家批准后落地并写叙述
+          this.store.saveWorldChange(roomId, result.worldChange, result.narration)
+          this.emit(roomId)
+        }
+      } else {
+        this.emit(roomId)
+      }
+    } finally {
+      this.activeTurns.delete(roomId)
+      this.activeDirectorChats.delete(roomId)
+      this.cancelledRequests.delete(roomId)
+    }
+  }
+
+  /** 群聊模式：玩家批准导演对话产出的世界变更申请（无台词）→ 落地并写叙述 */
+  async approveWorldChange(roomId: string, override?: import('./types.ts').WorldChangeRequest | null): Promise<void> {
+    const room = this.get(roomId)
+    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
+    if (room.phase !== 'world-change-approval' || room.speech) throw new Error('当前没有待确认的世界变更申请。')
+    const narration = room.pendingNarration
+    this.store.approveWorldChange(roomId, override)
+    if (narration?.trim()) {
+      this.store.addNarrationScene(roomId, narration)
+      this.emit(roomId)
+      await this.digestAfterSpeech(roomId, narration)
+    } else {
+      this.emit(roomId)
+    }
+  }
+
+  /** 群聊模式：玩家拒绝导演对话产出的世界变更申请 → 清空申请 */
+  async rejectWorldChange(roomId: string): Promise<void> {
+    const room = this.get(roomId)
+    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
+    if (room.phase !== 'world-change-approval' || room.speech) throw new Error('当前没有待确认的世界变更申请。')
+    this.store.rejectWorldChange(roomId)
+    this.emit(roomId)
   }
 
   /** 群聊模式：台词发布后，所有在场角色各跑一次消化调用，把记忆并入时间线 */
@@ -183,12 +272,18 @@ export class RoomRuntime {
   }
 
   cancelTurn(roomId: string): void {
+    const room = this.get(roomId)
+    const directorChatActive = this.activeDirectorChats.has(roomId)
+    const cancellablePhase = ['collecting-decisions', 'drafting', 'consulting-director', 'role-speaking', 'world-change-approval'].includes(room.phase)
+    // 取消是幂等操作：请求已经完成/状态已经回到空闲时，不再把晚到的“停止”当成错误。
+    if (!directorChatActive && !cancellablePhase) return
     this.cancelledRequests.add(roomId)
     this.workers.cancel?.()
     const turnId = this.turnIds.get(roomId)
     if (turnId) this.cancelledRequests.add(turnId)
     if (turnId) this.cancelledTurns.add(turnId)
-    this.store.cancelTurn(roomId)
+    // 导演对话期间房间 phase 仍是 awaiting-player-input，无需（也无法）回退 store 阶段
+    if (!directorChatActive) this.store.cancelTurn(roomId)
     this.emit(roomId)
   }
 
@@ -357,7 +452,7 @@ export class RoomRuntime {
     this.emit(roomId)
   }
 
-  interveneRole(roomId: string, roleId: string, selfModel: string, memoryTimeline: Record<string, string[]>, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[] } = {}): void {
+  interveneRole(roomId: string, roleId: string, selfModel: string, memoryTimeline: Record<string, string[]>, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
     const room = this.get(roomId)
     if (room.phase !== 'awaiting-player-input') throw new Error('Private role intervention requires an idle room.')
     this.store.updateRolePrivateState(roomId, roleId, selfModel, memoryTimeline, config)
@@ -383,6 +478,12 @@ export class RoomRuntime {
 
   setRolePresence(roomId: string, roleId: string, presence: 'present' | 'absent' | 'unavailable'): void {
     this.store.setRolePresence(roomId, roleId, presence)
+    this.emit(roomId)
+  }
+
+  setRoleThinking(roomId: string, roleId: string, thinkingStrength: import('./types.ts').ThinkingStrength): void {
+    if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('调整角色思维链需要在空闲时进行。')
+    this.store.setRoleThinking(roomId, roleId, thinkingStrength)
     this.emit(roomId)
   }
 

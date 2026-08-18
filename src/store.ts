@@ -134,6 +134,7 @@ export class Store {
     this.ensureRoleGoals()
     this.ensureRoomModeColumns()
     this.ensureUsageColumns()
+    this.ensureWorldChangeColumn()
   }
 
   /** 关闭数据库连接（幂等；供宿主卸载/退出前的资源回收） */
@@ -161,6 +162,13 @@ export class Store {
     if (!columns.has('mode')) this.db.exec("ALTER TABLE rooms ADD COLUMN mode TEXT NOT NULL DEFAULT 'director'")
     if (!columns.has('auto_publish')) this.db.exec('ALTER TABLE rooms ADD COLUMN auto_publish INTEGER NOT NULL DEFAULT 0')
     if (!columns.has('speech')) this.db.exec('ALTER TABLE rooms ADD COLUMN speech TEXT')
+  }
+
+  /** 旧库迁移：rooms.pending_world_change（群聊模式待确认的世界变更申请 JSON） */
+  private ensureWorldChangeColumn(): void {
+    const columns = new Set(this.db.prepare('PRAGMA table_info(rooms)').all().map((row: any) => row.name as string))
+    if (!columns.has('pending_world_change')) this.db.exec('ALTER TABLE rooms ADD COLUMN pending_world_change TEXT')
+    if (!columns.has('pending_narration')) this.db.exec('ALTER TABLE rooms ADD COLUMN pending_narration TEXT')
   }
 
   /** 旧库迁移：decisions/drafts/scenes/consultations.usage（单次调用的 token 用量，前端小字展示） */
@@ -271,6 +279,10 @@ export class Store {
     if (!draftColumns.has('thinking')) this.db.exec('ALTER TABLE drafts ADD COLUMN thinking TEXT')
     const decisionColumns = new Set(this.db.prepare('PRAGMA table_info(decisions)').all().map((row: any) => row.name as string))
     if (!decisionColumns.has('thinking')) this.db.exec('ALTER TABLE decisions ADD COLUMN thinking TEXT')
+    const roleColumns = new Set(this.db.prepare('PRAGMA table_info(roles)').all().map((row: any) => row.name as string))
+    if (!roleColumns.has('thinking_strength')) this.db.exec('ALTER TABLE roles ADD COLUMN thinking_strength TEXT')
+    const consultationColumns = new Set(this.db.prepare('PRAGMA table_info(consultations)').all().map((row: any) => row.name as string))
+    if (!consultationColumns.has('thinking')) this.db.exec('ALTER TABLE consultations ADD COLUMN thinking TEXT')
   }
 
   /** 旧库迁移：decisions.public_identity（角色本回合对外展示的身份/形象） */
@@ -282,9 +294,9 @@ export class Store {
   recoverInterruptedRooms(): number {
     const result = this.db.prepare(`
       UPDATE rooms
-      SET phase = 'awaiting-player-input', revision = revision + 1, speech = NULL,
+      SET phase = 'awaiting-player-input', revision = revision + 1, speech = NULL, pending_world_change = NULL, pending_narration = NULL,
           last_error = '上一次运行在角色决策/导演起草/角色发言期间中断；请重新提交本轮。'
-      WHERE phase IN ('collecting-decisions', 'drafting', 'role-speaking')
+      WHERE phase IN ('collecting-decisions', 'drafting', 'role-speaking', 'world-change-approval')
     `).run()
     return Number(result.changes)
   }
@@ -331,7 +343,7 @@ export class Store {
     this.withTransaction(() => {
       this.db.prepare('DELETE FROM decisions WHERE turn_id IN (SELECT id FROM turns WHERE room_id = ?)').run(roomId)
       for (const table of ['turns', 'drafts', 'scenes', 'consultations', 'pending_mind_updates', 'reaction_previews', 'roles']) this.db.prepare(`DELETE FROM ${table} WHERE room_id = ?`).run(roomId)
-      this.db.prepare('UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, player_portrait_ref = ?, scene_time = ?, scene_location = ?, phase = ?, revision = ?, player_contribution = ?, last_error = ?, lore = ?, story_id = ? WHERE id = ?').run(source.title, source.playerCharacter?.name ?? '玩家', source.playerCharacter?.persona ?? '由玩家自由定义的参与者。', source.playerCharacter?.currentState ?? '刚刚进入当前场景。', source.playerCharacter?.portraitRef ?? '/assets/default.svg', source.sceneTime ?? null, source.sceneLocation ?? null, source.phase, source.revision, source.playerContribution ?? null, source.lastError ?? null, JSON.stringify(source.lore ?? []), source.storyId ?? null, roomId)
+      this.db.prepare('UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, player_portrait_ref = ?, scene_time = ?, scene_location = ?, phase = ?, revision = ?, player_contribution = ?, last_error = ?, lore = ?, story_id = ?, speech = NULL, pending_world_change = NULL, pending_narration = NULL WHERE id = ?').run(source.title, source.playerCharacter?.name ?? '玩家', source.playerCharacter?.persona ?? '由玩家自由定义的参与者。', source.playerCharacter?.currentState ?? '刚刚进入当前场景。', source.playerCharacter?.portraitRef ?? '/assets/default.svg', source.sceneTime ?? null, source.sceneLocation ?? null, source.phase, source.revision, source.playerContribution ?? null, source.lastError ?? null, JSON.stringify(source.lore ?? []), source.storyId ?? null, roomId)
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       for (const role of source.roles) insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {}))
       for (const scene of source.scenes) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(scene.id, roomId, scene.turnId, scene.text, scene.sceneTime ?? null, scene.sceneLocation ?? null, scene.createdAt, scene.speaker ?? null)
@@ -353,13 +365,13 @@ export class Store {
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       for (const role of story.roles) insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {}))
       if (story.opening) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(`opening-${roomId}-${Date.now()}`, roomId, 'opening', story.opening, story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, new Date().toISOString())
-      this.db.prepare("UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, scene_time = ?, scene_location = ?, phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL, last_error = NULL, lore = ?, story_id = ?, mode = ?, auto_publish = ?, speech = NULL WHERE id = ?").run(story.title, story.playerCharacter?.name ?? '玩家', story.playerCharacter?.persona ?? '由玩家自由定义的参与者。', story.playerCharacter?.currentState ?? '刚刚进入当前场景。', story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, JSON.stringify(story.lore ?? []), story.id, options.mode ?? 'director', options.autoPublish ? 1 : 0, roomId)
+      this.db.prepare("UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, scene_time = ?, scene_location = ?, phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL, last_error = NULL, lore = ?, story_id = ?, mode = ?, auto_publish = ?, speech = NULL, pending_world_change = NULL, pending_narration = NULL WHERE id = ?").run(story.title, story.playerCharacter?.name ?? '玩家', story.playerCharacter?.persona ?? '由玩家自由定义的参与者。', story.playerCharacter?.currentState ?? '刚刚进入当前场景。', story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, JSON.stringify(story.lore ?? []), story.id, options.mode ?? 'director', options.autoPublish ? 1 : 0, roomId)
     })
   }
 
   getRoom(roomId: string): RoomSnapshot | undefined {
     const room = this.db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId) as {
-      id: string; title: string; player_name: string; player_persona: string; player_state: string; player_portrait_ref: string; scene_time: string | null; scene_location: string | null; phase: RoomPhase; revision: number; player_contribution: string | null; last_error: string | null; mode: string; auto_publish: number; speech: string | null
+      id: string; title: string; player_name: string; player_persona: string; player_state: string; player_portrait_ref: string; scene_time: string | null; scene_location: string | null; phase: RoomPhase; revision: number; player_contribution: string | null; last_error: string | null; mode: string; auto_publish: number; speech: string | null; pending_world_change: string | null; pending_narration: string | null
     } | undefined
     if (!room) return undefined
     const roles = this.db.prepare('SELECT * FROM roles WHERE room_id = ? ORDER BY sort_order, rowid').all(roomId).map(rowToRole)
@@ -368,8 +380,9 @@ export class Store {
     const reactions = turn ? this.db.prepare('SELECT turn_id, role_id, text, created_at FROM reaction_previews WHERE turn_id = ? ORDER BY id').all(turn.id).map((row: any) => ({ turnId: row.turn_id, roleId: row.role_id, text: row.text, createdAt: row.created_at })) : []
     const draftRow = this.db.prepare('SELECT * FROM drafts WHERE room_id = ? ORDER BY created_at DESC LIMIT 1').get(roomId)
     const scenes = this.db.prepare('SELECT * FROM scenes WHERE room_id = ? ORDER BY created_at').all(roomId).map(rowToScene)
-    const consultations = this.db.prepare('SELECT role, text, usage, created_at FROM consultations WHERE room_id = ? ORDER BY id').all(roomId).map(rowToConsultation)
+    const consultations = this.db.prepare('SELECT role, text, usage, thinking, created_at FROM consultations WHERE room_id = ? ORDER BY id').all(roomId).map(rowToConsultation)
     const speech = room.speech ? JSON.parse(room.speech) as import('./types.ts').ChatSpeech : undefined
+    const pendingWorldChange = room.pending_world_change ? JSON.parse(room.pending_world_change) as import('./types.ts').WorldChangeRequest : undefined
     return {
       id: room.id,
       title: room.title,
@@ -377,6 +390,8 @@ export class Store {
       mode: room.mode === 'chat' ? 'chat' : 'director',
       autoPublish: room.auto_publish === 1,
       ...(speech ? { speech } : {}),
+      ...(pendingWorldChange ? { pendingWorldChange } : {}),
+      ...(room.pending_narration ? { pendingNarration: room.pending_narration } : {}),
       playerCharacter: { name: room.player_name, persona: room.player_persona, currentState: room.player_state, ...(room.player_portrait_ref && room.player_portrait_ref !== '/assets/default.svg' ? { portraitRef: room.player_portrait_ref } : {}) },
       phase: room.phase,
       revision: room.revision,
@@ -418,7 +433,7 @@ export class Store {
     const lastScene = this.db.prepare('SELECT created_at FROM scenes WHERE room_id = ? ORDER BY created_at DESC LIMIT 1').get(roomId) as { created_at: string } | undefined
     const anchor = lastScene?.created_at ?? '1970-01-01T00:00:00.000Z'
     const rows = this.db.prepare(`
-      SELECT role, text, created_at FROM consultations
+      SELECT role, text, usage, thinking, created_at FROM consultations
       WHERE room_id = ? AND created_at >= ?
         AND (draft_id IS NULL OR draft_id IN (SELECT id FROM drafts WHERE room_id = ? AND turn_id = ?))
       ORDER BY id
@@ -445,10 +460,12 @@ export class Store {
     this.db.prepare('UPDATE rooms SET player_contribution = ?, revision = revision + 1 WHERE id = ?').run(String(text ?? ''), roomId)
   }
 
-  /** 群聊模式：设置待审批台词（rooms.speech），房间进入 awaiting-approval */
+  /** 群聊模式：设置待审批台词（rooms.speech），房间进入 awaiting-approval；若附带世界变更申请则进入 world-change-approval */
   saveSpeech(roomId: string, speech: import('./types.ts').ChatSpeech): void {
-    this.db.prepare("UPDATE rooms SET speech = ?, phase = 'awaiting-approval', last_error = NULL, revision = revision + 1 WHERE id = ?")
-      .run(JSON.stringify(speech), roomId)
+    const hasWorldChange = !!(speech.worldChange && Object.keys(speech.worldChange).some(key => key !== 'reason' && (speech.worldChange as Record<string, unknown>)[key] !== undefined && (speech.worldChange as Record<string, unknown>)[key] !== ''))
+    const pending = hasWorldChange ? JSON.stringify(speech.worldChange) : null
+    this.db.prepare("UPDATE rooms SET speech = ?, pending_world_change = ?, pending_narration = NULL, phase = ?, last_error = NULL, revision = revision + 1 WHERE id = ?")
+      .run(JSON.stringify(speech), pending, hasWorldChange ? 'world-change-approval' : 'awaiting-approval', roomId)
     // 该角色已产出台词 → 决策标记完成，避免左侧栏停留在「正在回应」
     if (speech.turnId && speech.roleId) {
       this.db.prepare("UPDATE decisions SET status = 'completed' WHERE turn_id = ? AND role_id = ?").run(speech.turnId, speech.roleId)
@@ -477,20 +494,115 @@ export class Store {
    * 群聊模式：批准台词并发布为 Scene（玩家可在批准前编辑正文）。
    * 发布后清空 speech 与玩家贡献；记忆同步由调用方触发 digest（在场角色并行消化）。
    */
-  approveSpeech(roomId: string, text: string, usage?: import('./types.ts').TokenUsage): void {
-    const room = this.db.prepare('SELECT speech, phase, scene_time, scene_location FROM rooms WHERE id = ?').get(roomId) as { speech: string | null; phase: string; scene_time: string | null; scene_location: string | null } | undefined
+  approveSpeech(roomId: string, text: string, usage?: import('./types.ts').TokenUsage, worldChangeOverride?: import('./types.ts').WorldChangeRequest | null): void {
+    const room = this.db.prepare('SELECT speech, phase, scene_time, scene_location, pending_world_change FROM rooms WHERE id = ?').get(roomId) as { speech: string | null; phase: string; scene_time: string | null; scene_location: string | null; pending_world_change: string | null } | undefined
     if (!room) throw new Error('Room not found.')
-    if (room.phase !== 'awaiting-approval' || !room.speech) throw new Error('当前没有待审批的台词。')
+    if (!['awaiting-approval', 'world-change-approval'].includes(room.phase) || !room.speech) throw new Error('当前没有待审批的台词。')
     const speech = JSON.parse(room.speech) as import('./types.ts').ChatSpeech
     const trimmed = text.trim()
     if (!trimmed) throw new Error('台词内容为空。')
     this.withTransaction(() => {
+      // 绑定审批：批准台词时一并落地随台词附带的世界变更申请（更新场景时间/地点、创建新人物、切换进离场）
+      if (room.phase === 'world-change-approval' && room.pending_world_change) {
+        const stored = JSON.parse(room.pending_world_change) as import('./types.ts').WorldChangeRequest
+        // 前端可提交编辑后的覆盖值；未覆盖的字段沿用角色原本的申请（合并而非整体替换）
+        const change: import('./types.ts').WorldChangeRequest = {
+          ...(stored.sceneTime ? { sceneTime: stored.sceneTime } : {}),
+          ...(stored.sceneLocation ? { sceneLocation: stored.sceneLocation } : {}),
+          ...(stored.roleProposals ? { roleProposals: stored.roleProposals } : {}),
+          ...(stored.rolePresence ? { rolePresence: stored.rolePresence } : {}),
+          ...(stored.reason ? { reason: stored.reason } : {}),
+          ...(worldChangeOverride?.sceneTime ? { sceneTime: worldChangeOverride.sceneTime } : {}),
+          ...(worldChangeOverride?.sceneLocation ? { sceneLocation: worldChangeOverride.sceneLocation } : {}),
+        }
+        this.applyWorldChangeLocked(roomId, change)
+      }
       const effectiveTime = room.scene_time?.trim() || '未标注时间'
       const effectiveLocation = room.scene_location?.trim() || ''
       this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(`scene-${Date.now()}`, roomId, speech.turnId, trimmed, effectiveTime || null, effectiveLocation || null, JSON.stringify(usage ?? speech.usage ?? { promptTokens: 0, completionTokens: 0 }), new Date().toISOString(), speech.roleId)
-      this.db.prepare("UPDATE rooms SET speech = NULL, phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL WHERE id = ?").run(roomId)
+      this.db.prepare("UPDATE rooms SET speech = NULL, pending_world_change = NULL, phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL WHERE id = ?").run(roomId)
     })
+  }
+
+  /**
+   * 在已有事务内落地一条世界变更申请（改场景时间/地点、创建新人物）。
+   * 仅在 approveSpeech 的 withTransaction 内调用；不自行开启事务。
+   */
+  private applyWorldChangeLocked(roomId: string, change: import('./types.ts').WorldChangeRequest): void {
+    if (change.sceneTime !== undefined || change.sceneLocation !== undefined) {
+      const sets: string[] = []
+      const params: Array<string | null> = []
+      if (change.sceneTime !== undefined && change.sceneTime.trim()) { sets.push('scene_time = ?'); params.push(change.sceneTime.trim()) }
+      if (change.sceneLocation !== undefined && change.sceneLocation.trim()) { sets.push('scene_location = ?'); params.push(change.sceneLocation.trim()) }
+      if (sets.length > 0) { params.push(roomId); this.db.prepare(`UPDATE rooms SET ${sets.join(', ')} WHERE id = ?`).run(...params) }
+    }
+    const proposals = (change.roleProposals ?? []).filter(proposal => proposal?.id && proposal?.name && proposal?.currentState && proposal?.selfModel)
+    if (proposals.length > 0) {
+      const existing = new Set(this.db.prepare('SELECT id FROM roles WHERE room_id = ?').all(roomId).map((row: any) => row.id as string))
+      const insert = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      for (const proposal of proposals) {
+        if (existing.has(proposal.id)) continue
+        insert.run(roomId, proposal.id, proposal.name, proposal.portraitRef ?? '/assets/default.svg', proposal.currentState, proposal.presence ?? 'present', JSON.stringify(proposal.memoryTimeline ?? {}), JSON.stringify(proposal.goals ?? []), proposal.selfModel, '{}')
+        existing.add(proposal.id)
+      }
+    }
+    // 人物进/离场切换：presence 只能是合法值之一
+    const presenceChanges = (change.rolePresence ?? []).filter(item => item && item.roleId && ['present', 'absent', 'unavailable'].includes(item.presence))
+    if (presenceChanges.length > 0) {
+      const update = this.db.prepare('UPDATE roles SET presence = ? WHERE room_id = ? AND id = ?')
+      for (const item of presenceChanges) update.run(item.presence, roomId, item.roleId)
+    }
+  }
+
+  /**
+   * 群聊模式：导演对话产出的世界变更申请（无台词），房间进入 world-change-approval。
+   * narration 为导演同一次调用预产的叙述文本，玩家批准后写为 narration scene。
+   */
+  saveWorldChange(roomId: string, change: import('./types.ts').WorldChangeRequest, narration?: string): void {
+    this.db.prepare("UPDATE rooms SET speech = NULL, pending_world_change = ?, pending_narration = ?, phase = 'world-change-approval', last_error = NULL, revision = revision + 1 WHERE id = ?")
+      .run(JSON.stringify(change), narration?.trim() || null, roomId)
+  }
+
+  /** 群聊模式：玩家批准导演对话产出的世界变更申请（无台词）→ 落地变更并清空申请 */
+  approveWorldChange(roomId: string, override?: import('./types.ts').WorldChangeRequest | null): void {
+    const room = this.db.prepare('SELECT phase, pending_world_change, scene_time, scene_location FROM rooms WHERE id = ?').get(roomId) as { phase: string; pending_world_change: string | null; scene_time: string | null; scene_location: string | null } | undefined
+    if (!room) throw new Error('Room not found.')
+    if (room.phase !== 'world-change-approval' || !room.pending_world_change) throw new Error('当前没有待确认的世界变更申请。')
+    this.withTransaction(() => {
+      const stored = JSON.parse(room.pending_world_change) as import('./types.ts').WorldChangeRequest
+      const change: import('./types.ts').WorldChangeRequest = {
+        ...(stored.sceneTime ? { sceneTime: stored.sceneTime } : {}),
+        ...(stored.sceneLocation ? { sceneLocation: stored.sceneLocation } : {}),
+        ...(stored.roleProposals ? { roleProposals: stored.roleProposals } : {}),
+        ...(stored.rolePresence ? { rolePresence: stored.rolePresence } : {}),
+        ...(stored.reason ? { reason: stored.reason } : {}),
+        ...(override?.sceneTime ? { sceneTime: override.sceneTime } : {}),
+        ...(override?.sceneLocation ? { sceneLocation: override.sceneLocation } : {}),
+      }
+      this.applyWorldChangeLocked(roomId, change)
+      this.db.prepare("UPDATE rooms SET pending_world_change = NULL, pending_narration = NULL, phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL, last_error = NULL WHERE id = ?").run(roomId)
+    })
+  }
+
+  /** 群聊模式：玩家拒绝导演对话产出的世界变更申请 → 清空申请，回到空闲态 */
+  rejectWorldChange(roomId: string): void {
+    const room = this.db.prepare('SELECT phase FROM rooms WHERE id = ?').get(roomId) as { phase: string } | undefined
+    if (!room || room.phase !== 'world-change-approval') throw new Error('当前没有待确认的世界变更申请。')
+    this.db.prepare("UPDATE rooms SET pending_world_change = NULL, pending_narration = NULL, phase = 'awaiting-player-input', revision = revision + 1, last_error = NULL WHERE id = ?").run(roomId)
+  }
+
+  /** 群聊模式：把导演写的一段叙述（世界变更落地后的世界变化描写）发布为 narration scene（无 speaker，非对话气泡） */
+  addNarrationScene(roomId: string, text: string, usage?: import('./types.ts').TokenUsage): void {
+    const room = this.db.prepare('SELECT scene_time, scene_location FROM rooms WHERE id = ?').get(roomId) as { scene_time: string | null; scene_location: string | null } | undefined
+    if (!room) throw new Error('Room not found.')
+    const trimmed = String(text ?? '').trim()
+    if (!trimmed) return
+    const effectiveTime = room.scene_time?.trim() || '未标注时间'
+    const effectiveLocation = room.scene_location?.trim() || ''
+    this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(`narration-${Date.now()}`, roomId, 'world-change', trimmed, effectiveTime || null, effectiveLocation || null, usage ? JSON.stringify(usage) : null, new Date().toISOString())
+    this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
   /** 群聊模式：把角色消化结果并入记忆时间线（parse 事件并入对应时间桶，带去重） */
@@ -622,15 +734,22 @@ export class Store {
 
   cancelTurn(roomId: string): void {
     const phase = this.db.prepare('SELECT phase FROM rooms WHERE id = ?').get(roomId) as { phase: RoomPhase } | undefined
-    if (!phase || !['collecting-decisions', 'drafting', 'consulting-director', 'role-speaking'].includes(phase.phase)) throw new Error('No cancellable request is active.')
+    if (!phase || !['collecting-decisions', 'drafting', 'consulting-director', 'role-speaking', 'world-change-approval'].includes(phase.phase)) throw new Error('No cancellable request is active.')
     this.withTransaction(() => {
       this.db.prepare('DELETE FROM reaction_previews WHERE room_id = ?').run(roomId)
-      this.db.prepare(`UPDATE rooms SET phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL, last_error = NULL, speech = NULL WHERE id = ?`).run(roomId)
+      this.db.prepare(`UPDATE rooms SET phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL, last_error = NULL, speech = NULL, pending_world_change = NULL, pending_narration = NULL WHERE id = ?`).run(roomId)
     })
   }
 
-  updateRolePrivateState(roomId: string, roleId: string, selfModel: string, memoryTimeline: Record<string, string[]>, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[] } = {}): void {
-    const result = this.db.prepare('UPDATE roles SET self_model = ?, memory_timeline = ?, provider_id = ?, model_override = ?, impressions = ?, goals = ? WHERE room_id = ? AND id = ?').run(selfModel, JSON.stringify(memoryTimeline), config.providerId || null, config.modelOverride || null, JSON.stringify(config.impressions ?? {}), JSON.stringify(config.goals ?? []), roomId, roleId)
+  updateRolePrivateState(roomId: string, roleId: string, selfModel: string, memoryTimeline: Record<string, string[]>, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
+    const result = this.db.prepare('UPDATE roles SET self_model = ?, memory_timeline = ?, provider_id = ?, model_override = ?, impressions = ?, goals = ?, thinking_strength = ? WHERE room_id = ? AND id = ?').run(selfModel, JSON.stringify(memoryTimeline), config.providerId || null, config.modelOverride || null, JSON.stringify(config.impressions ?? {}), JSON.stringify(config.goals ?? []), config.thinkingStrength || null, roomId, roleId)
+    if (Number(result.changes) !== 1) throw new Error('Role not found.')
+    this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
+  }
+
+  setRoleThinking(roomId: string, roleId: string, thinkingStrength: import('./types.ts').ThinkingStrength): void {
+    if (!['off', 'brief', 'standard', 'deep'].includes(thinkingStrength)) throw new Error('无效的思维链强度。')
+    const result = this.db.prepare('UPDATE roles SET thinking_strength = ? WHERE room_id = ? AND id = ?').run(thinkingStrength, roomId, roleId)
     if (Number(result.changes) !== 1) throw new Error('Role not found.')
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
@@ -732,9 +851,9 @@ export class Store {
     this.db.prepare("UPDATE rooms SET phase = 'consulting-director', revision = revision + 1 WHERE id = ?").run(roomId)
   }
 
-  addConsultation(roomId: string, draftId: string | null, role: ConsultationMessage['role'], text: string, usage?: import('./types.ts').TokenUsage): void {
-    this.db.prepare('INSERT INTO consultations (room_id, draft_id, role, text, usage, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(roomId, draftId, role, text, usage ? JSON.stringify(usage) : null, new Date().toISOString())
+  addConsultation(roomId: string, draftId: string | null, role: ConsultationMessage['role'], text: string, usage?: import('./types.ts').TokenUsage, thinking?: string): void {
+    this.db.prepare('INSERT INTO consultations (room_id, draft_id, role, text, usage, thinking, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(roomId, draftId, role, text, usage ? JSON.stringify(usage) : null, thinking || null, new Date().toISOString())
   }
 
   finishConsultation(roomId: string): void {
@@ -788,6 +907,7 @@ function rowToRole(row: any): Role {
     ...(goals.length > 0 ? { goals } : {}),
     ...(row.provider_id ? { providerId: row.provider_id } : {}),
     ...(row.model_override ? { modelOverride: row.model_override } : {}),
+    ...(row.thinking_strength && ['off', 'brief', 'standard', 'deep'].includes(row.thinking_strength) ? { thinkingStrength: row.thinking_strength } : {}),
   }
 }
 function rowToDecision(row: any): Decision {
@@ -813,5 +933,5 @@ function rowToScene(row: any): Scene {
   return { id: row.id, turnId: row.turn_id, text: row.text, ...(row.speaker ? { speaker: row.speaker } : {}), ...(row.scene_time ? { sceneTime: row.scene_time } : {}), ...(row.scene_location ? { sceneLocation: row.scene_location } : {}), ...(row.usage ? { usage: JSON.parse(row.usage) } : {}), createdAt: row.created_at }
 }
 function rowToConsultation(row: any): ConsultationMessage {
-  return { role: row.role, text: row.text, ...(row.usage ? { usage: JSON.parse(row.usage) } : {}), createdAt: row.created_at }
+  return { role: row.role, text: row.text, ...(row.usage ? { usage: JSON.parse(row.usage) } : {}), ...(row.thinking ? { thinking: row.thinking } : {}), createdAt: row.created_at }
 }

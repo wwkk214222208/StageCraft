@@ -5,6 +5,20 @@ export interface SceneContext {
   location?: string
 }
 
+/** 群聊模式导演对话/叙述所需的房间上下文摘要 */
+export interface DirectorChatContext {
+  sceneTime?: string
+  sceneLocation?: string
+  playerName: string
+  playerContribution?: string
+  /** 最近已批准正文（上一轮发生的事） */
+  recentScene?: string
+  roles: Role[]
+  lore?: LoreEntry[]
+  /** 导演与该玩家的对话记录（自然语言建议与回复） */
+  history?: ConsultationMessage[]
+}
+
 export interface WorkerSet {
   decide(role: Role, participation: Decision['participation'], contribution: string, publicRoles?: Role[], scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[]): Promise<Decision>
   draft(turnId: string, contribution: string, decisions: Decision[], roles: Role[], consultations?: ConsultationMessage[], playerCharacter?: PlayerCharacter, scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string, previousDraft?: string): Promise<Draft>
@@ -12,7 +26,14 @@ export interface WorkerSet {
   /** 群聊模式：角色消化一条已批准正文，产出记忆中事件（时间标签 → 事件列表） */
   digest?(role: Role, sceneText: string): Promise<import('./types.ts').MemoryDigest>
   /** 群聊模式：无导演发言协议——产出角色此刻的完整发言（台词/带台词的行动），非决策式简短回应 */
-  speak?(role: Role, contribution: string, publicRoles?: Role[], scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string): Promise<{ text: string; thinking?: string; usage?: import('./types.ts').TokenUsage }>
+  speak?(role: Role, contribution: string, publicRoles?: Role[], scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string): Promise<{ text: string; thinking?: string; usage?: import('./types.ts').TokenUsage; worldChange?: import('./types.ts').WorldChangeRequest }>
+  /**
+   * 群聊模式：导演与玩家的世界状态对话——一次调用同时产出自然语言回复、
+   * 可选世界变更申请（worldChange）与变更落地后要写的叙述（narration）。
+   * 叙述仅在导演对话产出的变更被确认/生效后使用；角色台词附带的世界变更
+   * 由角色自己的发言描写覆盖，不需要导演补写。
+   */
+  directorChat?(playerText: string, context: DirectorChatContext, onThinking?: (text: string) => void): Promise<{ reply: string; thinking?: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string; usage?: import('./types.ts').TokenUsage }>
   cancel?(): void
 }
 
@@ -22,6 +43,17 @@ export const fakeWorkers: WorkerSet = {
   consult: runFakeConsultation,
   digest: runFakeDigest,
   speak: runFakeSpeak,
+  directorChat: runFakeDirectorChat,
+}
+
+/** 群聊导演对话的 fake：默认不产世界变更，仅给出自然语言回复 */
+export async function runFakeDirectorChat(playerText: string, _context: DirectorChatContext): Promise<{ reply: string; usage?: import('./types.ts').TokenUsage }> {
+  await delay(300)
+  const focus = playerText.trim().slice(0, 60) || '世界状态'
+  return {
+    reply: `（导演）关于「${focus}」：我记下了。你可以继续描述你希望推进的时间、场景变化、人物进出场或新人物，我会整理成世界变更申请供你确认。`,
+    usage: { promptTokens: 900, completionTokens: 50 },
+  }
 }
 
 /** 群聊发言的 fake：完整对话式发言（一段有来有往的台词/行动），不是一句话动作 */

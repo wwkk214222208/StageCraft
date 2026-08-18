@@ -1,5 +1,6 @@
 import type { ConsultationMessage, Decision, Draft, Role } from './types.ts'
 import { loadPrompts, renderPrompt, type PromptTemplates } from './prompts.ts'
+import { buildThinkingParams } from './thinking-params.ts'
 
 let prompts: PromptTemplates | undefined
 function getPrompts(): PromptTemplates {
@@ -33,8 +34,13 @@ export interface StreamingCallbacks {
   onThinking?: (text: string) => void
   /** 可见正文增量（content 或 tool 参数） */
   onContent?: (text: string) => void
-  /** 单次调用完成的 token 用量（非流式与流式均触发；供前端小字展示） */
-  onUsage?: (usage: { promptTokens: number; completionTokens: number }) => void
+  /** 单次调用完成的 token 用量与耗时（非流式与流式均触发；供前端小字展示） */
+  onUsage?: (usage: import('./types.ts').TokenUsage) => void
+}
+
+/** 调用级选项：思维链强度（决定向请求体注入的 OpenAI 兼容思考参数或提示词引导） */
+export interface CompleteOptions {
+  thinkingStrength?: import('./types.ts').ThinkingStrength
 }
 
 export class ModelGateway {
@@ -45,6 +51,8 @@ export class ModelGateway {
   private requests = 0
   private promptTokens = 0
   private completionTokens = 0
+  private cachedTokens = 0
+  private totalDurationMs = 0
   private readonly activeControllers = new Set<AbortController>()
 
   cancelActiveRequests(): void { for (const controller of this.activeControllers) controller.abort() }
@@ -56,11 +64,13 @@ export class ModelGateway {
     this.logRawFinalContent = options.logRawFinalContent ?? false
   }
 
-  usage(): { route: string; model: string; requests: number; promptTokens: number; completionTokens: number } {
-    return { route: this.route.name ?? 'default', model: this.route.model, requests: this.requests, promptTokens: this.promptTokens, completionTokens: this.completionTokens }
+  usage(includeMetrics = false): { route: string; model: string; requests: number; promptTokens: number; completionTokens: number; cachedTokens?: number; totalDurationMs?: number; avgDurationMs?: number } {
+    const base = { route: this.route.name ?? 'default', model: this.route.model, requests: this.requests, promptTokens: this.promptTokens, completionTokens: this.completionTokens }
+    return includeMetrics ? { ...base, cachedTokens: this.cachedTokens, totalDurationMs: this.totalDurationMs, avgDurationMs: this.requests > 0 ? Math.round(this.totalDurationMs / this.requests) : 0 } : base
   }
 
-  async complete<T>(system: string, user: string, schemaName: string, schema: object, tool?: { name: string; description: string; parameters: object }, callbacks: StreamingCallbacks = {}): Promise<T> {
+  async complete<T>(system: string, user: string, schemaName: string, schema: object, tool?: { name: string; description: string; parameters: object }, callbacks: StreamingCallbacks = {}, options: CompleteOptions = {}): Promise<T> {
+    const startedAt = Date.now()
     this.requests += 1
     this.onSummary?.(`开始模型请求：${schemaName} | ${this.route.name ?? 'default'} / ${this.route.model}`)
     const controller = new AbortController()
@@ -72,11 +82,14 @@ export class ModelGateway {
         : this.route.responseFormat === 'json_object' ? { type: 'json_object' } : undefined
       const endpoint = `${this.route.baseUrl.replace(/\/$/, '')}/chat/completions`
       const headers = { 'content-type': 'application/json', authorization: `Bearer ${this.route.apiKey}` }
+      // 思维链强度：注入 OpenAI 兼容思考参数，或（匹配不上/原生不可用）在 system 末尾追加提示词引导
+      const thinking = buildThinkingParams(this.route.model, options.thinkingStrength ?? 'standard')
+      const effectiveSystem = thinking.promptSuffix ? `${system}${thinking.promptSuffix}` : system
       const messages = [
-        { role: 'system', content: system },
+        { role: 'system', content: effectiveSystem },
         { role: 'user', content: user },
       ]
-      const baseBody = { model: this.route.model, ...(responseFormat ? { response_format: responseFormat } : {}), messages }
+      const baseBody = { model: this.route.model, ...(responseFormat ? { response_format: responseFormat } : {}), ...(thinking.body ?? {}), messages }
       const toolBody = tool && this.route.toolCalling !== false
         ? { model: this.route.model, messages, tools: [{ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }] }
         : baseBody
@@ -97,13 +110,15 @@ export class ModelGateway {
         throw new Error(`Model HTTP ${response.status}${detail ? `: ${detail}` : ''}`)
       }
       this.onSummary?.(`模型已返回：${schemaName}`)
-      const body = await response.json() as { usage?: { prompt_tokens?: number; completion_tokens?: number }; choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> } }> }
-      const callUsage = body.usage?.prompt_tokens !== undefined || body.usage?.completion_tokens !== undefined
-        ? { promptTokens: body.usage?.prompt_tokens ?? 0, completionTokens: body.usage?.completion_tokens ?? 0 }
+      const body = await response.json() as { usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }; choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> } }> }
+      const cached = body.usage?.prompt_tokens_details?.cached_tokens
+      this.cachedTokens += cached ?? 0
+      const callUsage: import('./types.ts').TokenUsage | undefined = body.usage?.prompt_tokens !== undefined || body.usage?.completion_tokens !== undefined
+        ? { promptTokens: body.usage?.prompt_tokens ?? 0, completionTokens: body.usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}) }
         : undefined
       this.promptTokens += body.usage?.prompt_tokens ?? 0
       this.completionTokens += body.usage?.completion_tokens ?? 0
-      if (callUsage) callbacks.onUsage?.(callUsage)
+      if (callUsage) callbacks.onUsage?.({ ...callUsage, durationMs: Date.now() - startedAt })
       const message = body.choices?.[0]?.message
       const toolCall = message?.tool_calls?.[0]
       const toolArguments = toolCall?.function?.arguments
@@ -122,6 +137,7 @@ export class ModelGateway {
       if (error instanceof Error && error.name === 'AbortError') throw new Error(`Model request timed out after ${this.route.timeoutMs}ms`)
       throw error
     } finally {
+      this.totalDurationMs += Date.now() - startedAt
       clearTimeout(timeout)
       this.activeControllers.delete(controller)
     }
@@ -131,7 +147,8 @@ export class ModelGateway {
    * 流式调用：把 SSE 增量按思维链/正文分流，通过 callbacks 实时推送，
    * 结束时拼出完整结果并解析 JSON。与 complete 返回相同结构。
    */
-  async completeStreaming<T>(system: string, user: string, schemaName: string, schema: object, tool?: { name: string; description: string; parameters: object }, callbacks: StreamingCallbacks = {}, streamOptions: { graceMs?: number } = {}): Promise<T> {
+  async completeStreaming<T>(system: string, user: string, schemaName: string, schema: object, tool?: { name: string; description: string; parameters: object }, callbacks: StreamingCallbacks = {}, streamOptions: { graceMs?: number } = {}, options: CompleteOptions = {}): Promise<T> {
+    const startedAt = Date.now()
     this.requests += 1
     this.onSummary?.(`开始流式模型请求：${schemaName} | ${this.route.name ?? 'default'} / ${this.route.model}`)
     const controller = new AbortController()
@@ -147,13 +164,16 @@ export class ModelGateway {
         : this.route.responseFormat === 'json_object' ? { type: 'json_object' } : undefined
       const endpoint = `${this.route.baseUrl.replace(/\/$/, '')}/chat/completions`
       const headers = { 'content-type': 'application/json', authorization: `Bearer ${this.route.apiKey}` }
+      // 思维链强度：注入 OpenAI 兼容思考参数，或（匹配不上/原生不可用）在 system 末尾追加提示词引导
+      const thinking = buildThinkingParams(this.route.model, options.thinkingStrength ?? 'standard')
+      const effectiveSystem = thinking.promptSuffix ? `${system}${thinking.promptSuffix}` : system
       const messages = [
-        { role: 'system', content: system },
+        { role: 'system', content: effectiveSystem },
         { role: 'user', content: user },
       ]
-      const streamBody = { stream: true, model: this.route.model, ...(responseFormat ? { response_format: responseFormat } : {}), messages }
+      const streamBody = { stream: true, model: this.route.model, ...(responseFormat ? { response_format: responseFormat } : {}), ...(thinking.body ?? {}), messages }
       const toolBody = tool && this.route.toolCalling !== false
-        ? { stream: true, model: this.route.model, messages, tools: [{ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }] }
+        ? { stream: true, model: this.route.model, messages, tools: [{ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }], ...(thinking.body ?? {}) }
         : streamBody
       let response = await this.fetchImpl(endpoint, { method: 'POST', signal: controller.signal, headers, body: JSON.stringify(toolBody) })
       if (!response.ok && tool && this.route.toolCalling !== false && (response.status === 400 || response.status === 422)) {
@@ -174,11 +194,13 @@ export class ModelGateway {
       const contentType = response.headers.get('content-type') ?? ''
       if (!contentType.includes('text/event-stream')) {
         // 兼容非流式响应（部分网关忽略 stream 或测试环境）：按完整 JSON 处理
-        const body = await response.json() as { usage?: { prompt_tokens?: number; completion_tokens?: number }; choices?: Array<{ message?: { content?: string; reasoning_content?: string; reasoning?: string; thinking?: string; tool_calls?: Array<{ function?: { arguments?: string } }> } }> }
+        const body = await response.json() as { usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }; choices?: Array<{ message?: { content?: string; reasoning_content?: string; reasoning?: string; thinking?: string; tool_calls?: Array<{ function?: { arguments?: string } }> } }> }
+        const cached = body.usage?.prompt_tokens_details?.cached_tokens
+        this.cachedTokens += cached ?? 0
         this.promptTokens += body.usage?.prompt_tokens ?? 0
         this.completionTokens += body.usage?.completion_tokens ?? 0
         if (body.usage?.prompt_tokens !== undefined || body.usage?.completion_tokens !== undefined) {
-          callbacks.onUsage?.({ promptTokens: body.usage?.prompt_tokens ?? 0, completionTokens: body.usage?.completion_tokens ?? 0 })
+          callbacks.onUsage?.({ promptTokens: body.usage?.prompt_tokens ?? 0, completionTokens: body.usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}), durationMs: Date.now() - startedAt })
         }
         const message = body.choices?.[0]?.message
         const toolCall = message?.tool_calls?.[0]
@@ -197,10 +219,12 @@ export class ModelGateway {
       }
       if (!response.body) throw new Error('Model stream response did not contain a body.')
       const { content, toolArguments, usage, reasoning } = await consumeSseStream(response.body, callbacks, resetIdle, streamOptions.graceMs)
+      const cached = usage?.prompt_tokens_details?.cached_tokens
+      this.cachedTokens += cached ?? 0
       this.promptTokens += usage?.prompt_tokens ?? 0
       this.completionTokens += usage?.completion_tokens ?? 0
       if (usage?.prompt_tokens !== undefined || usage?.completion_tokens !== undefined) {
-        callbacks.onUsage?.({ promptTokens: usage?.prompt_tokens ?? 0, completionTokens: usage?.completion_tokens ?? 0 })
+        callbacks.onUsage?.({ promptTokens: usage?.prompt_tokens ?? 0, completionTokens: usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}), durationMs: Date.now() - startedAt })
       }
       const finalContent = toolArguments || content
       this.onSummary?.(toolArguments ? `模型已返回工具参数：${schemaName}` : `模型已返回文本内容：${schemaName}`)
@@ -215,6 +239,7 @@ export class ModelGateway {
       if (error instanceof Error && error.name === 'AbortError') throw new Error(`Model stream request timed out after ${this.route.timeoutMs}ms`)
       throw error
     } finally {
+      this.totalDurationMs += Date.now() - startedAt
       clearTimeout(idleTimer)
       clearTimeout(totalTimer)
       this.activeControllers.delete(controller)
@@ -253,14 +278,14 @@ function extractReasoningFromMessage(message: { content?: string; reasoning_cont
  *   3. 流自然 done → 结束；
  *   4. 空闲超时（连续无字节）→ 由调用方 abort（真正的僵死兜底）。
  */
-async function consumeSseStream(body: ReadableStream<Uint8Array>, callbacks: StreamingCallbacks, onActivity?: () => void, graceMs = 10_000): Promise<{ content: string; toolArguments: string; reasoning: string; usage?: { prompt_tokens?: number; completion_tokens?: number }; finishReason?: string }> {
+async function consumeSseStream(body: ReadableStream<Uint8Array>, callbacks: StreamingCallbacks, onActivity?: () => void, graceMs = 10_000): Promise<{ content: string; toolArguments: string; reasoning: string; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }; finishReason?: string }> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let content = ''
   let toolArguments = ''
   let reasoning = ''
-  let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined
+  let usage: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined
   let finishReason: string | undefined
   let finishedAt = 0
   let pendingRead: Promise<{ done: boolean; value?: Uint8Array }> | null = null
@@ -320,7 +345,7 @@ async function consumeSseStream(body: ReadableStream<Uint8Array>, callbacks: Str
   return { content, toolArguments, reasoning, usage, finishReason }
 }
 
-function parseSseEvent(rawEvent: string, callbacks: StreamingCallbacks): { content?: string; toolArguments?: string; reasoning?: string; usage?: { prompt_tokens?: number; completion_tokens?: number }; finishReason?: string } {
+function parseSseEvent(rawEvent: string, callbacks: StreamingCallbacks): { content?: string; toolArguments?: string; reasoning?: string; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }; finishReason?: string } {
   const dataLine = rawEvent.split('\n').map(line => line.trim()).find(line => line.startsWith('data:'))
   if (!dataLine) return {}
   const payload = dataLine.slice(5).trim()
@@ -333,7 +358,7 @@ function parseSseEvent(rawEvent: string, callbacks: StreamingCallbacks): { conte
   // 语义结束信号（stop / tool_calls / length）：即使供应商随后不关流，也算正文已结束
   const finishReason = typeof choice?.finish_reason === 'string' && choice.finish_reason ? choice.finish_reason : undefined
   // usage may arrive on the final chunk
-  const usageJson = json.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined
+  const usageJson = json.usage as { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined
   const usage = usageJson && (typeof usageJson.prompt_tokens === 'number' || typeof usageJson.completion_tokens === 'number') ? usageJson : undefined
   // 同一 delta 可能同时携带 thinking 与 content（部分 provider 混合下发），必须分别累计——
   // 不能用“三选一”整体归类，否则 content 会被当成思维链丢掉。
@@ -512,8 +537,9 @@ function formatMemoryTimeline(role: Role): string {
   return lines.length > 0 ? lines.join('\n') : '（暂无记忆）'
 }
 
-export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole: (role: Role) => ModelGateway = () => directorGateway) {
+export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole: (role: Role) => ModelGateway = () => directorGateway, options: { directorThinkingStrength?: import('./types.ts').ThinkingStrength } = {}) {
   const roleGateways = new Set<ModelGateway>()
+  const directorThinking = options.directorThinkingStrength
   const getRoleGateway = (role: Role) => { const gateway = gatewayForRole(role); roleGateways.add(gateway); return gateway }
   // 缓存键：角色 id + 人设 + 世界书（不变部分）；记忆时间线每回合变化，不参与缓存
   const prefixCache = new Map<string, string>()
@@ -552,6 +578,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         renderPrompt(getPrompts().role.user, { contribution: contribution || '玩家空过。' }),
         'role_decision', roleDecisionSchema, { name: 'submit_role_decision', description: '提交角色本轮公开意图和私有即时反应。', parameters: roleDecisionSchema },
         { onThinking: collectThinking, onUsage: collectUsage },
+        {}, { thinkingStrength: role.thinkingStrength },
       )
       const normalized = normalizeRoleDecision(result)
       if (normalized) return { roleId: role.id, participation, status: 'completed', brief: normalized.brief, privateReaction: normalized.privateReaction, ...(normalized.publicIdentity ? { publicIdentity: normalized.publicIdentity } : {}), ...(normalized.impressions ? { impressions: normalized.impressions } : {}), thinking: thinking || undefined, usage }
@@ -562,6 +589,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         { type: 'object', additionalProperties: true, properties: { brief: { type: 'string' }, privateReaction: { type: 'string' } }, required: ['brief', 'privateReaction'] },
         { name: 'submit_role_decision', description: '提交角色本轮公开意图和私有即时反应。', parameters: { type: 'object', additionalProperties: true, properties: { brief: { type: 'string' }, privateReaction: { type: 'string' } }, required: ['brief', 'privateReaction'] } },
         { onThinking: collectThinking, onUsage: collectUsage },
+        {}, { thinkingStrength: role.thinkingStrength },
       )
       const recovered = normalizeRoleDecision(retry)
       if (!recovered) throw new Error(`Role output is missing a public brief. Received fields: ${receivedFields(retry)}`)
@@ -589,7 +617,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       let usage = { promptTokens: 0, completionTokens: 0 }
       const collectThinking = (text: string) => { thinking += text; onThinking?.(text) }
       const collectUsage = (u: { promptTokens: number; completionTokens: number }) => { usage.promptTokens += u.promptTokens; usage.completionTokens += u.completionTokens }
-      const result = await directorGateway.completeStreaming<unknown>(getPrompts().skills.director, request, 'story_draft', directorDraftSchema, { name: 'submit_story_draft', description: '提交可供玩家审批的场景草稿和结构化状态变化。', parameters: directorDraftSchema }, { onThinking: collectThinking, onUsage: collectUsage })
+      const result = await directorGateway.completeStreaming<unknown>(getPrompts().skills.director, request, 'story_draft', directorDraftSchema, { name: 'submit_story_draft', description: '提交可供玩家审批的场景草稿和结构化状态变化。', parameters: directorDraftSchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: directorThinking })
       const normalized = normalizeDirectorDraft(result)
       if (normalized) {
         normalized.stateUpdates = normalizeStateUpdateKeys(normalized.stateUpdates, { roleNames: new Map(roles.map(role => [role.name, role.id])), playerName: playerCharacter?.name })
@@ -602,6 +630,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         { type: 'object', additionalProperties: true, properties: { text: { type: 'string' }, stateUpdates: { type: 'object' } }, required: ['text', 'stateUpdates'] },
         { name: 'submit_story_draft', description: '提交最小可审批场景草稿。', parameters: { type: 'object', additionalProperties: true, properties: { text: { type: 'string' }, stateUpdates: { type: 'object' } }, required: ['text', 'stateUpdates'] } },
         { onThinking: collectThinking, onUsage: collectUsage },
+        {}, { thinkingStrength: directorThinking },
       )
       const recovered = normalizeDirectorDraft(retry)
       if (!recovered) throw new Error(`Director output is missing non-empty text. Received fields: ${receivedFields(retry)}`)
@@ -624,6 +653,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         { type: 'object', additionalProperties: false, properties: { text: { type: 'string' } }, required: ['text'] },
         { name: 'submit_director_consultation', description: '提交导演对玩家咨询的简短回答。', parameters: { type: 'object', additionalProperties: false, properties: { text: { type: 'string' } }, required: ['text'] } },
         { onUsage: collectUsage },
+        { thinkingStrength: directorThinking },
       )
       if (!result || typeof result.text !== 'string' || !result.text.trim()) throw new Error('Director consultation output is missing text.')
       return { text: result.text, ...(usage ? { usage } : {}) }
@@ -636,6 +666,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         'memory_digest',
         { type: 'object', additionalProperties: false, properties: { events: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } }, required: ['events'] },
         { name: 'submit_memory_digest', description: '提交该角色从场景正文中提取的记忆事件。', parameters: { type: 'object', additionalProperties: false, properties: { events: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } }, required: ['events'] } },
+        {}, { thinkingStrength: role.thinkingStrength },
       )
       const events = result?.events
       if (!events || typeof events !== 'object' || Array.isArray(events)) return { events: {} }
@@ -647,14 +678,23 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       }
       return { events: cleaned }
     },
-    async speak(role: Role, contribution: string, publicRoles: Role[] = [], scene?: { time?: string; location?: string }, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string): Promise<{ text: string; thinking?: string; usage?: import('./types.ts').TokenUsage }> {
+    async speak(role: Role, contribution: string, publicRoles: Role[] = [], scene?: { time?: string; location?: string }, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string): Promise<{ text: string; thinking?: string; usage?: import('./types.ts').TokenUsage; worldChange?: import('./types.ts').WorldChangeRequest }> {
       let thinking = ''
       let usage = { promptTokens: 0, completionTokens: 0 }
       const collectThinking = (text: string) => { thinking += text; onThinking?.(text) }
       const collectUsage = (u: { promptTokens: number; completionTokens: number }) => { usage.promptTokens += u.promptTokens; usage.completionTokens += u.completionTokens }
       const loreText = formatLoreForRole(lore ?? [], role.id)
-      const schema = { type: 'object', additionalProperties: false, properties: { text: { type: 'string', description: '角色此刻的完整发言（台词或带台词的行动描述）' } }, required: ['text'] }
-      const result = await getRoleGateway(role).completeStreaming<{ text?: string }>(
+      const worldChangeSchema = {
+        type: 'object', additionalProperties: false,
+        properties: {
+          sceneTime: { type: 'string', description: '剧情推进导致时间变化时填新的时间；否则省略' },
+          sceneLocation: { type: 'string', description: '剧情推进导致地点变化时填新的地点；否则省略' },
+          roleProposals: { type: 'array', description: '剧情需要引入当前角色列表之外的新人物时提案；没有就不填。', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' }, portraitRef: { type: 'string' }, currentState: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] }, selfModel: { type: 'string' }, memoryTimeline: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } }, required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'selfModel', 'memoryTimeline'] } },
+          reason: { type: 'string', description: '给玩家看的简短理由，说明为何提出这项世界变更（可省略）' },
+        },
+      }
+      const schema = { type: 'object', additionalProperties: false, properties: { text: { type: 'string', description: '角色此刻的完整发言（台词或带台词的行动描述）' }, worldChange: { type: 'object', additionalProperties: false, description: '可选。仅当你认为剧情需要推进时间、改变地点或引入新人物时才填；没有变更就省略。', properties: worldChangeSchema.properties } }, required: ['text'] }
+      const result = await getRoleGateway(role).completeStreaming<{ text?: string; worldChange?: import('./types.ts').WorldChangeRequest }>(
         renderPrompt(getPrompts().chat.system, { roleName: role.name, selfModel: role.selfModel, goalsSection: formatGoals(role), ...(loreText ? { worldLore: `相关世界设定：\n${loreText}` } : { worldLore: '' }) }),
         renderPrompt(getPrompts().chat.user, {
           scene: formatSceneContext(scene) || '（尚未设定场景时间地点）',
@@ -665,18 +705,114 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         }),
         'chat_speech',
         schema,
-        { name: 'submit_chat_speech', description: '提交该角色此刻在群聊中的完整发言。', parameters: schema },
+        { name: 'submit_chat_speech', description: '提交该角色此刻在群聊中的完整发言（可选附带世界变更申请）。', parameters: schema },
         { onThinking: collectThinking, onUsage: collectUsage },
+        {}, { thinkingStrength: role.thinkingStrength },
       )
       const text = result?.text?.trim()
       if (!text) throw new Error(`Role speech is missing text. Received fields: ${receivedFields(result)}`)
-      return { text, ...(thinking ? { thinking } : {}), usage }
+      const worldChange = normalizeWorldChange(result?.worldChange)
+      return { text, ...(thinking ? { thinking } : {}), usage, ...(worldChange ? { worldChange } : {}) }
+    },
+    async directorChat(playerText: string, context: import('./workers.ts').DirectorChatContext, onThinking?: (text: string) => void): Promise<{ reply: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string; usage?: import('./types.ts').TokenUsage }> {
+      let thinking = ''
+      let usage = { promptTokens: 0, completionTokens: 0 }
+      const collectThinking = (text: string) => { thinking += text; onThinking?.(text) }
+      const collectUsage = (u: { promptTokens: number; completionTokens: number }) => { usage.promptTokens += u.promptTokens; usage.completionTokens += u.completionTokens }
+      const roleProposalSchema = { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' }, portraitRef: { type: 'string' }, currentState: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] }, selfModel: { type: 'string' }, memoryTimeline: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } }, required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'selfModel', 'memoryTimeline'] }
+      const worldChangeSchema = {
+        type: 'object', additionalProperties: false,
+        properties: {
+          sceneTime: { type: 'string', description: '时间变化时填新时间；无变化省略' },
+          sceneLocation: { type: 'string', description: '地点变化时填新地点；无变化省略' },
+          roleProposals: { type: 'array', description: '需要引入新人物时提案；没有省略。', items: roleProposalSchema },
+          rolePresence: { type: 'array', description: '需要切换已有角色进场/离场时列出；没有省略。', items: { type: 'object', additionalProperties: false, properties: { roleId: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] } }, required: ['roleId', 'presence'] } },
+          reason: { type: 'string', description: '给玩家看的简短理由（可省略）' },
+        },
+      }
+      const schema = {
+        type: 'object', additionalProperties: false,
+        properties: {
+          reply: { type: 'string', description: '对玩家这句自然语言建议/提问的回复（不写正文、不替角色发言）' },
+          worldChange: { type: 'object', additionalProperties: false, description: '可选。玩家建议（或你判断剧情需要）时间/地点变化、人物进出场、新人物时提交；没有变更省略。', properties: worldChangeSchema.properties },
+          narration: { type: 'string', description: '可选。若提交了 worldChange，同时写一段该变更被批准后要发布的导演风格叙述（第三人称环境/事件描写，不用对话气泡、不替角色说台词）；无变更则省略。' },
+        },
+        required: ['reply'],
+      }
+      const result = await directorGateway.completeStreaming<{ reply?: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string }>(
+        renderPrompt(getPrompts().chat.directorChatSystem, {
+          scene: formatSceneContext({ time: context.sceneTime, location: context.sceneLocation }) || '（尚未设定场景时间地点）',
+          recentScene: context.recentScene || '（尚无已批准正文）',
+          roles: context.roles.map(role => `${role.name}（${role.id}，${role.presence === 'present' ? '在场' : role.presence === 'absent' ? '离场' : '不可用'}）：${role.currentState}`).join('\n'),
+          lore: formatLoreAll(context.lore ?? []),
+          history: (context.history ?? []).map(message => `${message.role === 'player' ? '玩家' : '导演'}：${message.text}`).join('\n'),
+        }),
+        renderPrompt(getPrompts().chat.directorChatUser, { playerText: playerText.trim() || '（玩家没有说话）' }),
+        'chat_director_chat',
+        schema,
+        { name: 'submit_director_chat', description: '提交导演对玩家建议的回复（可选附带世界变更申请与叙述）。', parameters: schema },
+        { onThinking: collectThinking, onUsage: collectUsage },
+        {}, { thinkingStrength: directorThinking },
+      )
+      const reply = result?.reply?.trim()
+      if (!reply) throw new Error(`Director reply is missing text. Received fields: ${receivedFields(result)}`)
+      const worldChange = normalizeWorldChange(result?.worldChange)
+      const narration = typeof result?.narration === 'string' && result.narration.trim() ? result.narration.trim() : undefined
+      return { reply, ...(thinking ? { thinking } : {}), usage, ...(worldChange ? { worldChange } : {}), ...(worldChange && narration ? { narration } : {}) }
     },
   }
 }
 
-function normalizeRoleDecision(result: unknown): { brief: string; privateReaction: string; publicIdentity?: string; impressions?: Record<string, string | null> } | undefined {
-  if (!result || typeof result !== 'object' || Array.isArray(result)) return undefined
+/**
+ * 归一化角色发言附带的世界变更申请：只保留非空的有效变更字段，
+ * 空对象/无有效变更返回 undefined（表示本发言不附带世界变更）。
+ */
+function normalizeWorldChange(raw: unknown): import('./types.ts').WorldChangeRequest | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  const result: import('./types.ts').WorldChangeRequest = {}
+  const sceneTime = typeof value.sceneTime === 'string' ? value.sceneTime.trim() : ''
+  const sceneLocation = typeof value.sceneLocation === 'string' ? value.sceneLocation.trim() : ''
+  if (sceneTime) result.sceneTime = sceneTime
+  if (sceneLocation) result.sceneLocation = sceneLocation
+  if (typeof value.reason === 'string' && value.reason.trim()) result.reason = value.reason.trim()
+  const proposalsRaw = value.roleProposals ?? value.role_proposals
+  if (Array.isArray(proposalsRaw)) {
+    const proposals = proposalsRaw.map((item): import('./types.ts').RoleProposal | undefined => {
+      if (!item || typeof item !== 'object') return undefined
+      const p = item as Record<string, unknown>
+      const id = typeof p.id === 'string' ? p.id.trim() : ''
+      const name = typeof p.name === 'string' ? p.name.trim() : ''
+      const currentState = typeof p.currentState === 'string' ? p.currentState.trim() : ''
+      const selfModel = typeof p.selfModel === 'string' ? p.selfModel.trim() : ''
+      if (!id || !name || !currentState || !selfModel) return undefined
+      const presence = p.presence === 'present' || p.presence === 'absent' || p.presence === 'unavailable' ? p.presence : 'present'
+      const portraitRef = typeof p.portraitRef === 'string' && p.portraitRef.trim() ? p.portraitRef.trim() : '/assets/default.svg'
+      const memoryRaw = p.memoryTimeline ?? p.memory_timeline
+      const memoryTimeline = memoryRaw && typeof memoryRaw === 'object' && !Array.isArray(memoryRaw)
+        ? Object.fromEntries(Object.entries(memoryRaw as Record<string, unknown>).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, (v as unknown[]).map(item => String(item ?? '').trim()).filter(Boolean)]))
+        : {}
+      return { id, name, portraitRef, currentState, presence, selfModel, memoryTimeline, ...(Array.isArray(p.goals) ? { goals: p.goals.map(item => String(item ?? '').trim()).filter(Boolean) } : {}) }
+    }).filter((item): item is import('./types.ts').RoleProposal => Boolean(item))
+    if (proposals.length > 0) result.roleProposals = proposals
+  }
+  const presenceRaw = value.rolePresence ?? value.role_presence
+  if (Array.isArray(presenceRaw)) {
+    const presence = presenceRaw.map((item): { roleId: string; presence: 'present' | 'absent' | 'unavailable' } | undefined => {
+      if (!item || typeof item !== 'object') return undefined
+      const p = item as Record<string, unknown>
+      const roleId = typeof p.roleId === 'string' ? p.roleId.trim() : typeof p.role_id === 'string' ? String(p.role_id).trim() : ''
+      const presence = p.presence === 'present' || p.presence === 'absent' || p.presence === 'unavailable' ? p.presence : undefined
+      if (!roleId || !presence) return undefined
+      return { roleId, presence }
+    }).filter((item): item is { roleId: string; presence: 'present' | 'absent' | 'unavailable' } => Boolean(item))
+    if (presence.length > 0) result.rolePresence = presence
+  }
+  if (result.sceneTime || result.sceneLocation || result.roleProposals || result.rolePresence || result.reason) return result
+  return undefined
+}
+
+function normalizeRoleDecision(result: unknown): { brief: string; privateReaction: string; publicIdentity?: string; impressions?: Record<string, string | null> } | undefined {  if (!result || typeof result !== 'object' || Array.isArray(result)) return undefined
   const value = result as Record<string, unknown>
   const brief = ['brief', 'intent', 'publicIntent', 'public_intent', 'response', 'text'].map(key => value[key]).find(item => typeof item === 'string' && item.trim()) as string | undefined
   if (!brief) return undefined

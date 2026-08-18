@@ -5,14 +5,23 @@ export type RoomPhase =
   | 'awaiting-approval'
   | 'consulting-director'
   | 'role-speaking'
+  /** 群聊模式：角色台词附带的世界变更申请待玩家确认（与台词审批绑定，批准台词时一并落地） */
+  | 'world-change-approval'
 
 /** 游玩模式：director = 导演模式（现状流程）；chat = 无导演串行群聊（角色发言→审批→在场消化） */
 export type RoomMode = 'director' | 'chat'
+
+/** 思维链强度档位：off = 关闭（不产思考）；brief/standard/deep = 思考深度递增 */
+export type ThinkingStrength = 'off' | 'brief' | 'standard' | 'deep'
 
 /** 单次模型调用的 token 用量（用于前端小字展示；不计费） */
 export interface TokenUsage {
   promptTokens: number
   completionTokens: number
+  /** 缓存命中的输入 token 数（provider usage.prompt_tokens_details.cached_tokens） */
+  cachedTokens?: number
+  /** 本次调用耗时（毫秒） */
+  durationMs?: number
 }
 
 export type ParticipationMode = 'required' | 'optional' | 'excluded'
@@ -33,6 +42,8 @@ export interface Role {
   selfModel: string
   providerId?: string
   modelOverride?: string
+  /** 该角色思维链强度（缺省 = 跟随默认，见角色默认设置） */
+  thinkingStrength?: ThinkingStrength
 }
 
 export interface Decision {
@@ -136,6 +147,8 @@ export interface ConsultationMessage {
   text: string
   /** 导演回复的模型 token 用量（仅 director 消息可能有） */
   usage?: TokenUsage
+  /** 导演回复附带的思维链（生成后保留，供开关控制展示） */
+  thinking?: string
   createdAt: string
 }
 
@@ -168,6 +181,31 @@ export interface ChatSpeech {
   thinking?: string
   usage?: TokenUsage
   turnId: string
+  /** 可选：随台词一并提请玩家确认的世界变更申请（批准台词时落地） */
+  worldChange?: WorldChangeRequest
+}
+
+/**
+ * 群聊模式下的世界变更申请：由角色 AI 在发言时或导演在对话中提出，
+ * 玩家批准后落地（更新场景时间/地点、切换角色进场/离场、创建新人物）。
+ */
+export interface WorldChangeRequest {
+  /** 提议的新场景时间（无变化不填） */
+  sceneTime?: string
+  /** 提议的新场景地点（无变化不填） */
+  sceneLocation?: string
+  /** 提议引入的新人物（复用导演模式 roleProposals 结构，批准后创建） */
+  roleProposals?: RoleProposal[]
+  /** 提议的角色进场/离场切换（批准后生效） */
+  rolePresence?: Array<{ roleId: string; presence: 'present' | 'absent' | 'unavailable' }>
+  /** 简短理由，供玩家了解为何提出这项变更 */
+  reason?: string
+}
+
+/** 世界变更落地后导演写的一段叙述（导演风格 narration scene，非对话气泡） */
+export interface WorldNarration {
+  text: string
+  usage?: TokenUsage
 }
 
 /** 角色"消化"一条已批准正文后产生的记忆事件：时间标签 → 事件列表 */
@@ -186,6 +224,10 @@ export interface RoomSnapshot {
   autoPublish: boolean
   /** 群聊模式下待审批的台词（仅 phase == awaiting-approval && mode == chat 时存在） */
   speech?: ChatSpeech
+  /** 群聊模式下随台词一并待玩家确认的世界变更申请（phase == world-change-approval 时存在） */
+  pendingWorldChange?: WorldChangeRequest
+  /** 待确认的世界变更落地后导演要写的一段叙述（导演对话建议时预先产出；批准后写为 narration scene） */
+  pendingNarration?: string
   playerCharacter: PlayerCharacter
   phase: RoomPhase
   revision: number

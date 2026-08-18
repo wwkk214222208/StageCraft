@@ -26,3 +26,7 @@ start-wsl.ps1
 wsl-start.sh
 wsl-stop.sh
 close-wsl.bat
+
+# ── 本地工具缓存 / 误入的独立仓库 ──
+.pnpm-home/
+dsh-web-ui/

@@ -28,6 +28,7 @@ interface ProviderConfigFile {
   defaultRoleModel?: string
   directorProviderId?: string
   directorModel?: string
+  directorThinkingStrength?: import('./types.ts').ThinkingStrength
 }
 
 export class ProviderConfigStore {
@@ -37,6 +38,7 @@ export class ProviderConfigStore {
   private defaultRoleModel: string | undefined
   private directorProviderId: string | undefined
   private directorModel: string | undefined
+  private directorThinkingStrength: import('./types.ts').ThinkingStrength | undefined
 
   constructor(filePath: string) {
     this.filePath = filePath
@@ -46,6 +48,7 @@ export class ProviderConfigStore {
     this.defaultRoleModel = file.defaultRoleModel
     this.directorProviderId = file.directorProviderId ?? this.configs[0]?.id
     this.directorModel = file.directorModel
+    this.directorThinkingStrength = file.directorThinkingStrength
   }
 
   list(): PublicProviderConfig[] {
@@ -53,7 +56,18 @@ export class ProviderConfigStore {
   }
 
   defaults(): Omit<ProviderConfigFile, 'providers'> {
-    return { defaultRoleProviderId: this.defaultRoleProviderId, defaultRoleModel: this.defaultRoleModel, directorProviderId: this.directorProviderId, directorModel: this.directorModel }
+    return { defaultRoleProviderId: this.defaultRoleProviderId, defaultRoleModel: this.defaultRoleModel, directorProviderId: this.directorProviderId, directorModel: this.directorModel, ...(this.directorThinkingStrength ? { directorThinkingStrength: this.directorThinkingStrength } : {}) }
+  }
+
+  /** 导演思维链强度（缺省 undefined = 跟随默认档位 standard） */
+  directorThinking(): import('./types.ts').ThinkingStrength | undefined {
+    return this.directorThinkingStrength
+  }
+
+  setDirectorThinking(strength: import('./types.ts').ThinkingStrength): void {
+    if (!['off', 'brief', 'standard', 'deep'].includes(strength)) throw new Error('无效的思维链强度。')
+    this.directorThinkingStrength = strength
+    this.persist()
   }
 
   get(id: string): ProviderConfig | undefined {
