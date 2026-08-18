@@ -146,12 +146,31 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
 
   emitDomainEvent(event: DomainEvent): void {
     const payload = event.payload as { roomId?: unknown }
-    if (payload.roomId) this.eventLog?.appendDomain(String(payload.roomId), this.revision, event)
+    const roomId = payload.roomId ? String(payload.roomId) : undefined
+    if (roomId) this.eventLog?.appendDomain(roomId, this.revision, event)
     this.emit({ type: 'domain.event', revision: this.revision, event })
+
+    // 领域事件只推进声明了对应 transition 的固定 workflow；旧 RoomRuntime 仍是状态写入权威。
+    let changed = false
+    for (const [id, instance] of this.workflows) {
+      if (roomId && instance.locals.roomId !== roomId) continue
+      const next = this.workflowExecutor.transition(instance, event)
+      if (next === instance) continue
+      this.workflows.set(id, next)
+      if (roomId) this.workflowStore?.save(roomId, next)
+      this.emit({ type: 'workflow.changed', revision: this.revision, workflow: next })
+      changed = true
+    }
+    if (changed) this.replanActions()
   }
 
   async submitModelResult(result: ModelResult): Promise<void> {
     this.emit({ type: 'model.completed', revision: this.revision, result })
+  }
+
+  private replanActions(): void {
+    this.actions.length = 0
+    for (const instance of this.workflows.values()) this.actions.push(...this.workflowExecutor.plan(instance))
   }
 
   getView(): CoreView {
