@@ -16,6 +16,21 @@ export interface StoryPackage {
   lore?: LoreEntry[]
 }
 
+/** 把旧剧本中写在人设末尾的长期目标迁移到独立字段，并从人设正文移除。 */
+function normalizeRoleGoals(role: Role): Role {
+  if (Array.isArray(role.goals) && role.goals.length) return role
+  const match = String(role.selfModel ?? '').match(/(?:^|\n)\s*={3,}\s*长期目标\s*={3,}\s*\n([\s\S]*)$/)
+  if (!match) return role
+  const goals = match[1].split(/\r?\n/).map(line => line.trim()).filter(line => /^[-*•]/.test(line)).map(line => line.replace(/^[-*•]\s*/, '').trim()).filter(Boolean)
+  const selfModel = String(role.selfModel).slice(0, match.index).trimEnd()
+  return { ...role, selfModel, ...(goals.length ? { goals } : {}) }
+}
+
+function normalizeStoryRoles(story: StoryPackage): StoryPackage {
+  story.roles = (story.roles ?? []).map(normalizeRoleGoals)
+  return story
+}
+
 /** 优先主目录，其次 stories/custom/（用户自建剧本，随项目保留目录但不提交内容） */
 function storyPath(directory: string, id: string): string {
   const direct = join(directory, `${id}.json`)
@@ -27,12 +42,14 @@ export function loadStoryPackage(directory: string, id: string): StoryPackage {
   const path = storyPath(directory, id)
   const value = JSON.parse(readFileSync(path, 'utf8')) as StoryPackage
   value.playerCharacter ??= { name: '玩家', persona: '由玩家自由定义的参与者。', currentState: '刚刚进入当前场景。' }
+  normalizeStoryRoles(value)
   validateStoryPackage(value)
   return value
 }
 
 /** 把剧本写回磁盘（覆盖 ${id}.json）。用于「编辑原始剧本」选项；custom 剧本写回 custom/。 */
 export function saveStoryPackage(directory: string, story: StoryPackage): void {
+  normalizeStoryRoles(story)
   validateStoryPackage(story)
   const path = storyPath(directory, story.id)
   writeFileSync(path, `${JSON.stringify(story, null, 2)}\n`, 'utf8')

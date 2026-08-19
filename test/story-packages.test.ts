@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -16,6 +16,14 @@ test('test fixture story package loads with validated roles', () => {
   const listed = listStoryPackages(stories)
   assert.ok(!listed.some(item => item.id === 'royal-festival'), '皇家祭典不应再出现在默认剧本列表')
   assert.ok(listed.length >= 1)
+})
+
+test('legacy long-term goals are migrated out of selfModel when a story loads', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-story-goals-'))
+  writeFileSync(join(root, 'legacy.json'), JSON.stringify({ id: 'legacy', title: 'Legacy', opening: '开场', playerCharacter: { name: '玩家', persona: '观察者', currentState: '在场' }, roles: [{ id: 'r', name: '角色', portraitRef: '/assets/default.svg', currentState: '在场', presence: 'present', memoryTimeline: {}, selfModel: '性格定义：谨慎。\n\n===== 长期目标 =====\n- 守住城门\n- 找到失踪者' }]}))
+  const role = loadStoryPackage(root, 'legacy').roles[0]
+  assert.deepEqual(role.goals, ['守住城门', '找到失踪者'])
+  assert.equal(role.selfModel, '性格定义：谨慎。')
 })
 
 test('Eldoria default story package loads with Seraphina and expanded lore', () => {
