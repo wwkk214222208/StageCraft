@@ -37,6 +37,8 @@ if (basicPanels.length > 1) { basicPanels[0].append(...basicPanels[1].childNodes
 const modelPanel = document.querySelector('[data-inspector-panel="model"]')
 const modelSettings = document.querySelector('.inspector-fields > .inspector-row')
 if (modelPanel && modelSettings) modelPanel.prepend(modelSettings)
+document.querySelector('#role-modal .inspector-portrait-panel .hint')?.remove()
+modelPanel?.querySelector(':scope > .hint')?.remove()
 document.querySelectorAll('#role-modal #inspector-memory, #new-role-memory').forEach(element => element.closest('label')?.remove())
 document.querySelector('.inspector-goals-label small')?.remove()
 const impressionsTitle = document.querySelector('.inspector-impressions-wrap .field-title')
