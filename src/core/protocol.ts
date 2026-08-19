@@ -1,4 +1,4 @@
-import type { TokenUsage } from '../types.ts'
+import type { ThinkingStrength, TokenUsage } from '../types.ts'
 import type { DomainEvent } from './domain-events.ts'
 
 /** 核心协议版本；外部 adapter 以此版本协商，不直接依赖内部 RoomRuntime。 */
@@ -33,6 +33,13 @@ export interface ModelRouteSelector {
   purpose?: string
 }
 
+/** Native tool contract forwarded to the provider; contains no credentials. */
+export interface ModelToolDefinition {
+  name: string
+  description: string
+  parameters: object
+}
+
 export interface PromptProgram {
   system: string
   user: string
@@ -58,6 +65,8 @@ export interface ModelRequest {
   prompt: PromptProgram
   contract: ResponseContract
   route?: ModelRouteSelector
+  tool?: ModelToolDefinition
+  thinkingStrength?: ThinkingStrength
   stream?: boolean
   metadata?: Record<string, unknown>
 }

@@ -17,7 +17,7 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 
 ### 核心运行时插件
 
-负责状态、Reducer、本地规则、审批、事件历史、取消、恢复和 Action 调度；Workflow Registry/Executor 由 Core 提供，但具体玩法由方案插件注册。它是状态的唯一权威，不依赖 HTTP、DOM、Cordis 或具体模型供应商。
+负责状态、Reducer、本地规则、审批、事件历史、取消、恢复和 Command 调度；Workflow Registry/Executor 由 Core 提供，但具体玩法由方案插件注册。它是状态的唯一权威，不依赖 HTTP、DOM、Cordis 或具体模型供应商。
 
 ### 玩法方案插件
 
@@ -25,7 +25,7 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 
 ### 核心-LLM 路由插件
 
-负责 `ModelRequest` 与 `ModelResult`，包括 provider 路由、SSE、thinking 参数、usage、超时、取消和错误归一化。Core 以 requestId 等待匹配结果并隔离取消的迟到结果；它不决定房间阶段，也不直接修改状态。
+负责 `ModelRequest` 与 `ModelResult`，包括 provider 路由、SSE、thinking 参数、usage、超时、request-scoped 取消和错误归一化。Core 以 requestId 等待匹配结果并隔离取消的迟到结果；它不决定房间阶段，也不直接修改状态。
 
 ## Workflow 边界
 
@@ -41,4 +41,4 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 
 ## 兼容策略
 
-群聊的 Core commands 已由 StageCraft 方案 handler 处理，旧 `/api/chat/*` 与 `/api/world-change/*` 仅构造 Core command；群聊模型请求通过 Core LLM router，保留每角色 route metadata。`StageCraftChatService` 是独立的 Store-backed 群聊领域服务，生产 Core handler 直接依赖其窄端口；`RoomRuntime` 的群聊方法仅作为旧 API facade 反向委托该服务。导演模式和其余管理流程仍走旧 facade，尚未迁移。
+群聊与导演模式的核心交互均由 StageCraft 方案的 Command Handler 处理，旧 `/api/chat/*`、`/api/world-change/*` 及导演兼容路由只构造带 scope/action 的 Core command。两条垂直流程分别由独立的 Store-backed `StageCraftChatService` 与 `StageCraftDirectorService` 持有，模型请求通过 Core LLM router 并保留非敏感 route/correlation metadata；`RoomRuntime` 的业务方法仅作为旧 API facade 反向委托服务。管理与重启等未迁移入口仍可保留 legacy dispatcher。

@@ -44,13 +44,18 @@ export class StageCraftChatService implements StageCraftChatPort {
 
   setWorkers(workers: WorkerSet): void {
     if (this.disposed) throw new Error('StageCraft chat service is disposed.')
-    if (this.activeTurns.size > 0) throw new Error('回合进行中不能切换模型。')
+    if (this.isActive()) throw new Error('回合进行中不能切换模型。')
     this.workers = workers
+  }
+
+  isActive(roomId?: string): boolean {
+    return roomId ? this.activeTurns.has(roomId) || this.activeDirectorChats.has(roomId) : this.activeTurns.size > 0 || this.activeDirectorChats.size > 0
   }
 
   setCoreRuntime(core: CoreRuntimePort): void {
     if (this.disposed) return
     this.unsubscribeCore?.()
+    this.coreRequestContexts.clear()
     this.core = core
     this.unsubscribeCore = core.subscribe(event => {
       if (event.type === 'model.started') {
@@ -58,6 +63,11 @@ export class StageCraftChatService implements StageCraftChatPort {
         if (correlation && typeof correlation === 'object') {
           const value = correlation as Record<string, unknown>
           if (typeof value.roomId === 'string' && typeof value.turnId === 'string' && (value.actor === 'role' || value.actor === 'director')) {
+            if (value.mode === 'director') return
+            if (value.mode !== 'chat') {
+              try { if (this.notifications.get(value.roomId).mode !== 'chat' && event.request.capability !== 'role.speech' && event.request.capability !== 'director.chat') return } catch { return }
+            }
+            if (this.cancelledRequests.has(value.roomId) || this.cancelledTurns.has(value.turnId)) return
             this.coreRequestContexts.set(event.request.requestId, { roomId: value.roomId, turnId: value.turnId, actor: value.actor, ...(typeof value.roleId === 'string' ? { roleId: value.roleId } : {}) })
           }
         }
@@ -83,11 +93,22 @@ export class StageCraftChatService implements StageCraftChatPort {
       this.cancelledTurns.add(turnId)
       this.cancelledRequests.add(turnId)
     }
-    this.workers.cancel?.()
+    void Promise.resolve(this.workers.cancel?.()).catch(() => undefined)
   }
 
   private ensureActive(): void {
     if (this.disposed) throw new Error('StageCraft chat service is disposed.')
+  }
+
+  async submitContribution(roomId: string, text: string): Promise<void> {
+    this.ensureActive()
+    const room = this.notifications.get(roomId)
+    if (room.mode !== 'chat' || room.phase !== 'awaiting-player-input') throw new Error(`Room is busy: ${room.phase}`)
+    if (!text.trim()) { this.notifications.notify(roomId); return }
+    this.store.setContribution(roomId, text)
+    this.store.addPlayerScene(roomId, text)
+    this.core?.emitDomainEvent(domainEvent('player.contribution.submitted', { roomId, text }))
+    this.notifications.notify(roomId)
   }
 
   async speak(roomId: string, roleId: string, feedback = ''): Promise<void> {
@@ -101,6 +122,7 @@ export class StageCraftChatService implements StageCraftChatPort {
     if (role.presence !== 'present') throw new Error('该角色当前不在场，不能发言。')
     this.activeTurns.add(roomId)
     const turnId = randomUUID()
+    this.cancelledRequests.delete(roomId)
     this.turnIds.set(roomId, turnId)
     this.cancelledTurns.delete(turnId)
     this.store.createTurn(roomId, turnId, room.playerContribution ?? '', [{ roleId, participation: 'required', status: 'pending' }], 'role-speaking')
@@ -186,6 +208,7 @@ export class StageCraftChatService implements StageCraftChatPort {
     this.core?.emitDomainEvent(domainEvent('director.suggestion.submitted', { roomId, text: playerText }))
     this.activeTurns.add(roomId)
     this.activeDirectorChats.add(roomId)
+    this.cancelledRequests.delete(roomId)
     try {
       const context: import('./workers.ts').DirectorChatContext = {
         sceneTime: room.sceneTime, sceneLocation: room.sceneLocation, playerName: room.playerCharacter.name,
@@ -252,13 +275,24 @@ export class StageCraftChatService implements StageCraftChatPort {
 
   cancel(roomId: string): void {
     if (this.disposed) return
-    for (const [requestId, context] of this.coreRequestContexts) if (context.roomId === roomId) this.coreRequestContexts.delete(requestId)
+    const pendingWorkflowRequests = this.core?.getView().workflows
+      .filter(workflow => String(workflow.locals.roomId ?? '') === roomId)
+      .flatMap(workflow => workflow.pendingModelRequestIds)
+    const requestIds = [...new Set([
+      ...[...this.coreRequestContexts].filter(([, context]) => context.roomId === roomId).map(([requestId]) => requestId),
+      ...(pendingWorkflowRequests ?? []),
+    ])]
+    for (const requestId of requestIds) this.coreRequestContexts.delete(requestId)
     const room = this.notifications.get(roomId)
     const directorChatActive = this.activeDirectorChats.has(roomId)
     const cancellablePhase = ['collecting-decisions', 'drafting', 'consulting-director', 'role-speaking', 'world-change-approval'].includes(room.phase)
     if (!directorChatActive && !cancellablePhase) return
     this.cancelledRequests.add(roomId)
-    this.workers.cancel?.()
+    if (this.workers.supportsRequestCancellation) {
+      for (const requestId of requestIds) void Promise.resolve(this.workers.cancel?.(requestId)).catch(() => undefined)
+    } else if (this.workers.cancel) {
+      void Promise.resolve(this.workers.cancel()).catch(() => undefined)
+    }
     const turnId = this.turnIds.get(roomId)
     if (turnId) this.cancelledRequests.add(turnId)
     if (turnId) this.cancelledTurns.add(turnId)

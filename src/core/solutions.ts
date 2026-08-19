@@ -1,4 +1,4 @@
-import type { Role, RoomMode, RoomPhase, WorldChangeRequest } from '../types.ts'
+import type { RoomMode, RoomPhase, SubmitTurnInput, WorldChangeRequest } from '../types.ts'
 import type { InteractionRequest, WorkflowDefinition, WorkflowInstance } from './protocol.ts'
 import type { CoreCommandHandler, CoreSolutionPlugin, CoreSolutionProjectionProvider, CoreSolutionHost, CoreStateProjectionProvider, Disposable } from './plugins.ts'
 import { defaultStateCategories, projectRoomSnapshot } from './state.ts'
@@ -64,6 +64,7 @@ export const directorTurnWorkflow: WorkflowDefinition = {
 
 /** 群聊领域端口。实现位于 Core 外侧，方案只依赖这些稳定业务动作。 */
 export interface StageCraftChatPort {
+  submitContribution?(roomId: string, text: string): Promise<void>
   speak(roomId: string, roleId: string, feedback?: string): Promise<void>
   approveSpeech(roomId: string, text: string, worldChange?: WorldChangeRequest | null): Promise<void>
   rejectSpeech(roomId: string): Promise<void>
@@ -71,6 +72,19 @@ export interface StageCraftChatPort {
   directorChat(roomId: string, text: string): Promise<void>
   approveWorldChange(roomId: string, worldChange?: WorldChangeRequest | null): Promise<void>
   rejectWorldChange(roomId: string): Promise<void>
+  cancel(roomId: string): void
+}
+
+export interface StageCraftDirectorPort {
+  submitTurn(roomId: string, input: SubmitTurnInput): Promise<void>
+  proceedToDraft(roomId: string): Promise<void>
+  rejectDraft(roomId: string): Promise<void>
+  retryDirector(roomId: string): Promise<void>
+  reconsiderReaction(roomId: string, roleId: string, feedback: string): Promise<void>
+  consult(roomId: string, draftId: string, playerText: string, context?: string): Promise<void>
+  finishConsultation(roomId: string): void
+  redraft(roomId: string, draftId: string): Promise<void>
+  approve(roomId: string, draftId: string, text: string, stateUpdates: Record<string, string>, sceneUpdates?: { time?: string; location?: string }): void
   cancel(roomId: string): void
 }
 
@@ -130,10 +144,12 @@ export function interactionFromRoom(room: WorkflowRoom): InteractionRequest | un
 export class StageCraftSolutionPlugin implements CoreSolutionPlugin {
   readonly id = 'stagecraft.solution'
   private readonly chat?: StageCraftChatPort
+  private readonly director?: StageCraftDirectorPort
   private readonly defaultRoomId?: string
 
-  constructor(options: { chat?: StageCraftChatPort; defaultRoomId?: string } = {}) {
+  constructor(options: { chat?: StageCraftChatPort; director?: StageCraftDirectorPort; defaultRoomId?: string } = {}) {
     this.chat = options.chat
+    this.director = options.director
     this.defaultRoomId = options.defaultRoomId
   }
 
@@ -146,6 +162,7 @@ export class StageCraftSolutionPlugin implements CoreSolutionPlugin {
       host.registerWorkflow(directorTurnWorkflow),
       host.registerProjection(stagecraftProjection),
       ...(this.chat ? [host.registerCommandHandler(stagecraftChatCommandHandler(this.chat, this.defaultRoomId))] : []),
+      ...(this.director ? [host.registerCommandHandler(stagecraftDirectorCommandHandler(this.director, this.defaultRoomId))] : []),
     ]
     return {
       dispose: async () => {
@@ -166,10 +183,10 @@ function stagecraftChatCommandHandler(chat: StageCraftChatPort, defaultRoomId?: 
       const action = String(payload.action ?? '')
       const interaction = command.interactionId ?? ''
       const chatInteraction = interaction.endsWith(':role-select') || interaction.endsWith(':speech-approval') || interaction.endsWith(':world-change-approval') || interaction.endsWith(':director-suggestion')
-      const chatPayload = payload.scope === 'chat' || payload.mode === 'chat' || ['chat-speech', 'speech', 'world-change', 'director-chat'].includes(action)
-      if (command.type === 'select-role' || command.type === 'choose') return chatInteraction || chatPayload
+      const chatPayload = payload.scope === 'chat' || payload.mode === 'chat' || ['chat-speech', 'speech', 'world-change', 'director-chat', 'cancel-turn'].includes(action)
+      if (command.type === 'select-role' || command.type === 'choose') return payload.scope !== 'director' && payload.mode !== 'director' && (chatInteraction || chatPayload || !payload.scope)
       if (command.type === 'cancel' || command.type === 'retry') return chatInteraction || chatPayload
-      if (command.type === 'submit-text') return interaction.endsWith(':director-suggestion') || action === 'director-chat'
+      if (command.type === 'submit-text') return interaction.endsWith(':director-suggestion') || action === 'director-chat' || action === 'chat-contribution'
       if (command.type === 'approve' || command.type === 'reject') {
         return ['speech', 'world-change'].includes(action) || interaction.endsWith(':speech-approval') || interaction.endsWith(':world-change-approval')
       }
@@ -177,6 +194,7 @@ function stagecraftChatCommandHandler(chat: StageCraftChatPort, defaultRoomId?: 
     },
     async handle(command) {
       const payload = payloadOf(command)
+      const action = String(payload.action ?? '')
       const roomId = roomIdOf(command, payload)
       if (!roomId) throw new Error('Chat command requires roomId.')
       if (command.type === 'select-role' || command.type === 'choose') {
@@ -184,6 +202,11 @@ function stagecraftChatCommandHandler(chat: StageCraftChatPort, defaultRoomId?: 
         return
       }
       if (command.type === 'submit-text') {
+        if (action === 'chat-contribution') {
+          if (!chat.submitContribution) throw new Error('Chat contribution is not supported.')
+          await chat.submitContribution(roomId, String(payload.text ?? ''))
+          return
+        }
         await chat.directorChat(roomId, String(payload.text ?? ''))
         return
       }
@@ -197,14 +220,69 @@ function stagecraftChatCommandHandler(chat: StageCraftChatPort, defaultRoomId?: 
         return
       }
       const worldChange = worldChangeOf(payload)
-      const action = String(payload.action ?? (command.interactionId?.endsWith(':world-change-approval') ? 'world-change' : 'speech'))
+      const approvalAction = String(payload.action ?? (command.interactionId?.endsWith(':world-change-approval') ? 'world-change' : 'speech'))
       if (command.type === 'approve') {
-        if (action === 'world-change') await chat.approveWorldChange(roomId, worldChange)
+        if (approvalAction === 'world-change') await chat.approveWorldChange(roomId, worldChange)
         else await chat.approveSpeech(roomId, String(payload.text ?? ''), worldChange)
         return
       }
-      if (action === 'world-change') await chat.rejectWorldChange(roomId)
+      if (approvalAction === 'world-change') await chat.rejectWorldChange(roomId)
       else await chat.rejectSpeech(roomId)
+    },
+  }
+}
+
+function stagecraftDirectorCommandHandler(director: StageCraftDirectorPort, defaultRoomId?: string): CoreCommandHandler {
+  const payloadOf = (command: import('./protocol.ts').HumanCommand): Record<string, unknown> => command.payload && typeof command.payload === 'object' ? command.payload as Record<string, unknown> : {}
+  const roomIdOf = (command: import('./protocol.ts').HumanCommand, payload: Record<string, unknown>): string => typeof payload.roomId === 'string' && payload.roomId.trim() ? payload.roomId : String(command.sessionId ?? defaultRoomId ?? '')
+  const directorScope = (command: import('./protocol.ts').HumanCommand, payload: Record<string, unknown>): boolean => {
+    if (payload.scope === 'chat' || payload.mode === 'chat') return false
+    const action = String(payload.action ?? '')
+    const interaction = command.interactionId ?? ''
+    return payload.scope === 'director' || payload.mode === 'director' || interaction.endsWith(':player-input') || interaction.endsWith(':decision-approval') || interaction.endsWith(':draft-approval') || interaction.endsWith(':director-consult') || ['director-turn', 'director-proceed', 'director-retry', 'draft-approval', 'reconsider-reaction', 'director-consult', 'consult-finish', 'redraft', 'cancel-turn'].includes(action)
+  }
+  return {
+    id: 'stagecraft.director.command-handler',
+    canHandle(command) {
+      const payload = payloadOf(command)
+      if (!directorScope(command, payload)) return false
+      const action = String(payload.action ?? '')
+      if (command.type === 'submit-text') return ['director-turn', 'director-proceed', 'director-consult'].includes(action) || (command.interactionId ?? '').endsWith(':player-input') || (command.interactionId ?? '').endsWith(':director-consult')
+      if (command.type === 'retry') return ['director-retry', 'reconsider-reaction', 'redraft'].includes(action)
+      if (command.type === 'cancel') return action === 'cancel-turn' || (command.interactionId ?? '').endsWith(':player-input') || (command.interactionId ?? '').endsWith(':draft-approval')
+      if (command.type === 'approve' || command.type === 'reject') return ['decisions', 'draft-approval', 'consult-finish'].includes(action) || (command.interactionId ?? '').endsWith(':decision-approval') || (command.interactionId ?? '').endsWith(':draft-approval')
+      return false
+    },
+    async handle(command) {
+      const payload = payloadOf(command)
+      const roomId = roomIdOf(command, payload)
+      if (!roomId) throw new Error('Director command requires roomId.')
+      const action = String(payload.action ?? '')
+      if (command.type === 'submit-text' && (action === 'director-turn' || (command.interactionId ?? '').endsWith(':player-input'))) {
+        await director.submitTurn(roomId, { text: String(payload.text ?? ''), requiredRoleIds: Array.isArray(payload.requiredRoleIds) ? payload.requiredRoleIds.map(String) : [] })
+        return
+      }
+      if (command.type === 'submit-text' && action === 'director-proceed') { await director.proceedToDraft(roomId); return }
+      if (command.type === 'submit-text' && (action === 'director-consult' || (command.interactionId ?? '').endsWith(':director-consult'))) {
+        await director.consult(roomId, String(payload.draftId ?? ''), String(payload.text ?? ''), String(payload.context ?? ''))
+        return
+      }
+      if ((command.type === 'approve' || command.type === 'reject') && (action === 'decisions' || (command.interactionId ?? '').endsWith(':decision-approval'))) {
+        if (command.type === 'approve') await director.proceedToDraft(roomId)
+        else await director.rejectDraft(roomId)
+        return
+      }
+      if (command.type === 'retry' && action === 'director-retry') { await director.retryDirector(roomId); return }
+      if (command.type === 'retry' && action === 'reconsider-reaction') { await director.reconsiderReaction(roomId, String(payload.roleId ?? ''), String(payload.feedback ?? '')); return }
+      if (command.type === 'retry' && action === 'redraft') { await director.redraft(roomId, String(payload.draftId ?? '')); return }
+      if (command.type === 'cancel') { director.cancel(roomId); return }
+      if ((command.type === 'approve' || command.type === 'reject') && action === 'consult-finish') { director.finishConsultation(roomId); return }
+      if (command.type === 'approve' && (action === 'draft-approval' || (command.interactionId ?? '').endsWith(':draft-approval'))) {
+        director.approve(roomId, String(payload.draftId ?? ''), String(payload.text ?? ''), payload.stateUpdates && typeof payload.stateUpdates === 'object' ? payload.stateUpdates as Record<string, string> : {}, payload.sceneUpdates && typeof payload.sceneUpdates === 'object' ? payload.sceneUpdates as { time?: string; location?: string } : undefined)
+        return
+      }
+      if (command.type === 'reject' && (action === 'draft-approval' || (command.interactionId ?? '').endsWith(':draft-approval'))) { await director.rejectDraft(roomId); return }
+      throw new Error(`Unsupported director command: ${command.type}/${action}`)
     },
   }
 }

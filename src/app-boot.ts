@@ -23,6 +23,13 @@ import { DefaultCorePluginContainer } from './core/container.ts'
 import { CoreRuntimePluginAdapter } from './core/runtime-plugin.ts'
 import type { Disposable } from './core/plugins.ts'
 import { HttpHumanCorePlugin } from './core/http-human-plugin.ts'
+
+/** Provider replacement transaction: preflight must run before tearing down the old route. */
+export async function switchProviderSafely<T>(assertReady: () => void, disposeOld: () => Promise<void> | void, installNew: () => T): Promise<T> {
+  assertReady()
+  await disposeOld()
+  return installNew()
+}
 import { StageCraftSolutionPlugin } from './core/solutions.ts'
 import { StoreCoreStateRepository } from './core/store-state-repository.ts'
 
@@ -121,7 +128,8 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   function installProvider(config: ProviderConfig | undefined): void {
     if (!config?.apiKey) { gateway = undefined; return }
     const defaults = providerStore.defaults()
-    gateway = gatewayFromProvider(config, defaults.directorModel ?? config.selectedModel ?? config.models[0] ?? envRoute.model)
+    const directorModel = defaults.directorModel ?? config.selectedModel ?? config.models[0] ?? envRoute.model
+    gateway = gatewayFromProvider(config, directorModel)
     llmInstallation = container.addLlm(new ModelGatewayRouterAdapter(gateway, request => {
       const roleId = request.route?.role
       if (!roleId) return gateway!
@@ -140,14 +148,15 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       if (!selectedProvider?.apiKey) return gateway!
       const fallbackModel = selectedProvider.id === fallbackProvider?.id ? defaults.defaultRoleModel : undefined
       return gatewayFromProvider(selectedProvider, role.modelOverride ?? fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)
-    }, { directorThinkingStrength: providerStore.directorThinking(), requestModel: request => core.requestModel(request), cancelModel: () => core.cancel() }))
+    }, { directorThinkingStrength: providerStore.directorThinking(), directorProviderId: config.id, directorModel, requestModel: request => core.requestModel(request), cancelModel: requestId => core.cancel(requestId) }))
   }
   function activateProvider(config = providerStore.getDirector()): Promise<void> {
     const activation = providerActivation.then(async () => {
-      // Provider 切换时先释放旧 adapter，避免旧 gateway 继续接收请求或持有连接。
-      await llmInstallation?.dispose()
-      llmInstallation = undefined
-      installProvider(config)
+      await switchProviderSafely(
+        () => runtime.assertWorkersSwitchAllowed(),
+        async () => { await llmInstallation?.dispose(); llmInstallation = undefined },
+        () => { installProvider(config) },
+      )
     })
     providerActivation = activation.catch(() => undefined)
     return activation
@@ -158,7 +167,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   const humanCore = new HttpHumanCorePlugin()
   container.addHuman(humanCore)
   const runtime = new RoomRuntime(store, undefined, core)
-  container.addSolution(new StageCraftSolutionPlugin({ chat: runtime.getChatService(), defaultRoomId: roomId }))
+  container.addSolution(new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), defaultRoomId: roomId }))
   core.attachLegacyRuntime(runtime, roomId)
   core.attachStateRepository(new StoreCoreStateRepository(store))
   const restoredCoreState = core.restoreState(roomId)
@@ -341,26 +350,26 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       }
       if (url.pathname === '/api/turn' && request.method === 'POST') {
         const body = await readJson(request)
-        await runtime.submitTurn(roomId, { text: String(body.text ?? ''), requiredRoleIds: Array.isArray(body.requiredRoleIds) ? body.requiredRoleIds.map(String) : [] })
+        await core.dispatch({ id: `legacy-turn-${Date.now()}`, actor: 'player', type: 'submit-text', payload: { roomId, scope: runtime.get(roomId).mode, action: runtime.get(roomId).mode === 'chat' ? 'chat-contribution' : 'director-turn', text: String(body.text ?? ''), requiredRoleIds: Array.isArray(body.requiredRoleIds) ? body.requiredRoleIds.map(String) : [] } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/director/proceed' && request.method === 'POST') {
-        await runtime.proceedToDraft(roomId)
+        await core.dispatch({ id: `legacy-director-proceed-${Date.now()}`, actor: 'player', type: 'submit-text', payload: { roomId, scope: 'director', action: 'director-proceed' } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/director/retry' && request.method === 'POST') {
-        await runtime.retryDirector(roomId)
+        await core.dispatch({ id: `legacy-director-retry-${Date.now()}`, actor: 'player', type: 'retry', payload: { roomId, scope: 'director', action: 'director-retry' } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/approve' && request.method === 'POST') {
         const body = await readJson(request)
         const sceneUpdates = body.sceneUpdates && typeof body.sceneUpdates === 'object' ? { ...(typeof (body.sceneUpdates as Record<string, unknown>).time === 'string' ? { time: (body.sceneUpdates as Record<string, unknown>).time as string } : {}), ...(typeof (body.sceneUpdates as Record<string, unknown>).location === 'string' ? { location: (body.sceneUpdates as Record<string, unknown>).location as string } : {}) } : undefined
-        runtime.approve(roomId, String(body.draftId), String(body.text), body.stateUpdates && typeof body.stateUpdates === 'object' ? body.stateUpdates as Record<string, string> : {}, sceneUpdates)
+        await core.dispatch({ id: `legacy-approve-${Date.now()}`, actor: 'player', type: 'approve', payload: { roomId, scope: 'director', action: 'draft-approval', draftId: String(body.draftId), text: String(body.text), stateUpdates: body.stateUpdates && typeof body.stateUpdates === 'object' ? body.stateUpdates as Record<string, string> : {}, sceneUpdates } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/reactions/reconsider' && request.method === 'POST') {
         const body = await readJson(request)
-        await runtime.reconsiderReaction(roomId, String(body.roleId), String(body.feedback ?? ''))
+        await core.dispatch({ id: `legacy-reconsider-${Date.now()}`, actor: 'player', type: 'retry', payload: { roomId, scope: 'director', action: 'reconsider-reaction', roleId: String(body.roleId), feedback: String(body.feedback ?? '') } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/player-character' && request.method === 'POST') {
@@ -510,20 +519,20 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       }
       if (url.pathname === '/api/consult' && request.method === 'POST') {
         const body = await readJson(request)
-        await runtime.consult(roomId, String(body.draftId), String(body.text ?? ''), String(body.context ?? ''))
+        await core.dispatch({ id: `legacy-consult-${Date.now()}`, actor: 'player', type: 'submit-text', payload: { roomId, scope: 'director', action: 'director-consult', draftId: String(body.draftId), text: String(body.text ?? ''), context: String(body.context ?? '') } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/consult/finish' && request.method === 'POST') {
-        runtime.finishConsultation(roomId)
+        await core.dispatch({ id: `legacy-consult-finish-${Date.now()}`, actor: 'player', type: 'approve', payload: { roomId, scope: 'director', action: 'consult-finish' } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/redraft' && request.method === 'POST') {
         const body = await readJson(request)
-        await runtime.redraft(roomId, String(body.draftId))
+        await core.dispatch({ id: `legacy-redraft-${Date.now()}`, actor: 'player', type: 'retry', payload: { roomId, scope: 'director', action: 'redraft', draftId: String(body.draftId) } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/cancel-turn' && request.method === 'POST') {
-        runtime.cancelTurn(roomId)
+        await core.dispatch({ id: `legacy-cancel-turn-${Date.now()}`, actor: 'player', type: 'cancel', payload: { roomId, scope: runtime.get(roomId).mode, action: 'cancel-turn' } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname.startsWith('/assets/')) return asset(response, url.pathname)
@@ -686,13 +695,13 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         firstError ??= error
       }
       try {
-        // 插件释放必须先于 Store，避免 adapter 在关闭数据库后回写状态。
-        await container.dispose()
+        runtime.dispose()
       } catch (error) {
         firstError ??= error
       }
       try {
-        runtime.dispose()
+        // 插件释放必须先于 Store，避免 adapter 在关闭数据库后回写状态。
+        await container.dispose()
       } catch (error) {
         firstError ??= error
       }

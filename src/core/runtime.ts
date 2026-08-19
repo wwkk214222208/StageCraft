@@ -22,10 +22,8 @@ import {
 } from './protocol.ts'
 
 /**
- * Phase 1 的核心运行时骨架。
- *
- * 它暂时不替换 RoomRuntime：旧业务仍由 RoomRuntime/Store 执行；该类先提供
- * 稳定的 Core Command/Event/View 边界，后续 workflow facade 再逐步迁移到这里。
+ * Core runtime skeleton：提供稳定的 Command/Event/View、方案投影与模型请求边界。
+ * StageCraft 的具体玩法由方案插件和 Core 外部领域服务提供；未安装方案时 Core 保持空白。
  */
 export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingPort {
   private revision = 0

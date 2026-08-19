@@ -946,6 +946,17 @@ export class Store {
     })
   }
 
+  rejectDraft(roomId: string): void {
+    const phase = this.db.prepare('SELECT phase FROM rooms WHERE id = ?').get(roomId) as { phase: RoomPhase } | undefined
+    if (!phase || phase.phase !== 'awaiting-approval') throw new Error('No draft is awaiting rejection.')
+    this.withTransaction(() => {
+      this.db.prepare('DELETE FROM drafts WHERE room_id = ?').run(roomId)
+      this.db.prepare('DELETE FROM reaction_previews WHERE room_id = ?').run(roomId)
+      this.db.prepare('DELETE FROM pending_mind_updates WHERE room_id = ?').run(roomId)
+      this.db.prepare("UPDATE rooms SET phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL, last_error = NULL WHERE id = ?").run(roomId)
+    })
+  }
+
   publish(roomId: string, draftId: string, text: string, stateUpdates: Record<string, string>, sceneUpdates: { time?: string; location?: string } = {}): void {
     const draft = this.db.prepare('SELECT * FROM drafts WHERE id = ? AND room_id = ?').get(draftId, roomId) as { id: string; turn_id: string; scene_updates: string; role_proposals: string; usage: string | null } | undefined
     if (!draft) throw new Error('Draft is no longer available.')

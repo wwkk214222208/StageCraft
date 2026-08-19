@@ -39,7 +39,7 @@ export interface DirectorChatContext {
 export interface WorkerSet {
   decide(role: Role, participation: Decision['participation'], contribution: string, publicRoles?: Role[], scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[]): Promise<Decision>
   draft(turnId: string, contribution: string, decisions: Decision[], roles: Role[], consultations?: ConsultationMessage[], playerCharacter?: PlayerCharacter, scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string, previousDraft?: string): Promise<Draft>
-  consult?(draft: Draft, messages: ConsultationMessage[], playerText: string): Promise<{ text: string; usage?: import('./types.ts').TokenUsage }>
+  consult?(draft: Draft, messages: ConsultationMessage[], playerText: string, requestContext?: { roomId?: string; turnId?: string }): Promise<{ text: string; usage?: import('./types.ts').TokenUsage }>
   /** 群聊模式：角色消化一条已批准正文，产出结构化私有记忆。 */
   digest?(role: Role, scene: DigestSceneContext): Promise<import('./types.ts').MemoryDigest>
   /** 群聊模式：无导演发言协议——产出角色此刻的完整发言（台词/带台词的行动），非决策式简短回应 */
@@ -51,7 +51,9 @@ export interface WorkerSet {
    * 由角色自己的发言描写覆盖，不需要导演补写。
    */
   directorChat?(playerText: string, context: DirectorChatContext, onThinking?: (text: string) => void): Promise<{ reply: string; thinking?: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string; usage?: import('./types.ts').TokenUsage }>
-  cancel?(): void
+  /** request-scoped cancellation is required for Core; legacy workers may only support all-active cancellation. */
+  cancel?(requestId?: string): void
+  supportsRequestCancellation?: boolean
 }
 
 export const fakeWorkers: WorkerSet = {

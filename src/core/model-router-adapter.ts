@@ -2,7 +2,7 @@ import type { ModelGateway } from '../model-gateway.ts'
 import type { CoreEvent, ModelRequest, ModelResult } from './protocol.ts'
 import type { CoreLlmRouterHost, CoreLlmRouterPlugin, Disposable } from './plugins.ts'
 
-/** 将现有 ModelGateway 包装为 Core-LLM 路由插件；不改变 WorkerSet 调用链。 */
+/** 将现有 ModelGateway 包装为 Core-LLM 路由插件，保留工具调用和思维强度配置。 */
 export class ModelGatewayRouterAdapter implements CoreLlmRouterPlugin {
   readonly id = 'stagecraft.llm.model-gateway'
   private host?: CoreLlmRouterHost
@@ -42,8 +42,8 @@ export class ModelGatewayRouterAdapter implements CoreLlmRouterPlugin {
         onUsage: (value: import('../types.ts').TokenUsage) => { usage = value },
       }
       const result = request.stream === false
-        ? await gateway.complete(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, undefined, callbacks)
-        : await gateway.completeStreaming(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, undefined, callbacks)
+        ? await gateway.complete(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, request.tool, callbacks, { thinkingStrength: request.thinkingStrength, requestId: request.requestId })
+        : await gateway.completeStreaming(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, request.tool, callbacks, {}, { thinkingStrength: request.thinkingStrength, requestId: request.requestId })
       const includeTelemetry = request.metadata?.includeTelemetry === true
       const modelResult: ModelResult = { requestId: request.requestId, output: result, ...(includeTelemetry && thinking ? { thinking } : {}), ...(includeTelemetry && usage ? { usage } : {}) }
       await this.host.submitModelResult(modelResult)
@@ -59,14 +59,17 @@ export class ModelGatewayRouterAdapter implements CoreLlmRouterPlugin {
   }
 
   async cancel(requestId: string): Promise<void> {
-    // 当前 ModelGateway 暴露的是 active request 集合级取消；requestId 仍保留在协议中。
+    // ModelGateway 支持 requestId 级 AbortController；无 requestId 时才使用兼容的全量取消。
     if (!requestId) {
       this.gateway.cancelActiveRequests()
       for (const gateway of this.activeGateways.values()) gateway.cancelActiveRequests()
       return
     }
     const gateway = this.activeGateways.get(requestId)
-    if (this.requests.has(requestId)) (gateway ?? this.gateway).cancelActiveRequests()
+    if (this.requests.has(requestId)) {
+      if (gateway?.cancelRequest) gateway.cancelRequest(requestId)
+      else gateway?.cancelActiveRequests()
+    }
   }
 
   private publish(event: CoreEvent): void {
