@@ -33,7 +33,7 @@ test('approved scene reaction lands in the memory timeline under the current sce
   const draft = runtime.get(roomId).draft!
   runtime.approve(roomId, draft.id, draft.text, draft.stateUpdates)
   const aria = runtime.get(roomId).roles.find(role => role.id === 'aria')!
-  assert.ok(aria.memoryTimeline?.['夜晚']?.some(event => event.includes('需要继续观察')), JSON.stringify(aria.memoryTimeline))
+  assert.ok(aria.memories.some(memory => memory.occurredAt === '夜晚' && memory.text.includes('需要继续观察')), JSON.stringify(aria.memories))
   // 初始记忆保留在「未标注时间」桶，不再被追加
   assert.deepEqual(aria.memoryTimeline?.['未标注时间'], ['玩家的举动值得留意。'])
   assert.equal(store.listPendingMindUpdates(roomId, draft.turnId).length, 0)
@@ -59,7 +59,7 @@ test('director sceneUpdates propose time/location; approval applies them and re-
   assert.equal(room.sceneTime, '深夜')
   assert.equal(room.sceneLocation, '宫殿回廊')
   const aria = room.roles.find(role => role.id === 'aria')!
-  assert.ok(aria.memoryTimeline?.['深夜']?.some(event => event.includes('记得此刻')), JSON.stringify(aria.memoryTimeline))
+  assert.ok(aria.memories.some(memory => memory.occurredAt === '深夜' && memory.text.includes('记得此刻')), JSON.stringify(aria.memories))
 })
 
 test('worker prompts inject scene context and memory timeline', async () => {

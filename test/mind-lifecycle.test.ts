@@ -23,8 +23,7 @@ test('private reactions stay pending until the player approves the scene', async
   assert.equal(store.listPendingMindUpdates(roomId, draft.turnId).length, 2)
   runtime.approve(roomId, draft.id, draft.text, draft.stateUpdates)
   const after = runtime.get(roomId).roles.find(role => role.id === 'aria')!
-  const timelineEvents = Object.values(after.memoryTimeline ?? {}).flat()
-  assert.ok(timelineEvents.some(event => event.includes('需要继续观察')), `expected timeline to contain reaction, got: ${JSON.stringify(after.memoryTimeline)}`)
+  assert.ok(after.memories.some(memory => memory.source === 'role_reaction' && memory.text.includes('需要继续观察')), `expected structured reaction, got: ${JSON.stringify(after.memories)}`)
   assert.equal(store.listPendingMindUpdates(roomId, draft.turnId).length, 0)
 })
 

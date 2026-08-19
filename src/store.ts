@@ -894,19 +894,16 @@ export class Store {
       const roomRow = this.db.prepare('SELECT scene_time, scene_location FROM rooms WHERE id = ?').get(roomId) as { scene_time: string | null; scene_location: string | null } | undefined
       const effectiveTime = (mergedScene.time?.trim() || roomRow?.scene_time?.trim()) || '未标注时间'
       const effectiveLocation = (mergedScene.location?.trim() || roomRow?.scene_location?.trim()) || ''
+      const sceneId = `scene-${randomUUID()}`
       const mindUpdates = this.db.prepare('SELECT role_id, private_reaction FROM pending_mind_updates WHERE room_id = ? AND turn_id = ? ORDER BY id').all(roomId, draft.turn_id) as Array<{ role_id: string; private_reaction: string }>
       for (const update of mindUpdates) {
         if (!update.private_reaction?.trim()) continue
-        const row = this.db.prepare('SELECT memory_timeline FROM roles WHERE room_id = ? AND id = ?').get(roomId, update.role_id) as { memory_timeline: string } | undefined
-        const timeline = row ? JSON.parse(row.memory_timeline ?? '{}') as Record<string, string[]> : {}
-        if (mergeTimelineEvent(timeline, effectiveTime, update.private_reaction.trim())) {
-          this.db.prepare('UPDATE roles SET memory_timeline = ? WHERE room_id = ? AND id = ?').run(JSON.stringify(timeline), roomId, update.role_id)
-        }
+        this.insertNpcMemories(roomId, update.role_id, [{ id: `reaction-${sceneId}-${update.role_id}`, sceneId, turnId: draft.turn_id, occurredAt: effectiveTime, occurredLocation: effectiveLocation || undefined, source: 'role_reaction', kind: 'emotion', text: update.private_reaction.trim(), subjects: [], salience: 3, confidence: 1 }])
       }
       this.db.prepare('DELETE FROM pending_mind_updates WHERE room_id = ? AND turn_id = ?').run(roomId, draft.turn_id)
       this.db.prepare('DELETE FROM reaction_previews WHERE room_id = ? AND turn_id = ?').run(roomId, draft.turn_id)
-      this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(`scene-${Date.now()}`, roomId, draft.turn_id, text, effectiveTime || null, effectiveLocation || null, draft.usage ?? null, new Date().toISOString())
+      this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, scene_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(sceneId, roomId, draft.turn_id, text, effectiveTime || null, effectiveLocation || null, draft.usage ?? null, 'narration', new Date().toISOString())
       this.db.prepare('DELETE FROM drafts WHERE room_id = ?').run(roomId)
       this.db.prepare('UPDATE rooms SET phase = ?, revision = revision + 1, player_contribution = NULL WHERE id = ?')
         .run('awaiting-player-input', roomId)
