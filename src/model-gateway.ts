@@ -523,8 +523,16 @@ function formatGoals(role: Role): string {
   return `长期目标（私密，仅你自己知道）：\n${goals.map(goal => `- ${goal.trim()}`).join('\n')}\n\n`
 }
 
-/** 角色记忆时间线注入片段（Heptalon 风格：按时间标签分组的剧情记忆） */
+/** 角色私有记忆注入片段。结构化记录优先；旧时间线只在尚未迁移时作过渡回退。 */
 function formatMemoryTimeline(role: Role): string {
+  const memories = (role.memories ?? []).filter(memory => memory.status === 'active' && memory.visibility === 'private')
+  if (memories.length > 0) {
+    return memories
+      .sort((a, b) => b.salience - a.salience || b.occurredAt.localeCompare(a.occurredAt) || b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 30)
+      .map(memory => `【${memory.occurredAt}${memory.occurredLocation ? ` · ${memory.occurredLocation}` : ''}｜${memory.kind}｜重要度 ${memory.salience}】\n- ${memory.text}`)
+      .join('\n')
+  }
   const timeline = role.memoryTimeline ?? {}
   const lines: string[] = []
   for (const [when, events] of Object.entries(timeline)) {
