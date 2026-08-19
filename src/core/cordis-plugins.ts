@@ -1,7 +1,8 @@
 import type { Context, Plugin } from '@deepseek-ai/cordis'
 import type { CoreRuntimePort } from './protocol.ts'
-import type { CoreLlmRouterPlugin, CoreRuntimePlugin, CoreSolutionPlugin, Disposable, HumanCoreInteractionPlugin } from './plugins.ts'
+import type { CoreLlmRouterPlugin, CoreRuntimeBindingPort, CoreRuntimePlugin, CoreSolutionPlugin, Disposable, HumanCoreInteractionPlugin } from './plugins.ts'
 import type { CoreStateRepository } from './state-repository.ts'
+import type { StateModuleManifest, StateReducer, StateSchemaDefinition, StateTransactionRequest, StateTransactionResult } from './state-transaction.ts'
 import type { DefaultCorePluginContainer } from './container.ts'
 import { CoreRuntimePluginAdapter } from './runtime-plugin.ts'
 
@@ -13,6 +14,12 @@ import { CoreRuntimePluginAdapter } from './runtime-plugin.ts'
 export interface StageCraftService {
   readonly core: CoreRuntimePort
   readonly roomId: string
+  readonly state: {
+    registerModule(manifest: StateModuleManifest): Disposable
+    registerSchema(schema: StateSchemaDefinition): Disposable
+    registerReducer(reducer: StateReducer): Disposable
+    transact(request: StateTransactionRequest): StateTransactionResult
+  }
   readonly install: {
     core(plugin: CoreRuntimePlugin): Disposable
     human(plugin: HumanCoreInteractionPlugin): Disposable
@@ -23,10 +30,16 @@ export interface StageCraftService {
 }
 
 /** Build the service around the private compatibility container. */
-export function createStageCraftService(core: CoreRuntimePort, roomId: string, container: DefaultCorePluginContainer, attachRepository: (repository: CoreStateRepository) => Disposable): StageCraftService {
+export function createStageCraftService(core: CoreRuntimePort & CoreRuntimeBindingPort, roomId: string, container: DefaultCorePluginContainer, attachRepository: (repository: CoreStateRepository) => Disposable): StageCraftService {
   return {
     core,
     roomId,
+    state: {
+      registerModule: manifest => core.registerStateModule(manifest),
+      registerSchema: schema => core.registerStateSchema(schema),
+      registerReducer: reducer => core.registerStateReducer(reducer),
+      transact: request => core.transactState(request),
+    },
     install: {
       core: plugin => container.addCore(plugin),
       human: plugin => container.addHuman(plugin),

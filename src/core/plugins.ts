@@ -12,6 +12,7 @@ import type {
 import type { RoomSnapshot } from '../types.ts'
 import type { StateCategoryDefinition } from './state.ts'
 import type { CoreStateCommit, CoreStateRestore, CoreStateRepository } from './state-repository.ts'
+import type { StateModuleManifest, StateReducer, StateSchemaDefinition, StateTransactionRequest, StateTransactionResult } from './state-transaction.ts'
 
 /** 可逆资源句柄：HTTP、Cordis、SSE 等 adapter 安装后都必须能释放。 */
 export interface Disposable {
@@ -43,6 +44,10 @@ export interface CoreLlmRouterHost {
 export interface CoreRuntimeBindingPort {
   bindLlmRouter(plugin: CoreLlmRouterPlugin): Disposable
   createSolutionBinding(): CoreSolutionBinding
+  registerStateModule(manifest: StateModuleManifest): Disposable
+  registerStateSchema(schema: StateSchemaDefinition): Disposable
+  registerStateReducer(reducer: StateReducer): Disposable
+  transactState(request: StateTransactionRequest): StateTransactionResult
 }
 
 export type { CoreStateCommit, CoreStateRestore, CoreStateRepository }
@@ -54,6 +59,9 @@ export interface CoreSolutionHost {
   registerStateCategory(category: StateCategoryDefinition): Disposable
   registerStateProjection(provider: CoreStateProjectionProvider): Disposable
   registerCommandHandler(handler: CoreCommandHandler): Disposable
+  registerStateModule(manifest: StateModuleManifest): Disposable
+  registerStateSchema(schema: StateSchemaDefinition): Disposable
+  registerStateReducer(reducer: StateReducer): Disposable
 }
 
 /** 玩法对 Core 命令的扩展点；实现不得绕过 Core 事件/状态边界。 */

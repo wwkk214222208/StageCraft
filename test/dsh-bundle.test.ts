@@ -5,9 +5,22 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
+import { createServer } from 'node:net'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const packageRoot = join(repositoryRoot, 'dsh-rp')
+
+async function freePort(): Promise<number> {
+  const probe = createServer()
+  return await new Promise((resolve, reject) => {
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      probe.close(error => error ? reject(error) : resolve(port))
+    })
+  })
+}
 
 test('packed DSH bundle is self-contained and runs from a temporary install', async () => {
   execFileSync(process.execPath, ['dsh-rp/scripts/build.mjs'], { cwd: repositoryRoot, stdio: 'inherit' })
@@ -54,7 +67,7 @@ test('packed DSH bundle is self-contained and runs from a temporary install', as
     assert.doesNotMatch(readFileSync(join(installRoot, 'dist', 'public', 'index.html'), 'utf8'), /DeepPlugin HARNESS|M22\.9168/)
     assert.doesNotMatch(readFileSync(join(installRoot, 'dist', 'public', 'index.html'), 'utf8'), /命定之诗/)
 
-    const port = 18_000 + Math.floor(Math.random() * 500)
+    const port = await freePort()
     const ctx = new Context()
     const fiber = ctx.plugin(bundleEntry, { port, host: '127.0.0.1' })
     try {

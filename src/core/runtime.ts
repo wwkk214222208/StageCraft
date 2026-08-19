@@ -1,4 +1,5 @@
 import type { RoomSnapshot } from '../types.ts'
+import { isDeepStrictEqual } from 'node:util'
 import { roomSnapshotEvent, type StateCategoryDefinition } from './state.ts'
 import type { CoreEventLog } from './event-log.ts'
 import type { DomainEvent } from './domain-events.ts'
@@ -6,6 +7,7 @@ import { validateWorkflowDefinition, WorkflowExecutor, WorkflowRegistry } from '
 import type { WorkflowInstanceStore } from './workflow-store.ts'
 import type { CoreCommandHandler, CoreLlmRouterPlugin, CoreRuntimeBindingPort, CoreSolutionBinding, CoreSolutionProjection, CoreSolutionProjectionProvider, CoreStateProjectionProvider, Disposable } from './plugins.ts'
 import type { CoreStateRepository } from './state-repository.ts'
+import { applyStatePatches, type StateModuleManifest, type StateReducer, type StateReducerEvent, type StateSchemaDefinition, type StateTransactionRequest, type StateTransactionResult } from './state-transaction.ts'
 import {
   CORE_PROTOCOL_VERSION,
   type CoreEvent,
@@ -18,6 +20,15 @@ import {
   type WorkflowDefinition,
   type WorkflowInstance,
 } from './protocol.ts'
+
+function pointerSegment(value: string): string {
+  return value.replace(/~/g, '~0').replace(/\//g, '~1')
+}
+
+function isModulePath(path: string, moduleId: string): boolean {
+  const prefix = `/modules/${pointerSegment(moduleId)}`
+  return path === prefix || path.startsWith(`${prefix}/`)
+}
 
 /**
  * Core runtime skeleton：提供稳定的 Command/Event/View、方案投影与模型请求边界。
@@ -41,6 +52,13 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   private readonly interactionOwners = new Map<string, string>()
   private readonly categories = new Map<string, StateCategoryDefinition>()
   private readonly categoryOwners = new Map<string, string>()
+  private readonly stateModules = new Map<string, StateModuleManifest>()
+  private readonly stateModuleOwners = new Map<string, object | string>()
+  private readonly stateSchemas = new Map<string, StateSchemaDefinition>()
+  private readonly stateSchemaOwners = new Map<string, object | string>()
+  private readonly stateReducers = new Map<string, StateReducer>()
+  private readonly stateReducerOwners = new Map<string, object | string>()
+  private stateTransactionActive = false
   private llmRouter?: CoreLlmRouterPlugin
   private llmRouterDisposable?: Disposable
   private llmBindingSequence = 0
@@ -127,6 +145,38 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     this.categoryOwners.set(category.id, 'legacy')
   }
 
+  registerStateModule(manifest: StateModuleManifest): Disposable {
+    if (!manifest.id.trim()) throw new Error('State module id is required.')
+    if (this.stateModules.has(manifest.id)) throw new Error(`State module already registered: ${manifest.id}`)
+    const owner = {}
+    this.stateModules.set(manifest.id, manifest)
+    this.stateModuleOwners.set(manifest.id, owner)
+    let active = true
+    return { dispose: () => { if (active && this.stateModuleOwners.get(manifest.id) === owner) { active = false; this.stateModules.delete(manifest.id); this.stateModuleOwners.delete(manifest.id) } } }
+  }
+
+  registerStateSchema(schema: StateSchemaDefinition): Disposable {
+    if (!schema.id.trim() || !schema.moduleId.trim()) throw new Error('State schema id and module id are required.')
+    if (!this.stateModules.has(schema.moduleId)) throw new Error(`State module is not registered: ${schema.moduleId}`)
+    if (this.stateSchemas.has(schema.id)) throw new Error(`State schema already registered: ${schema.id}`)
+    const owner = {}
+    this.stateSchemas.set(schema.id, schema)
+    this.stateSchemaOwners.set(schema.id, owner)
+    let active = true
+    return { dispose: () => { if (active && this.stateSchemaOwners.get(schema.id) === owner) { active = false; this.stateSchemas.delete(schema.id); this.stateSchemaOwners.delete(schema.id) } } }
+  }
+
+  registerStateReducer(reducer: StateReducer): Disposable {
+    if (!reducer.id.trim() || !reducer.moduleId.trim()) throw new Error('State reducer id and module id are required.')
+    if (!this.stateModules.has(reducer.moduleId)) throw new Error(`State module is not registered: ${reducer.moduleId}`)
+    if (this.stateReducers.has(reducer.id)) throw new Error(`State reducer already registered: ${reducer.id}`)
+    const owner = {}
+    this.stateReducers.set(reducer.id, reducer)
+    this.stateReducerOwners.set(reducer.id, owner)
+    let active = true
+    return { dispose: () => { if (active && this.stateReducerOwners.get(reducer.id) === owner) { active = false; this.stateReducers.delete(reducer.id); this.stateReducerOwners.delete(reducer.id) } } }
+  }
+
   /** 以事务式 reducer 计算多个 StateEvent；任一 reducer 失败时不替换当前 state。 */
   applyStateEvents(events: StateEvent[]): void {
     if (events.length === 0) return
@@ -134,6 +184,102 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     const workflows = [...this.workflows.values()]
     const actions = workflows.flatMap(workflow => this.workflowExecutor.plan(workflow))
     this.commitStateCandidate(next, events, workflows, actions, this.roomIdFromEvents(events))
+  }
+
+  transactState(request: StateTransactionRequest): StateTransactionResult {
+    if (this.stateTransactionActive) throw new Error('Nested state transaction is not allowed.')
+    this.stateTransactionActive = true
+    try {
+      return this.transactStateInternal(request)
+    } finally {
+      this.stateTransactionActive = false
+    }
+  }
+
+  private transactStateInternal(request: StateTransactionRequest): StateTransactionResult {
+    if (request.baseRevision !== undefined && request.baseRevision !== this.revision) throw new Error(`State revision conflict: expected ${request.baseRevision}, current ${this.revision}`)
+    const roomId = request.roomId || this.lastRoom?.id
+    if (!roomId) throw new Error('State transaction roomId is required.')
+    if (!request.system && !request.moduleId) throw new Error('State transaction moduleId is required.')
+    if (request.moduleId && !this.stateModules.has(request.moduleId)) throw new Error(`State module is not registered: ${request.moduleId}`)
+    const checkPath = (path: string, label: string): void => {
+      if (path.startsWith('/modules/')) {
+        const moduleSegment = path.slice('/modules/'.length).split('/')[0].replace(/~1/g, '/').replace(/~0/g, '~')
+        if (!this.stateModules.has(moduleSegment)) throw new Error(`${label} targets an unregistered state module: ${moduleSegment}`)
+        if (!request.system && !isModulePath(path, request.moduleId!)) throw new Error(`${label} is outside /modules/${request.moduleId}`)
+        return
+      }
+      if (!request.system) throw new Error(`${label} is outside /modules/${request.moduleId}`)
+      const category = path.slice(1).split('/')[0].replace(/~1/g, '/').replace(/~0/g, '~')
+      if (!category || !this.categories.has(category)) throw new Error(`${label} targets an unregistered state category: ${category}`)
+    }
+    for (const patch of request.patches ?? []) {
+      checkPath(patch.path, 'State patch')
+      if (patch.op === 'move') checkPath(patch.from, 'State move source')
+    }
+    for (const assertion of request.assertions ?? []) {
+      if (assertion.op !== 'test') throw new Error('State assertions only support test patches.')
+      checkPath(assertion.path, 'State assertion')
+    }
+    const before = structuredClone(this.state)
+    let candidate = structuredClone(this.state)
+    const trace = { events: [] as StateReducerEvent[], reducers: [] as string[], changes: [] as import('./state-transaction.ts').StateChange[], assertions: structuredClone(request.assertions ?? []) }
+    if (request.patches?.length) candidate = applyStatePatches(candidate, request.patches).after
+    const queue: Array<{ event: StateReducerEvent; depth: number }> = structuredClone(request.events ?? []).map(event => ({ event, depth: 0 }))
+    const seen = new Set<string>()
+    for (const { event } of queue) {
+      if (!event.id.trim() || seen.has(event.id)) throw new Error(`Duplicate state transaction event id: ${event.id}`)
+      seen.add(event.id)
+    }
+    let cursor = 0
+    const reducers = [...this.stateReducers.values()].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.id.localeCompare(b.id))
+    while (cursor < queue.length) {
+      if (trace.events.length >= 256) throw new Error('State transaction event limit exceeded.')
+      const queued = queue[cursor++]
+      if (queued.depth > 32) throw new Error('State transaction cascade depth exceeded.')
+      const event = queued.event
+      trace.events.push(event)
+      for (const reducer of reducers) {
+        if (reducer.listensTo && !reducer.listensTo.includes(event.type)) continue
+        if (reducer.match && !reducer.match(event)) continue
+        const namespace = structuredClone((candidate.modules as Record<string, unknown> | undefined)?.[reducer.moduleId])
+        const result = reducer.reduce(namespace, event)
+        if (!result) continue
+        trace.reducers.push(reducer.id)
+        const output = Array.isArray(result) ? { patches: result } : result
+        for (const patch of output.patches ?? []) {
+          if (!isModulePath(patch.path, reducer.moduleId) || (patch.op === 'move' && !isModulePath(patch.from, reducer.moduleId))) throw new Error(`Reducer ${reducer.id} cannot modify outside /modules/${reducer.moduleId}`)
+          candidate = applyStatePatches(candidate, [patch]).after
+        }
+        for (const next of output.events ?? []) {
+          const clonedNext = structuredClone(next)
+          if (!clonedNext.id.trim() || seen.has(clonedNext.id)) throw new Error(`Duplicate state transaction event id: ${clonedNext.id}`)
+          seen.add(clonedNext.id)
+          queue.push({ event: clonedNext, depth: queued.depth + 1 })
+        }
+      }
+    }
+    if (request.assertions?.length) applyStatePatches(candidate, request.assertions)
+    for (const schema of this.stateSchemas.values()) {
+      const result = schema.validate(structuredClone((candidate.modules as Record<string, unknown> | undefined)?.[schema.moduleId]))
+      if (Array.isArray(result) && result.length) throw new Error(`State schema ${schema.id} failed: ${result.join('; ')}`)
+    }
+    const changes = applyStatePatches(before, [{ op: 'set', path: '', value: candidate }]).changes
+    trace.changes = changes
+    if (!request.patches?.length && !request.events?.length) return { roomId, revision: this.revision, before: structuredClone(before), after: structuredClone(candidate), changes: structuredClone(changes), assertions: structuredClone(request.assertions ?? []), trace: structuredClone(trace) }
+    const nextRevision = this.revision + 1
+    const events: StateEvent[] = trace.events.map(event => ({ id: event.id, type: event.type, source: 'plugin', payload: event.payload, createdAt: new Date().toISOString() }))
+    if (events.length === 0) events.push({ id: request.traceId ?? `state.transaction:${nextRevision}`, type: 'state.transaction', source: request.system ? 'system' : 'plugin', payload: { patches: request.patches ?? [] }, createdAt: new Date().toISOString() })
+    const workflows = [...this.workflows.values()]
+    const recent = this.withRecentEvents(events)
+    this.stateRepository?.commit({ roomId, revision: nextRevision, state: structuredClone(candidate), events: structuredClone(events), workflows: structuredClone(workflows) })
+    this.state = candidate
+    this.revision = nextRevision
+    this.recentEvents.length = 0
+    this.recentEvents.push(...recent)
+    const transition = { revision: nextRevision, events, changes }
+    this.emit({ type: 'state.changed', revision: nextRevision, transition })
+    return { roomId, revision: nextRevision, before: structuredClone(before), after: structuredClone(candidate), changes: structuredClone(changes), assertions: structuredClone(request.assertions ?? []), trace: structuredClone(trace) }
   }
 
   projectRoom(room: RoomSnapshot, causedBy = 'core.project-room', options: { persist?: boolean } = {}): void {
@@ -174,18 +320,24 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     const candidateActions = finalWorkflows.flatMap(workflow => this.workflowExecutor.plan(workflow))
     const event = roomSnapshotEvent(room, causedBy, candidateState)
     const candidateRecentEvents = this.withRecentEvents([event])
+    const projectionRevision = isDeepStrictEqual(candidateState, this.state)
+      ? Math.max(this.revision, room.revision)
+      : Math.max(room.revision, this.revision + 1)
 
     // Repository commit is deliberately before any in-memory replacement or event emission.
     if (persist && this.stateRepository) {
-      this.stateRepository.commit({ roomId: room.id, revision: room.revision, state: candidateState, events: [event], workflows: finalWorkflows })
+      this.stateRepository.commit({ roomId: room.id, revision: projectionRevision, state: structuredClone(candidateState), events: structuredClone([event]), workflows: structuredClone(finalWorkflows) })
     } else if (persist) {
-      this.eventLog?.append(room.id, room.revision, event)
+      this.eventLog?.append(room.id, projectionRevision, event)
       for (const workflow of finalWorkflows) this.workflowStore?.save(room.id, workflow)
     }
 
     this.lastRoom = room
     this.state = candidateState
-    this.revision = room.revision
+    // A legacy room projection may carry an older room revision than a
+    // generic state transaction already committed in this runtime. Projection
+    // must never make the optimistic revision go backwards.
+    this.revision = projectionRevision
     this.workflows.clear()
     for (const workflow of finalWorkflows) this.workflows.set(workflow.id, workflow)
     this.actions.length = 0
@@ -218,6 +370,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     const categories = new Map<string, StateCategoryDefinition>()
     const stateProjections = new Map<string, CoreStateProjectionProvider>()
     const commandHandlers = new Map<string, CoreCommandHandler>()
+    const modules = new Map<string, StateModuleManifest>()
+    const schemas = new Map<string, StateSchemaDefinition>()
+    const reducers = new Map<string, StateReducer>()
     const bindingOwner = `solution-binding:${++this.solutionBindingCounter}`
     let settled = false
     const host = {
@@ -261,6 +416,26 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         let active = true
         return { dispose: () => { if (active) { active = false; if (!settled) commandHandlers.delete(handler.id) } } }
       },
+      registerStateModule: (manifest: StateModuleManifest): Disposable => {
+        if (settled) throw new Error('Solution binding is already settled.')
+        if (!manifest.id.trim() || modules.has(manifest.id) || this.stateModules.has(manifest.id)) throw new Error(`State module already registered: ${manifest.id}`)
+        modules.set(manifest.id, manifest)
+        return { dispose: () => { if (!settled) modules.delete(manifest.id) } }
+      },
+      registerStateSchema: (schema: StateSchemaDefinition): Disposable => {
+        if (settled) throw new Error('Solution binding is already settled.')
+        if (!schema.id.trim() || schemas.has(schema.id) || this.stateSchemas.has(schema.id)) throw new Error(`State schema already registered: ${schema.id}`)
+        if (!modules.has(schema.moduleId) && !this.stateModules.has(schema.moduleId)) throw new Error(`State module is not registered: ${schema.moduleId}`)
+        schemas.set(schema.id, schema)
+        return { dispose: () => { if (!settled) schemas.delete(schema.id) } }
+      },
+      registerStateReducer: (reducer: StateReducer): Disposable => {
+        if (settled) throw new Error('Solution binding is already settled.')
+        if (!reducer.id.trim() || reducers.has(reducer.id) || this.stateReducers.has(reducer.id)) throw new Error(`State reducer already registered: ${reducer.id}`)
+        if (!modules.has(reducer.moduleId) && !this.stateModules.has(reducer.moduleId)) throw new Error(`State module is not registered: ${reducer.moduleId}`)
+        reducers.set(reducer.id, reducer)
+        return { dispose: () => { if (!settled) reducers.delete(reducer.id) } }
+      },
     }
     return {
       host,
@@ -281,6 +456,15 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         for (const handler of commandHandlers.values()) {
           if (this.commandHandlers.has(handler.id)) throw new Error(`Core command handler already registered: ${handler.id}`)
         }
+        for (const manifest of modules.values()) if (this.stateModules.has(manifest.id)) throw new Error(`State module already registered: ${manifest.id}`)
+        for (const schema of schemas.values()) {
+          if (this.stateSchemas.has(schema.id)) throw new Error(`State schema already registered: ${schema.id}`)
+          if (!modules.has(schema.moduleId) && !this.stateModules.has(schema.moduleId)) throw new Error(`State module is not registered: ${schema.moduleId}`)
+        }
+        for (const reducer of reducers.values()) {
+          if (this.stateReducers.has(reducer.id)) throw new Error(`State reducer already registered: ${reducer.id}`)
+          if (!modules.has(reducer.moduleId) && !this.stateModules.has(reducer.moduleId)) throw new Error(`State module is not registered: ${reducer.moduleId}`)
+        }
         for (const definition of workflows.values()) {
           this.definitions.set(definition.id, definition)
           this.workflowRegistry.register(definition)
@@ -295,6 +479,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
           this.stateProjectionOwners.set(id, bindingOwner)
         }
         for (const [id, handler] of commandHandlers) this.commandHandlers.set(id, handler)
+        for (const [id, manifest] of modules) { this.stateModules.set(id, manifest); this.stateModuleOwners.set(id, bindingOwner) }
+        for (const [id, schema] of schemas) { this.stateSchemas.set(id, schema); this.stateSchemaOwners.set(id, bindingOwner) }
+        for (const [id, reducer] of reducers) { this.stateReducers.set(id, reducer); this.stateReducerOwners.set(id, bindingOwner) }
         settled = true
         return {
           dispose: () => {
@@ -317,6 +504,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
               this.categoryOwners.delete(id)
               delete this.state[id]
             }
+            for (const id of modules.keys()) { this.stateModules.delete(id); this.stateModuleOwners.delete(id) }
+            for (const id of schemas.keys()) { this.stateSchemas.delete(id); this.stateSchemaOwners.delete(id) }
+            for (const id of reducers.keys()) { this.stateReducers.delete(id); this.stateReducerOwners.delete(id) }
             for (const id of commandHandlers.keys()) this.commandHandlers.delete(id)
             this.replanActions()
           },
@@ -330,6 +520,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         categories.clear()
         stateProjections.clear()
         commandHandlers.clear()
+        modules.clear()
+        schemas.clear()
+        reducers.clear()
       },
     }
   }
@@ -353,12 +546,14 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         projected[categoryId] = value
       }
     }
+    if (this.state.modules !== undefined) projected.modules = structuredClone(this.state.modules)
     return projected
   }
 
   private filterState(state: Record<string, unknown>): Record<string, unknown> {
     const filtered: Record<string, unknown> = {}
     for (const [id, value] of Object.entries(state)) if (this.categories.get(id)?.enabled !== false && this.categories.has(id)) filtered[id] = value
+    if (state.modules !== undefined) filtered.modules = structuredClone(state.modules)
     return filtered
   }
 
@@ -386,7 +581,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     if (events.length === 0) return
     const recentEvents = this.withRecentEvents(events)
     if (roomId && this.stateRepository) {
-      this.stateRepository.commit({ roomId, revision: this.revision, state, events, workflows })
+      this.stateRepository.commit({ roomId, revision: this.revision, state: structuredClone(state), events: structuredClone(events), workflows: structuredClone(workflows) })
     } else if (roomId) {
       for (const event of events) {
         if (domainEvent) this.eventLog?.appendDomain(roomId, this.revision, event as DomainEvent)

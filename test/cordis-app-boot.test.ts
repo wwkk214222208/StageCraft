@@ -94,6 +94,34 @@ test('a built-in Cordis plugin waits for stagecraft injection before activating'
   await container.dispose()
 })
 
+test('Cordis bridge plugins register generic state and leave committed data after unload', async () => {
+  const ctx = new Context()
+  const core = new CoreRuntimeSkeleton()
+  const container = new DefaultCorePluginContainer(core)
+  const service = createStageCraftService(core, 'room-1', container, repository => core.attachStateRepository(repository))
+  const plugin = {
+    name: 'state.synthetic',
+    inject: ['stagecraft'],
+    apply(pluginCtx: Context) {
+      const module = pluginCtx.stagecraft.state.registerModule({ id: 'synthetic', version: '1' })
+      const schema = pluginCtx.stagecraft.state.registerSchema({ id: 'synthetic.schema', moduleId: 'synthetic', validate: () => undefined })
+      const reducer = pluginCtx.stagecraft.state.registerReducer({ id: 'synthetic.reducer', moduleId: 'synthetic', listensTo: ['increment'], reduce: () => ({ patches: [{ op: 'delta', path: '/modules/synthetic/count', value: 1 }] }) })
+      pluginCtx.effect(() => () => { reducer.dispose(); schema.dispose(); module.dispose() })
+    },
+  }
+  const serviceFiber = ctx.plugin(stageCraftServicePlugin(service))
+  await serviceFiber
+  const stateFiber = ctx.plugin(plugin)
+  await stateFiber
+  const result = service.state.transact({ roomId: 'room-1', moduleId: 'synthetic', events: [{ id: 'inc', type: 'increment' }], patches: [{ op: 'set', path: '/modules/synthetic/count', value: 0 }] })
+  assert.equal((result.after.modules as any).synthetic.count, 1)
+  await stateFiber.dispose()
+  assert.throws(() => service.state.transact({ roomId: 'room-1', moduleId: 'synthetic', patches: [{ op: 'set', path: '/modules/synthetic/count', value: 2 }] }), /not registered/)
+  assert.equal((core.getView().state.modules as any).synthetic.count, 1)
+  await serviceFiber.dispose()
+  await container.dispose()
+})
+
 test('provider replacement installs and unloads Cordis LLM fibers', async () => {
   const dataDir = isolatedData('stagecraft-cordis-provider-')
   const app = await startTavern({ root: repositoryRoot, dataDir, port: 0 })
