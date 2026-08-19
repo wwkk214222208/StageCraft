@@ -10,9 +10,10 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'rp-test-'))
+  const saveRoot = mkdtempSync(join(tmpdir(), 'rp-save-test-'))
   // 禁止测试继承 providers.example.json 或环境中的真实 API 配置。
   writeFileSync(join(dataDir, 'providers.json'), JSON.stringify({ providers: [] }), 'utf8')
-  const app = startTavern({ root, dataDir, port: 0, host: '127.0.0.1' })
+  const app = startTavern({ root, dataDir, saveRoot, port: 0, host: '127.0.0.1' })
   try {
     // 端口 0 = 系统分配，listen 完成前 address() 为 null，轮询等待
     const address = await new Promise<{ port: number }>((resolve, reject) => {
@@ -52,6 +53,30 @@ test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', asy
     const commandResult = await commandRes.json() as { ok: boolean; view: { state: { room?: { mode?: string } } } }
     assert.equal(commandResult.ok, true)
     assert.equal(commandResult.view.state.room?.mode, 'chat')
+    const beforeUnhandled = await (await fetch(`${base}/api/room`)).json() as { revision: number }
+    const unhandledRes = await fetch(`${base}/api/core/commands`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'unhandled-command', actor: 'operator', type: 'submit-text', payload: { action: 'not-installed' } }),
+    })
+    assert.equal(unhandledRes.status, 400)
+    const unhandled = await unhandledRes.json() as { error?: string }
+    assert.equal(unhandled.error, 'Core command has no handler: submit-text')
+    const afterUnhandled = await (await fetch(`${base}/api/room`)).json() as { revision: number }
+    assert.equal(afterUnhandled.revision, beforeUnhandled.revision)
+
+    const archive = await (await fetch(`${base}/api/archive/export`)).json()
+    const archiveImport = await fetch(`${base}/api/archive/import`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(archive) })
+    assert.equal(archiveImport.status, 200)
+    const importedRoom = await (await fetch(`${base}/api/room`)).json() as { revision: number }
+    const importedCore = await (await fetch(`${base}/api/core/view`)).json() as { revision: number }
+    assert.equal(importedCore.revision, importedRoom.revision)
+    const saveRes = await fetch(`${base}/api/archive/save`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'management-roundtrip' }) })
+    assert.equal(saveRes.status, 200)
+    const loadRes = await fetch(`${base}/api/archive/load`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'management-roundtrip' }) })
+    assert.equal(loadRes.status, 200)
+    const loadedRoom = await (await fetch(`${base}/api/room`)).json() as { revision: number }
+    const loadedCore = await (await fetch(`${base}/api/core/view`)).json() as { revision: number }
+    assert.equal(loadedCore.revision, loadedRoom.revision)
 
     // 兼容 HTTP chat 路由仍构造带 chat scope 的 Core command，实际由新群聊服务执行。
     const chatRoom = await (await fetch(`${base}/api/room`)).json() as { roles: Array<{ id: string }> }
@@ -89,5 +114,6 @@ test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', asy
   } finally {
     await app.close()
     rmSync(dataDir, { recursive: true, force: true })
+    rmSync(saveRoot, { recursive: true, force: true })
   }
 })

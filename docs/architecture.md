@@ -41,4 +41,4 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 
 ## 兼容策略
 
-群聊与导演模式的核心交互均由 StageCraft 方案的 Command Handler 处理，旧 `/api/chat/*`、`/api/world-change/*` 及导演兼容路由只构造带 scope/action 的 Core command。两条垂直流程分别由独立的 Store-backed `StageCraftChatService` 与 `StageCraftDirectorService` 持有，模型请求通过 Core LLM router 并保留非敏感 route/correlation metadata；`RoomRuntime` 的业务方法仅作为旧 API facade 反向委托服务。管理与重启等未迁移入口仍可保留 legacy dispatcher。
+群聊、导演和管理/重启命令均由已安装的 StageCraft Command Handler 接管；旧 HTTP 路由只构造带 scope/action 或 operation 的 Core command。两条垂直流程分别由独立的 Store-backed `StageCraftChatService` 与 `StageCraftDirectorService` 持有，角色/房间编辑由独立的 `StageCraftManagementService` 持有，模型请求通过 Core LLM router 并保留非敏感 route/correlation metadata。生产组合根不安装 legacy runtime adapter；`RoomRuntime` 仅作为旧测试和外部兼容 facade。Core 对没有 handler 的命令 fail closed 并抛出可诊断错误。

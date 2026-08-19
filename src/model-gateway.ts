@@ -623,7 +623,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
     return prefix
   }
   return {
-    supportsRequestCancellation: Boolean(options.requestModel),
+    supportsRequestCancellation: Boolean(options.requestModel && options.cancelModel),
     async decide(role: Role, participation: Decision['participation'], contribution: string, publicRoles: Role[] = [], scene?: import('./workers.ts').SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string): Promise<Decision> {
       if (participation === 'excluded') return { roleId: role.id, participation, status: 'abstained' }
       let thinking = ''

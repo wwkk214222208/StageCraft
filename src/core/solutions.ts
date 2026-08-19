@@ -2,6 +2,7 @@ import type { RoomMode, RoomPhase, SubmitTurnInput, WorldChangeRequest } from '.
 import type { InteractionRequest, WorkflowDefinition, WorkflowInstance } from './protocol.ts'
 import type { CoreCommandHandler, CoreSolutionPlugin, CoreSolutionProjectionProvider, CoreSolutionHost, CoreStateProjectionProvider, Disposable } from './plugins.ts'
 import { defaultStateCategories, projectRoomSnapshot } from './state.ts'
+import type { StageCraftManagementPort } from '../stagecraft-management-service.ts'
 
 type WorkflowRoom = { id: string; mode: RoomMode; phase: RoomPhase; revision: number; roles?: Role[]; draft?: unknown; speech?: unknown; pendingWorldChange?: unknown }
 
@@ -145,11 +146,13 @@ export class StageCraftSolutionPlugin implements CoreSolutionPlugin {
   readonly id = 'stagecraft.solution'
   private readonly chat?: StageCraftChatPort
   private readonly director?: StageCraftDirectorPort
+  private readonly management?: StageCraftManagementPort
   private readonly defaultRoomId?: string
 
-  constructor(options: { chat?: StageCraftChatPort; director?: StageCraftDirectorPort; defaultRoomId?: string } = {}) {
+  constructor(options: { chat?: StageCraftChatPort; director?: StageCraftDirectorPort; management?: StageCraftManagementPort; defaultRoomId?: string } = {}) {
     this.chat = options.chat
     this.director = options.director
+    this.management = options.management
     this.defaultRoomId = options.defaultRoomId
   }
 
@@ -163,6 +166,7 @@ export class StageCraftSolutionPlugin implements CoreSolutionPlugin {
       host.registerProjection(stagecraftProjection),
       ...(this.chat ? [host.registerCommandHandler(stagecraftChatCommandHandler(this.chat, this.defaultRoomId))] : []),
       ...(this.director ? [host.registerCommandHandler(stagecraftDirectorCommandHandler(this.director, this.defaultRoomId))] : []),
+      ...(this.management ? [host.registerCommandHandler(stagecraftManagementCommandHandler(this.management, this.defaultRoomId))] : []),
     ]
     return {
       dispose: async () => {
@@ -170,6 +174,64 @@ export class StageCraftSolutionPlugin implements CoreSolutionPlugin {
       },
     }
   }
+}
+
+function stagecraftManagementCommandHandler(management: StageCraftManagementPort, defaultRoomId?: string): CoreCommandHandler {
+  const payloadOf = (command: import('./protocol.ts').HumanCommand): Record<string, unknown> => command.payload && typeof command.payload === 'object' ? command.payload as Record<string, unknown> : {}
+  const roomIdOf = (command: import('./protocol.ts').HumanCommand, payload: Record<string, unknown>): string => typeof payload.roomId === 'string' && payload.roomId.trim() ? payload.roomId : String(command.sessionId ?? defaultRoomId ?? '')
+  return {
+    id: 'stagecraft.management.command-handler',
+    canHandle(command) {
+      const payload = payloadOf(command)
+      return command.type === 'restart' || (command.type === 'role-management' && typeof payload.operation === 'string')
+    },
+    async handle(command) {
+      const payload = payloadOf(command)
+      const roomId = roomIdOf(command, payload)
+      if (!roomId) throw new Error('Management command requires roomId.')
+      if (command.type === 'restart') {
+        const story = payload.story
+        if (!isStoryPackagePayload(story)) throw new Error('Restart requires a valid story package.')
+        management.restart(roomId, story as import('../story-packages.ts').StoryPackage, { mode: payload.mode === 'chat' || payload.mode === 'director' ? payload.mode : undefined, autoPublish: typeof payload.autoPublish === 'boolean' ? payload.autoPublish : undefined })
+        return
+      }
+      const operation = String(payload.operation)
+      switch (operation) {
+        case 'import-archive': if (!isRecord(payload.archive) || !isRecord(payload.archive.room)) throw new Error('Import requires a room archive.'); return management.importArchive(roomId, payload.archive as { room?: import('../types.ts').RoomSnapshot })
+        case 'set-room-config': if (payload.mode !== undefined && payload.mode !== 'chat' && payload.mode !== 'director') throw new Error('Invalid room mode.'); return management.setRoomConfig(roomId, { mode: payload.mode as 'chat' | 'director' | undefined, autoPublish: typeof payload.autoPublish === 'boolean' ? payload.autoPublish : undefined })
+        case 'update-player-character': return management.updatePlayerCharacter(roomId, { name: String(payload.name ?? ''), persona: String(payload.persona ?? ''), currentState: String(payload.currentState ?? '') })
+        case 'set-player-avatar': return management.setPlayerAvatar(roomId, String(payload.portraitRef ?? ''))
+        case 'intervene-role': if (!nonEmptyString(payload.roleId) || typeof payload.selfModel !== 'string') throw new Error('Role intervention requires roleId and selfModel.'); return management.interveneRole(roomId, String(payload.roleId), payload.selfModel, payload.memoryTimeline && typeof payload.memoryTimeline === 'object' ? payload.memoryTimeline as Record<string, string[]> : undefined, payload.config && typeof payload.config === 'object' ? payload.config as Parameters<StageCraftManagementPort['interveneRole']>[4] : {})
+        case 'store-memories': if (!nonEmptyString(payload.roleId) || !Array.isArray(payload.entries) || !payload.entries.every(entry => isRecord(entry) && typeof entry.text === 'string' && Boolean(entry.text.trim()))) throw new Error('Memory entries must be objects with non-empty text.'); return management.storeNpcMemories(roomId, String(payload.roleId), payload.entries as Array<{ id?: string; text?: string; occurredAt?: string }>)
+        case 'retract-memory': if (!nonEmptyString(payload.memoryId)) throw new Error('Memory id is required.'); return management.retractNpcMemory(roomId, String(payload.memoryId))
+        case 'update-memory': if (!nonEmptyString(payload.memoryId) || !isRecord(payload.entry)) throw new Error('Memory update requires an id and entry object.'); return management.updateNpcMemory(roomId, String(payload.memoryId), payload.entry as { text?: string; occurredAt?: string })
+        case 'reorder-memories': if (!nonEmptyString(payload.roleId) || !Array.isArray(payload.memoryIds) || !payload.memoryIds.every(id => nonEmptyString(id))) throw new Error('Memory reorder requires roleId and memory ids.'); return management.reorderNpcMemories(roomId, String(payload.roleId), payload.memoryIds.map(String))
+        case 'supersede-memory': if (!nonEmptyString(payload.memoryId) || !isRecord(payload.entry) || typeof payload.entry.text !== 'string' || typeof payload.entry.occurredAt !== 'string') throw new Error('Memory replacement requires memoryId, text and occurredAt.'); return management.supersedeNpcMemory(roomId, String(payload.memoryId), payload.entry as { text: string; occurredAt: string })
+        case 'save-lore': if (!Array.isArray(payload.lore) || !payload.lore.every(entry => isRecord(entry) && typeof entry.name === 'string' && typeof entry.content === 'string')) throw new Error('Lore must be an array of named entries.'); return management.saveLore(roomId, payload.lore as import('../types.ts').LoreEntry[])
+        case 'create-role': if (!isRolePayload(payload.role)) throw new Error('Create role requires a complete role object.'); return management.createRole(roomId, payload.role as Parameters<StageCraftManagementPort['createRole']>[1])
+        case 'delete-role': if (!nonEmptyString(payload.roleId)) throw new Error('Role id is required.'); return management.deleteRole(roomId, String(payload.roleId))
+        case 'set-role-presence': if (!nonEmptyString(payload.roleId) || !['present', 'absent', 'unavailable'].includes(String(payload.presence))) throw new Error('Invalid role presence.'); return management.setRolePresence(roomId, String(payload.roleId), payload.presence as import('../types.ts').Role['presence'])
+        case 'set-role-thinking': if (!nonEmptyString(payload.roleId) || !['off', 'brief', 'standard', 'deep'].includes(String(payload.thinkingStrength))) throw new Error('Invalid thinking strength.'); return management.setRoleThinking(roomId, String(payload.roleId), payload.thinkingStrength as import('../types.ts').ThinkingStrength)
+        case 'reorder-roles': if (!Array.isArray(payload.roleIds) || !payload.roleIds.every(id => nonEmptyString(id))) throw new Error('Role reorder requires role ids.'); return management.reorderRoles(roomId, payload.roleIds.map(String))
+        case 'set-role-avatar': if (!nonEmptyString(payload.roleId) || !nonEmptyString(payload.portraitRef)) throw new Error('Role avatar requires roleId and portraitRef.'); return management.setRoleAvatar(roomId, String(payload.roleId), String(payload.portraitRef))
+        case 'set-role-state': if (!nonEmptyString(payload.roleId) || typeof payload.currentState !== 'string') throw new Error('Role state requires roleId and currentState.'); return management.setRoleCurrentState(roomId, String(payload.roleId), payload.currentState)
+        case 'set-director-setting': return management.setDirectorSetting(roomId, String(payload.text ?? ''))
+        case 'update-scene': return management.updateScene(roomId, { ...(typeof payload.time === 'string' ? { time: payload.time } : {}), ...(typeof payload.location === 'string' ? { location: payload.location } : {}) })
+        default: throw new Error(`Unsupported management operation: ${operation}`)
+      }
+    },
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value && typeof value === 'object' && !Array.isArray(value)) }
+function nonEmptyString(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0 }
+function isStoryPackagePayload(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  return nonEmptyString(value.id) && nonEmptyString(value.title) && Array.isArray(value.roles) && value.roles.every(isRolePayload)
+}
+function isRolePayload(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  return nonEmptyString(value.id) && nonEmptyString(value.name) && typeof value.portraitRef === 'string' && typeof value.selfModel === 'string' && typeof value.currentState === 'string' && ['present', 'absent', 'unavailable'].includes(String(value.presence))
 }
 
 function stagecraftChatCommandHandler(chat: StageCraftChatPort, defaultRoomId?: string): CoreCommandHandler {

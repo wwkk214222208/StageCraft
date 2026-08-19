@@ -7,6 +7,17 @@ export interface CoreCommandContext {
   defaultRoomId: string
 }
 
+export interface CoreLegacyCommandAdapter {
+  dispatch(command: HumanCommand): Promise<void>
+}
+
+/** Explicit compatibility adapter. Production startTavern does not install it. */
+export class LegacyRuntimeCommandAdapter implements CoreLegacyCommandAdapter {
+  private readonly context: CoreCommandContext
+  constructor(context: CoreCommandContext) { this.context = context }
+  dispatch(command: HumanCommand): Promise<void> { return dispatchLegacyCommand(this.context, command) }
+}
+
 function record(command: HumanCommand): Record<string, unknown> {
   return command.payload && typeof command.payload === 'object' ? command.payload as Record<string, unknown> : {}
 }

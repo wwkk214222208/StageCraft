@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import type { RoomSnapshot, SubmitTurnInput } from './types.ts'
 import { Store } from './store.ts'
 import { fakeWorkers } from './workers.ts'
@@ -6,6 +5,7 @@ import type { WorkerSet } from './workers.ts'
 import type { CoreRuntimePort } from './core/protocol.ts'
 import { StageCraftChatService } from './stagecraft-chat-service.ts'
 import { StageCraftDirectorService } from './stagecraft-director-service.ts'
+import { StageCraftManagementService } from './stagecraft-management-service.ts'
 
 type Listener = (snapshot: RoomSnapshot) => void
 export type ThinkingListener = (event: ThinkingEvent) => void
@@ -26,6 +26,7 @@ export class RoomRuntime {
   private core?: CoreRuntimePort
   private readonly chatService: StageCraftChatService
   private readonly directorService: StageCraftDirectorService
+  private readonly managementService: StageCraftManagementService
 
   constructor(store: Store, workers: WorkerSet = fakeWorkers, core?: CoreRuntimePort) {
     this.store = store
@@ -40,6 +41,18 @@ export class RoomRuntime {
       notify: roomId => this.emit(roomId),
       thinking: (roomId, event) => this.emitThinking(roomId, event),
     })
+    this.managementService = new StageCraftManagementService(store, {
+      get: roomId => this.get(roomId),
+      notify: roomId => this.emit(roomId),
+    }, {
+      beforeRestart: roomId => {
+        const phase = this.get(roomId).phase
+        if (['collecting-decisions', 'drafting', 'consulting-director', 'role-speaking', 'world-change-approval'].includes(phase)) {
+          this.chatService.cancel(roomId)
+          this.directorService.cancel(roomId)
+        }
+      },
+    })
   }
 
   setCoreRuntime(core: CoreRuntimePort): void {
@@ -50,6 +63,7 @@ export class RoomRuntime {
 
   getChatService(): StageCraftChatService { return this.chatService }
   getDirectorService(): StageCraftDirectorService { return this.directorService }
+  getManagementService(): StageCraftManagementService { return this.managementService }
 
   /** 释放 Core 事件订阅及群聊生成资源；Store 由应用组合根负责关闭。 */
   dispose(): void { this.chatService.dispose(); this.directorService.dispose() }
@@ -168,109 +182,81 @@ export class RoomRuntime {
   exportArchive(roomId: string): Record<string, unknown> { return this.store.exportRoom(roomId) }
 
   importArchive(roomId: string, archive: { room?: RoomSnapshot }): void {
-    if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('读档需要空闲房间。')
-    this.store.importRoom(roomId, archive)
-    this.emit(roomId)
+    this.managementService.importArchive(roomId, archive)
   }
 
   restart(roomId: string, story: import('./story-packages.ts').StoryPackage, options: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean } = {}): void {
-    this.chatService.cancel(roomId)
-    this.directorService.cancel(roomId)
-    this.store.restartRoom(roomId, story, options)
-    this.emit(roomId)
+    this.managementService.restart(roomId, story, options)
   }
 
   /** 更新房间游玩配置：模式（导演/群聊）与沉浸开关（autoPublish） */
   setRoomConfig(roomId: string, config: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean }): void {
-    this.store.setRoomConfig(roomId, config)
-    this.emit(roomId)
+    this.managementService.setRoomConfig(roomId, config)
   }
 
   updatePlayerCharacter(roomId: string, player: { name: string; persona: string; currentState: string }): void {
-    this.store.updatePlayerCharacter(roomId, player)
-    this.emit(roomId)
+    this.managementService.updatePlayerCharacter(roomId, player)
   }
 
   setPlayerAvatar(roomId: string, portraitRef: string): void {
-    this.store.setPlayerAvatar(roomId, portraitRef)
-    this.emit(roomId)
+    this.managementService.setPlayerAvatar(roomId, portraitRef)
   }
 
   interveneRole(roomId: string, roleId: string, selfModel: string, memoryTimeline: Record<string, string[]> | undefined, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
-    const room = this.get(roomId)
-    if (room.phase !== 'awaiting-player-input') throw new Error('Private role intervention requires an idle room.')
-    this.store.updateRolePrivateState(roomId, roleId, selfModel, memoryTimeline, config)
-    this.emit(roomId)
+    this.managementService.interveneRole(roomId, roleId, selfModel, memoryTimeline, config)
   }
 
   storeNpcMemories(roomId: string, roleId: string, entries: Array<{ id?: string; text?: string; occurredAt?: string }>): void {
-    if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('管理 NPC 记忆需要在空闲时进行。')
-    this.store.insertNpcMemories(roomId, roleId, entries.map((entry, index) => ({ id: entry.id ?? `manual-${Date.now()}-${index}`, text: String(entry.text ?? ''), occurredAt: entry.occurredAt ?? this.get(roomId).sceneTime ?? '过去', source: 'manual' })))
-    this.emit(roomId)
+    this.managementService.storeNpcMemories(roomId, roleId, entries)
   }
 
-  retractNpcMemory(roomId: string, memoryId: string): void { this.store.retractNpcMemory(roomId, memoryId); this.emit(roomId) }
+  retractNpcMemory(roomId: string, memoryId: string): void { this.managementService.retractNpcMemory(roomId, memoryId) }
 
-  updateNpcMemory(roomId: string, memoryId: string, entry: Parameters<Store['updateNpcMemory']>[2]): void { if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('管理 NPC 记忆需要在空闲时进行。'); this.store.updateNpcMemory(roomId, memoryId, entry); this.emit(roomId) }
+  updateNpcMemory(roomId: string, memoryId: string, entry: Parameters<Store['updateNpcMemory']>[2]): void { this.managementService.updateNpcMemory(roomId, memoryId, entry) }
 
-  reorderNpcMemories(roomId: string, roleId: string, memoryIds: string[]): void { if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('调整记忆顺序需要在空闲时进行。'); this.store.reorderNpcMemories(roomId, roleId, memoryIds); this.emit(roomId) }
-  supersedeNpcMemory(roomId: string, memoryId: string, entry: Omit<Parameters<Store['supersedeNpcMemory']>[2], 'id'>): void { if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('管理 NPC 记忆需要在空闲时进行。'); this.store.supersedeNpcMemory(roomId, memoryId, { ...entry, id: `manual-${randomUUID()}` }); this.emit(roomId) }
+  reorderNpcMemories(roomId: string, roleId: string, memoryIds: string[]): void { this.managementService.reorderNpcMemories(roomId, roleId, memoryIds) }
+  supersedeNpcMemory(roomId: string, memoryId: string, entry: Omit<Parameters<Store['supersedeNpcMemory']>[2], 'id'>): void { this.managementService.supersedeNpcMemory(roomId, memoryId, entry) }
 
   saveLore(roomId: string, lore: import('./types.ts').LoreEntry[]): void {
-    this.store.saveLore(roomId, lore)
-    this.emit(roomId)
+    this.managementService.saveLore(roomId, lore)
   }
 
   createRole(roomId: string, role: { id: string; name: string; portraitRef: string; currentState: string; presence: 'present' | 'absent' | 'unavailable'; selfModel: string; memoryTimeline?: Record<string, string[]>; initialMemories?: import('./types.ts').InitialMemory[]; goals?: string[] }): void {
-    if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('新建角色需要在空闲时进行。')
-    this.store.createRole(roomId, role)
-    this.emit(roomId)
+    this.managementService.createRole(roomId, role)
   }
 
   deleteRole(roomId: string, roleId: string): void {
-    if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('删除角色需要在空闲时进行。')
-    this.store.deleteRole(roomId, roleId)
-    this.emit(roomId)
+    this.managementService.deleteRole(roomId, roleId)
   }
 
   setRolePresence(roomId: string, roleId: string, presence: 'present' | 'absent' | 'unavailable'): void {
-    this.store.setRolePresence(roomId, roleId, presence)
-    this.emit(roomId)
+    this.managementService.setRolePresence(roomId, roleId, presence)
   }
 
   setRoleThinking(roomId: string, roleId: string, thinkingStrength: import('./types.ts').ThinkingStrength): void {
-    if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('调整角色思维链需要在空闲时进行。')
-    this.store.setRoleThinking(roomId, roleId, thinkingStrength)
-    this.emit(roomId)
+    this.managementService.setRoleThinking(roomId, roleId, thinkingStrength)
   }
 
   reorderRoles(roomId: string, roleIds: string[]): void {
-    if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('调整顺序需要在空闲时进行。')
-    this.store.reorderRoles(roomId, roleIds)
-    this.emit(roomId)
+    this.managementService.reorderRoles(roomId, roleIds)
   }
 
   setRoleAvatar(roomId: string, roleId: string, portraitRef: string): void {
-    this.store.setRoleAvatar(roomId, roleId, portraitRef)
-    this.emit(roomId)
+    this.managementService.setRoleAvatar(roomId, roleId, portraitRef)
   }
 
   /** 玩家直接修改角色当前状态（点击角色状态失焦确认） */
   setRoleCurrentState(roomId: string, roleId: string, currentState: string): void {
-    this.store.setRoleCurrentState(roomId, roleId, currentState)
-    this.emit(roomId)
+    this.managementService.setRoleCurrentState(roomId, roleId, currentState)
   }
 
   /** 无草稿时玩家引入设定（作为 player 发言存入导演交流，供起草参考） */
   setDirectorSetting(roomId: string, text: string): void {
-    this.store.addConsultation(roomId, null, 'player', text)
-    this.emit(roomId)
+    this.managementService.setDirectorSetting(roomId, text)
   }
 
   updateScene(roomId: string, updates: { time?: string; location?: string }): void {
-    if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('修改场景需要在空闲时进行。')
-    this.store.updateScene(roomId, updates)
-    this.emit(roomId)
+    this.managementService.updateScene(roomId, updates)
   }
 
   async consult(roomId: string, draftId: string, playerText: string, context = ''): Promise<void> {

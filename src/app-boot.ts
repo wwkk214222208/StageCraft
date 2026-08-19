@@ -23,6 +23,8 @@ import { DefaultCorePluginContainer } from './core/container.ts'
 import { CoreRuntimePluginAdapter } from './core/runtime-plugin.ts'
 import type { Disposable } from './core/plugins.ts'
 import { HttpHumanCorePlugin } from './core/http-human-plugin.ts'
+import { StageCraftSolutionPlugin } from './core/solutions.ts'
+import { StoreCoreStateRepository } from './core/store-state-repository.ts'
 
 /** Provider replacement transaction: preflight must run before tearing down the old route. */
 export async function switchProviderSafely<T>(assertReady: () => void, disposeOld: () => Promise<void> | void, installNew: () => T): Promise<T> {
@@ -30,9 +32,6 @@ export async function switchProviderSafely<T>(assertReady: () => void, disposeOl
   await disposeOld()
   return installNew()
 }
-import { StageCraftSolutionPlugin } from './core/solutions.ts'
-import { StoreCoreStateRepository } from './core/store-state-repository.ts'
-
 /** 生产 LLM 路由的无秘密选择规则：请求显式 route 优先于角色覆盖。 */
 export function resolveRouteProviderId(request: { route?: { providerId?: string } }, roleProviderId?: string, defaultProviderId?: string): string | undefined {
   return request.route?.providerId ?? roleProviderId ?? defaultProviderId
@@ -167,8 +166,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   const humanCore = new HttpHumanCorePlugin()
   container.addHuman(humanCore)
   const runtime = new RoomRuntime(store, undefined, core)
-  container.addSolution(new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), defaultRoomId: roomId }))
-  core.attachLegacyRuntime(runtime, roomId)
+  container.addSolution(new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), management: runtime.getManagementService(), defaultRoomId: roomId }))
   core.attachStateRepository(new StoreCoreStateRepository(store))
   const restoredCoreState = core.restoreState(roomId)
   const initialRoom = runtime.get(roomId)
@@ -177,6 +175,14 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   core.projectRoom(initialRoom, restoredCoreState ? 'app-boot:restore' : 'app-boot:init')
   // 首次启动没有旧路由可等待，保持旧行为：startTavern 返回前同步装配 gateway/workers。
   if (providerStore.getDirector()?.apiKey) installProvider(providerStore.getDirector())
+
+  let managementCommandSequence = 0
+  async function dispatchManagement(operation: string, payload: Record<string, unknown> = {}): Promise<void> {
+    await core.dispatch({ id: `management-${++managementCommandSequence}`, actor: 'operator', type: 'role-management', payload: { roomId, operation, ...payload } })
+  }
+  async function dispatchRestart(story: StoryPackage, options: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean } = {}): Promise<void> {
+    await core.dispatch({ id: `management-restart-${++managementCommandSequence}`, actor: 'operator', type: 'restart', payload: { roomId, story, ...options } })
+  }
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
@@ -187,7 +193,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       if (await humanCore.handle(request, response, url)) return
       
       if (url.pathname === '/api/archive/export' && request.method === 'GET') return json(response, 200, runtime.exportArchive(roomId))
-      if (url.pathname === '/api/archive/import' && request.method === 'POST') { runtime.importArchive(roomId, await readJson(request) as { room?: import('./types.ts').RoomSnapshot }); return json(response, 200, { ok: true }) }
+      if (url.pathname === '/api/archive/import' && request.method === 'POST') { await dispatchManagement('import-archive', { archive: await readJson(request) }); return json(response, 200, { ok: true }) }
       if (url.pathname === '/api/archive/save' && request.method === 'POST') {
         const body = await readJson(request)
         let name = String(body.name ?? '').trim()
@@ -211,7 +217,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         const file = String(body.name ?? '').replace(/[\\/:*?"<>|]/g, '_')
         const path = join(saveRoot, `${file}.json`)
         if (!file || !existsSync(path)) throw new Error('存档不存在。')
-        runtime.importArchive(roomId, JSON.parse(readFileSync(path, 'utf8')) as { room?: import('./types.ts').RoomSnapshot })
+        await dispatchManagement('import-archive', { archive: JSON.parse(readFileSync(path, 'utf8')) })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/archive/delete' && request.method === 'POST') {
@@ -293,13 +299,13 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         const body = await readJson(request)
         const story = loadStoryPackage(storiesRoot, String(body.storyId))
         const mode = body.mode === 'chat' || body.mode === 'director' ? body.mode : undefined
-        runtime.restart(roomId, story, { ...(mode ? { mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}) })
+        await dispatchRestart(story, { ...(mode ? { mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}) })
         return json(response, 200, { ok: true, roomId })
       }
       if (url.pathname === '/api/room-config' && request.method === 'POST') {
         const body = await readJson(request)
         const mode = body.mode === 'chat' || body.mode === 'director' ? body.mode : undefined
-        runtime.setRoomConfig(roomId, { ...(mode ? { mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}) })
+        await dispatchManagement('set-room-config', { ...(mode ? { mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}) })
         return json(response, 200, { ok: true, room: runtime.get(roomId) })
       }
       if (url.pathname === '/api/chat/speak' && request.method === 'POST') {
@@ -339,12 +345,12 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       if (url.pathname === '/api/st-cards/import' && request.method === 'POST') {
         const body = await readJson(request)
         const result = importStCard(String(body.content ?? ''), String(body.filename ?? 'card.json'))
-        runtime.createRole(roomId, result.role)
+        await dispatchManagement('create-role', { role: result.role })
         // 角色书条目并入房间世界书（按名称去重，避免重复导入叠加）
         if (result.lore.length > 0) {
           const current = runtime.get(roomId).lore ?? []
           const existingNames = new Set(current.map(entry => entry.name))
-          runtime.saveLore(roomId, [...current, ...result.lore.filter(entry => !existingNames.has(entry.name))])
+          await dispatchManagement('save-lore', { lore: [...current, ...result.lore.filter(entry => !existingNames.has(entry.name))] })
         }
         return json(response, 200, { ok: true, role: result.role, mapped: result.mapped, loreAdded: result.lore.length })
       }
@@ -374,7 +380,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       }
       if (url.pathname === '/api/player-character' && request.method === 'POST') {
         const body = await readJson(request)
-        runtime.updatePlayerCharacter(roomId, { name: String(body.name ?? ''), persona: String(body.persona ?? ''), currentState: String(body.currentState ?? '') })
+        await dispatchManagement('update-player-character', { name: String(body.name ?? ''), persona: String(body.persona ?? ''), currentState: String(body.currentState ?? '') })
         return json(response, 200, { ok: true, room: runtime.get(roomId) })
       }
       if (url.pathname === '/api/player/avatar' && request.method === 'POST') {
@@ -383,7 +389,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         const url = typeof body.url === 'string' ? body.url : ''
         if (!dataUrl && !url) throw new Error('缺少头像数据（dataUrl 或 url）。')
         const portraitRef = await saveAvatar('player', dataUrl || '', url || '')
-        runtime.setPlayerAvatar(roomId, portraitRef)
+        await dispatchManagement('set-player-avatar', { portraitRef })
         return json(response, 200, { ok: true, portraitRef })
       }
       if (url.pathname === '/api/roles/memories' && request.method === 'GET') {
@@ -392,58 +398,58 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       }
       if (url.pathname === '/api/roles/memories' && request.method === 'POST') {
         const body = await readJson(request); const roleId = String(body.roleId ?? ''); const entries = Array.isArray(body.entries) ? body.entries : []
-        runtime.storeNpcMemories(roomId, roleId, entries); return json(response, 200, { ok: true })
+        await dispatchManagement('store-memories', { roleId, entries }); return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/memories/retract' && request.method === 'POST') {
-        const body = await readJson(request); runtime.retractNpcMemory(roomId, String(body.memoryId)); return json(response, 200, { ok: true })
+        const body = await readJson(request); await dispatchManagement('retract-memory', { memoryId: String(body.memoryId) }); return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/memories/update' && request.method === 'POST') {
-        const body = await readJson(request); runtime.updateNpcMemory(roomId, String(body.memoryId), body.entry ?? {}); return json(response, 200, { ok: true })
+        const body = await readJson(request); await dispatchManagement('update-memory', { memoryId: String(body.memoryId), entry: body.entry ?? {} }); return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/memories/reorder' && request.method === 'POST') {
         const body = await readJson(request)
         const memoryIds = Array.isArray(body.memoryIds) ? body.memoryIds.map(String) : []
         if (!memoryIds.length) throw new Error('缺少记忆顺序列表。')
-        runtime.reorderNpcMemories(roomId, String(body.roleId ?? ''), memoryIds)
+        await dispatchManagement('reorder-memories', { roleId: String(body.roleId ?? ''), memoryIds })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/memories/supersede' && request.method === 'POST') {
-        const body = await readJson(request); runtime.supersedeNpcMemory(roomId, String(body.memoryId), body.entry ?? {}); return json(response, 200, { ok: true })
+        const body = await readJson(request); await dispatchManagement('supersede-memory', { memoryId: String(body.memoryId), entry: body.entry ?? {} }); return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/intervene' && request.method === 'POST') {
         const body = await readJson(request)
-        runtime.interveneRole(roomId, String(body.roleId), String(body.selfModel ?? ''), typeof body.memoryTimeline === 'string' ? JSON.parse(body.memoryTimeline) as Record<string, string[]> : undefined, { providerId: body.providerId ? String(body.providerId) : undefined, modelOverride: body.modelOverride ? String(body.modelOverride) : undefined, ...(typeof body.impressions === 'string' ? { impressions: JSON.parse(body.impressions) as Record<string, string> } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}), ...(body.thinkingStrength ? { thinkingStrength: String(body.thinkingStrength) as import('./types.ts').ThinkingStrength } : {}) })
+        await dispatchManagement('intervene-role', { roleId: String(body.roleId), selfModel: String(body.selfModel ?? ''), memoryTimeline: typeof body.memoryTimeline === 'string' ? JSON.parse(body.memoryTimeline) as Record<string, string[]> : undefined, config: { providerId: body.providerId ? String(body.providerId) : undefined, modelOverride: body.modelOverride ? String(body.modelOverride) : undefined, ...(typeof body.impressions === 'string' ? { impressions: JSON.parse(body.impressions) as Record<string, string> } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}), ...(body.thinkingStrength ? { thinkingStrength: String(body.thinkingStrength) as import('./types.ts').ThinkingStrength } : {}) } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/create' && request.method === 'POST') {
         const body = await readJson(request)
         const id = String(body.id ?? '').trim() || `role-${Date.now()}`
-        runtime.createRole(roomId, { id, name: String(body.name ?? '').trim(), portraitRef: String(body.portraitRef ?? '/assets/default.svg'), currentState: String(body.currentState ?? '刚刚进入当前场景。'), presence: ['present', 'absent', 'unavailable'].includes(String(body.presence)) ? String(body.presence) as 'present' | 'absent' | 'unavailable' : 'present', selfModel: String(body.selfModel ?? ''), memoryTimeline: typeof body.memoryTimeline === 'string' ? JSON.parse(body.memoryTimeline) as Record<string, string[]> : undefined, ...(Array.isArray(body.initialMemories) ? { initialMemories: body.initialMemories as import('./types.ts').InitialMemory[] } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}) })
+        await dispatchManagement('create-role', { role: { id, name: String(body.name ?? '').trim(), portraitRef: String(body.portraitRef ?? '/assets/default.svg'), currentState: String(body.currentState ?? '刚刚进入当前场景。'), presence: ['present', 'absent', 'unavailable'].includes(String(body.presence)) ? String(body.presence) as 'present' | 'absent' | 'unavailable' : 'present', selfModel: String(body.selfModel ?? ''), memoryTimeline: typeof body.memoryTimeline === 'string' ? JSON.parse(body.memoryTimeline) as Record<string, string[]> : undefined, ...(Array.isArray(body.initialMemories) ? { initialMemories: body.initialMemories as import('./types.ts').InitialMemory[] } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}) } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/delete' && request.method === 'POST') {
         const body = await readJson(request)
-        runtime.deleteRole(roomId, String(body.roleId))
+        await dispatchManagement('delete-role', { roleId: String(body.roleId) })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/presence' && request.method === 'POST') {
         const body = await readJson(request)
         const presence = String(body.presence)
         if (!['present', 'absent', 'unavailable'].includes(presence)) throw new Error('无效的在场状态。')
-        runtime.setRolePresence(roomId, String(body.roleId), presence as 'present' | 'absent' | 'unavailable')
+        await dispatchManagement('set-role-presence', { roleId: String(body.roleId), presence })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/thinking' && request.method === 'POST') {
         const body = await readJson(request)
         const thinking = String(body.thinking ?? '') as import('./types.ts').ThinkingStrength
-        runtime.setRoleThinking(roomId, String(body.roleId), thinking)
+        await dispatchManagement('set-role-thinking', { roleId: String(body.roleId), thinkingStrength: thinking })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/reorder' && request.method === 'POST') {
         const body = await readJson(request)
         const roleIds = Array.isArray(body.roleIds) ? body.roleIds.map(String) : []
         if (roleIds.length === 0) throw new Error('缺少角色顺序列表。')
-        runtime.reorderRoles(roomId, roleIds)
+        await dispatchManagement('reorder-roles', { roleIds })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/avatar' && request.method === 'POST') {
@@ -453,12 +459,12 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         const url = typeof body.url === 'string' ? body.url : ''
         if (!dataUrl && !url) throw new Error('缺少头像数据（dataUrl 或 url）。')
         const portraitRef = await saveAvatar(roleId, dataUrl || '', url || '')
-        runtime.setRoleAvatar(roomId, roleId, portraitRef)
+        await dispatchManagement('set-role-avatar', { roleId, portraitRef })
         return json(response, 200, { ok: true, portraitRef })
       }
       if (url.pathname === '/api/scene' && request.method === 'POST') {
         const body = await readJson(request)
-        runtime.updateScene(roomId, { ...(typeof body.time === 'string' ? { time: body.time } : {}), ...(typeof body.location === 'string' ? { location: body.location } : {}) })
+        await dispatchManagement('update-scene', { ...(typeof body.time === 'string' ? { time: body.time } : {}), ...(typeof body.location === 'string' ? { location: body.location } : {}) })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/state' && request.method === 'POST') {
@@ -466,14 +472,14 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         const roleId = String(body.roleId ?? '')
         const currentState = String(body.currentState ?? '')
         if (!roleId) throw new Error('缺少角色 id。')
-        runtime.setRoleCurrentState(roomId, roleId, currentState)
+        await dispatchManagement('set-role-state', { roleId, currentState })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/director/setting' && request.method === 'POST') {
         const body = await readJson(request)
         const text = String(body.text ?? '').trim()
         if (!text) throw new Error('设定内容为空。')
-        runtime.setDirectorSetting(roomId, text)
+        await dispatchManagement('set-director-setting', { text })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/story/sync-role' && request.method === 'POST') {
@@ -514,7 +520,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
           const entry = item as Record<string, unknown>
           return { name: String(entry.name ?? ''), content: String(entry.content ?? ''), ...(Array.isArray(entry.roles) ? { roles: entry.roles.map(String) } : {}) }
         }).filter(entry => entry.name && entry.content) : []
-        runtime.saveLore(roomId, lore)
+        await dispatchManagement('save-lore', { lore })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/consult' && request.method === 'POST') {

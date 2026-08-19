@@ -15,7 +15,7 @@ test('core runtime exposes versioned Core View and event subscription', async ()
   const events: unknown[] = []
   core.subscribe(event => events.push(event))
 
-  await core.dispatch({ id: 'command-1', actor: 'player', type: 'submit-text', payload: { text: 'hello' } })
+  await assert.rejects(() => core.dispatch({ id: 'command-1', actor: 'player', type: 'submit-text', payload: { text: 'hello' } }), /Core command has no handler: submit-text/)
 
   const view = core.getView()
   assert.equal(view.protocolVersion, CORE_PROTOCOL_VERSION)
@@ -24,7 +24,7 @@ test('core runtime exposes versioned Core View and event subscription', async ()
   assert.deepEqual(events[0], {
     type: 'error',
     revision: 0,
-    message: 'Core command has no runtime adapter: submit-text',
+    message: 'Core command has no handler: submit-text',
   })
 })
 
