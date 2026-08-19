@@ -27,13 +27,18 @@ document.querySelector('[data-inspector-tab="basic"]').textContent = '人设'
 document.querySelector('[data-inspector-tab="model"]').textContent = '模型'
 const relationsTab = document.querySelector('[data-inspector-tab="relations"]')
 const relationsPanel = document.querySelector('[data-inspector-panel="relations"]')
-const basicPanels = document.querySelectorAll('[data-inspector-panel="basic"]')
-if (relationsPanel && basicPanels[1]) { basicPanels[1].append(...relationsPanel.childNodes); relationsPanel.remove() }
+// 旧关系页与基本页内的关系编辑器重复，只保留基本页中的统一编辑器。
+relationsPanel?.remove()
 relationsTab?.remove()
+const basicPanels = document.querySelectorAll('[data-inspector-panel="basic"]')
+if (basicPanels.length > 1) { basicPanels[0].append(...basicPanels[1].childNodes); basicPanels[1].remove() }
 const modelPanel = document.querySelector('[data-inspector-panel="model"]')
 const modelSettings = document.querySelector('.inspector-fields > .inspector-row')
 if (modelPanel && modelSettings) modelPanel.prepend(modelSettings)
 document.querySelectorAll('#role-modal #inspector-memory, #new-role-memory').forEach(element => element.closest('label')?.remove())
+document.querySelector('.inspector-goals-label small')?.remove()
+const impressionsTitle = document.querySelector('.inspector-impressions-wrap .field-title')
+if (impressionsTitle) impressionsTitle.textContent = '关系与印象'
 document.addEventListener('click', event => { const roleId = event.target.closest?.('[data-memory-role]')?.dataset.memoryRole; if (roleId && room) inspectedRole = room.roles.find(role => role.id === roleId) })
 
 // ── token 计数小字（可开关；只展示，不进入正文） ──

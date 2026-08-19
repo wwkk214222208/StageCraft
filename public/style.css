@@ -117,6 +117,15 @@
 #role-modal .inspector-fields textarea{min-height:120px}
 #role-modal .inspector-two-col textarea{min-height:190px;resize:vertical}
 
+/* 角色设置三页：标签和页脚始终可见，内容仅在中间区域滚动。 */
+#role-modal{width:min(1080px,96vw);max-height:calc(100dvh - 24px)}
+#role-modal .inspector-fields{overflow:hidden}
+#role-modal .inspector-tabs{flex:0 0 auto;min-height:40px;margin:0;overflow-x:auto}
+#role-modal .inspector-panel:not([hidden]){display:block;flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:2px}
+#role-modal .inspector-two-col{display:block}
+#role-modal .inspector-two-col>label{display:flex;flex-direction:column;min-height:0;height:100%}
+#role-modal .inspector-two-col textarea{width:100%;min-height:300px;flex:1 1 auto}
+
 /* ── 追加：他人印象列表 + 提示词编辑窗口 ── */
 .inspector-impressions-wrap .field-title{margin:0 0 6px;color:#b7c8fe;font:600 13px Georgia,serif}
 .inspector-impressions-wrap .field-title small{color:#7f90b8;font-weight:400;font-size:11px}
