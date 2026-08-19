@@ -3,6 +3,9 @@ import type { ConsultationMessage, Draft, LoreEntry, PlayerCharacter, Decision, 
 export interface SceneContext {
   time?: string
   location?: string
+  /** 非秘密的 Core thinking 关联信息，仅用于实时事件回传。 */
+  roomId?: string
+  turnId?: string
 }
 
 /** 已批准正文的服务端场景快照。记忆 Worker 只能读取这些上下文，不能自行决定关联信息。 */
@@ -28,6 +31,9 @@ export interface DirectorChatContext {
   lore?: LoreEntry[]
   /** 导演与该玩家的对话记录（自然语言建议与回复） */
   history?: ConsultationMessage[]
+  /** 非秘密的 Core thinking 关联信息，仅用于实时事件回传。 */
+  roomId?: string
+  turnId?: string
 }
 
 export interface WorkerSet {

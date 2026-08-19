@@ -19,6 +19,7 @@ export interface HumanCommand {
     | 'edit-proposal'
     | 'choose'
     | 'cancel'
+    | 'retry'
     | 'restart'
     | 'role-management'
   payload?: unknown
@@ -198,7 +199,7 @@ export type CoreEventListener = (event: CoreEvent) => void
 
 export interface CoreRuntimePort {
   dispatch(command: HumanCommand): Promise<void>
-  requestModel(request: ModelRequest): Promise<void>
+  requestModel(request: ModelRequest): Promise<ModelResult>
   emitDomainEvent(event: DomainEvent): void
   submitModelResult(result: ModelResult): Promise<void>
   getView(): CoreView

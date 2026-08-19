@@ -5,6 +5,7 @@ import { fakeWorkers } from './workers.ts'
 import type { WorkerSet } from './workers.ts'
 import type { CoreRuntimePort } from './core/protocol.ts'
 import { domainEvent } from './core/domain-events.ts'
+import { StageCraftChatService } from './stagecraft-chat-service.ts'
 
 type Listener = (snapshot: RoomSnapshot) => void
 export type ThinkingListener = (event: ThinkingEvent) => void
@@ -26,24 +27,36 @@ export class RoomRuntime {
   private readonly turnIds = new Map<string, string>()
   private readonly cancelledTurns = new Set<string>()
   private readonly cancelledRequests = new Set<string>()
-  private readonly digestingRooms = new Set<string>()
   private readonly store: Store
   private workers: WorkerSet
   private core?: CoreRuntimePort
+  private readonly chatService: StageCraftChatService
 
   constructor(store: Store, workers: WorkerSet = fakeWorkers, core?: CoreRuntimePort) {
     this.store = store
     this.workers = workers
     this.core = core
+    this.chatService = new StageCraftChatService(store, workers, core, {
+      get: roomId => this.get(roomId),
+      notify: roomId => this.emit(roomId),
+      thinking: (roomId, event) => this.emitThinking(roomId, event),
+    })
   }
 
   setCoreRuntime(core: CoreRuntimePort): void {
     this.core = core
+    this.chatService.setCoreRuntime(core)
   }
+
+  getChatService(): StageCraftChatService { return this.chatService }
+
+  /** 释放 Core 事件订阅及群聊生成资源；Store 由应用组合根负责关闭。 */
+  dispose(): void { this.chatService.dispose() }
 
   setWorkers(workers: WorkerSet): void {
     if (this.activeTurns.size > 0) throw new Error('回合进行中不能切换模型。')
     this.workers = workers
+    this.chatService.setWorkers(workers)
   }
 
   subscribe(roomId: string, listener: Listener): () => void {
@@ -96,93 +109,22 @@ export class RoomRuntime {
 
   /** 群聊模式：点选角色发言——该角色一次决策产出台词，进入待审批 */
   async speak(roomId: string, roleId: string, feedback = ''): Promise<void> {
-    if (this.activeTurns.has(roomId)) throw new Error('A turn is already being processed for this room.')
-    const room = this.get(roomId)
-    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
-    if (room.phase !== 'awaiting-player-input') throw new Error(`Room is busy: ${room.phase}`)
-    const role = room.roles.find(item => item.id === roleId)
-    if (!role) throw new Error('角色不存在。')
-    if (role.presence !== 'present') throw new Error('该角色当前不在场，不能发言。')
-    this.activeTurns.add(roomId)
-    const turnId = randomUUID()
-    this.turnIds.set(roomId, turnId)
-    this.cancelledTurns.delete(turnId)
-    // 单个 required 决策 = 被点选角色的发言
-    this.store.createTurn(roomId, turnId, room.playerContribution ?? '', [{ roleId, participation: 'required', status: 'pending' }], 'role-speaking')
-    this.core?.emitDomainEvent(domainEvent('role.speech.requested', { roomId, roleId, turnId }))
-    this.emit(roomId)
-    try {
-      const latest = this.get(roomId)
-      const speaking = latest.roles.find(item => item.id === roleId)!
-      const contribution = latest.playerContribution ?? ''
-      const contributionText = contribution.trim() ? contribution : '玩家没有说话，只是注视着你。'
-      const speechInstruction = feedback.trim() ? `${contributionText}\n\n玩家对上一版台词的批复意见：${feedback.trim()}\n请根据批复重新生成更合适的台词。` : contributionText
-      if (!this.workers.speak) throw new Error('当前模型服务不支持群聊发言协议。')
-      const result = await this.workers.speak(speaking, speechInstruction, latest.roles, { time: latest.sceneTime, location: latest.sceneLocation }, (text) => {
-        this.emitThinking(roomId, { actor: 'role', roleId, turnId, text, done: false })
-      }, latest.lore, latest.scenes.at(-1)?.text)
-      this.emitThinking(roomId, { actor: 'role', roleId, turnId, text: '', done: true })
-      if (this.cancelledTurns.has(turnId)) return
-      const text = result.text?.trim()
-      if (!text) throw new Error('角色没有产出发言内容。')
-      const speech = { roleId, text, ...(result.thinking ? { thinking: result.thinking } : {}), ...(result.usage ? { usage: result.usage } : {}), ...(result.worldChange ? { worldChange: result.worldChange } : {}), turnId }
-      this.store.saveSpeech(roomId, speech)
-      this.core?.emitDomainEvent(domainEvent('role.speech.generated', { roomId, speech }))
-      if (result.worldChange) this.core?.emitDomainEvent(domainEvent('world-change.proposed', { roomId, change: result.worldChange, source: 'speech' }))
-      this.emit(roomId)
-      // 沉浸模式：跳过审批，自动发布并触发在场角色消化
-      if (this.get(roomId).autoPublish) {
-        await this.approveSpeech(roomId, text)
-      }
-    } catch (error) {
-      this.emitThinking(roomId, { actor: 'role', roleId, turnId, text: '', done: true })
-      if (this.cancelledTurns.has(turnId)) return
-      // 标记该角色决策为「回应失败」，左侧栏据此显示「回应失败」并暴露重试入口
-      this.store.saveDecision(turnId, { roleId, participation: 'required', status: 'unavailable', error: String(error) })
-      this.store.failRoom(roomId, `角色发言失败：${String(error)}`)
-      this.emit(roomId)
-    } finally {
-      this.activeTurns.delete(roomId)
-      this.turnIds.delete(roomId)
-    }
+    return this.chatService.speak(roomId, roleId, feedback)
   }
 
   /** 群聊模式：拒绝待审批台词及其附带世界变更，不发布正文。 */
   async rejectSpeech(roomId: string): Promise<void> {
-    const room = this.get(roomId)
-    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
-    const speech = this.store.rejectSpeech(roomId)
-    this.core?.emitDomainEvent(domainEvent('speech.rejected', { roomId, roleId: speech.roleId, turnId: speech.turnId }))
-    if (speech.worldChange) this.core?.emitDomainEvent(domainEvent('world-change.rejected', { roomId, change: speech.worldChange }))
-    this.emit(roomId)
+    return this.chatService.rejectSpeech(roomId)
   }
 
   /** 群聊模式：发言失败后重试——复位到可发言的空闲态，再重新让同一角色发言 */
   async retrySpeak(roomId: string): Promise<void> {
-    const room = this.get(roomId)
-    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
-    const failed = room.decisions.find(decision => decision.status === 'unavailable')
-    if (!failed) throw new Error('没有可重试的发言。')
-    // 清除上一轮残留的错误与 speech，回到空闲态以便重新发言
-    this.store.cancelTurn(roomId)
-    await this.speak(roomId, failed.roleId)
+    return this.chatService.retrySpeak(roomId)
   }
 
   /** 群聊模式：玩家批准（可先编辑）台词 → 发布 → 在场角色并行消化记忆 */
   async approveSpeech(roomId: string, text: string, worldChangeOverride?: import('./types.ts').WorldChangeRequest | null): Promise<void> {
-    const room = this.get(roomId)
-    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
-    if (!['awaiting-approval', 'world-change-approval'].includes(room.phase) || !room.speech) throw new Error('当前没有待审批的台词。')
-    const speech = room.speech
-    const playerText = room.playerContribution ?? ''
-    const worldChange = worldChangeOverride ?? speech.worldChange ?? null
-    const worldChangeId = this.store.approveSpeech(roomId, text, undefined, worldChangeOverride)
-    this.core?.emitDomainEvent(domainEvent('speech.approved', { roomId, text, worldChange }))
-    if (worldChange) this.core?.emitDomainEvent(domainEvent('world-change.approved', { roomId, change: worldChange }))
-    this.core?.emitDomainEvent(domainEvent('scene.published', { roomId, speaker: speech.roleId, text: text.trim() }))
-    this.emit(roomId)
-    // 记忆消化时把玩家发言一并并入，否则角色只记得自己的台词、记不住玩家说了什么
-    await this.digestAfterSpeech(roomId, [playerText, text.trim()].filter(Boolean).join('\n'), 'role_reaction', worldChangeId)
+    return this.chatService.approveSpeech(roomId, text, worldChangeOverride)
   }
 
   /**
@@ -192,129 +134,24 @@ export class RoomRuntime {
    * - 沉浸模式（autoPublish=true）：申请直接落地并写叙述。
    */
   async directorChat(roomId: string, text: string): Promise<void> {
-    if (this.activeTurns.has(roomId)) throw new Error('A turn is already being processed for this room.')
-    const room = this.get(roomId)
-    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
-    if (room.phase !== 'awaiting-player-input') throw new Error(`Room is busy: ${room.phase}`)
-    if (!this.workers.directorChat) throw new Error('当前模型服务不支持导演对话。')
-    const playerText = String(text ?? '').trim()
-    if (!playerText) throw new Error('请输入你想对导演说的话。')
-    this.core?.emitDomainEvent(domainEvent('director.suggestion.submitted', { roomId, text: playerText }))
-    this.activeTurns.add(roomId)
-    this.activeDirectorChats.add(roomId)
-    try {
-      const context: import('./workers.ts').DirectorChatContext = {
-        sceneTime: room.sceneTime,
-        sceneLocation: room.sceneLocation,
-        playerName: room.playerCharacter.name,
-        playerContribution: room.playerContribution ?? '',
-        recentScene: room.scenes.at(-1)?.text,
-        roles: room.roles,
-        lore: room.lore,
-        history: room.consultations,
-      }
-      const result = await this.workers.directorChat(playerText, context, (thinkingText) => {
-        this.emitThinking(roomId, { actor: 'director', turnId: `director-${Date.now()}`, text: thinkingText, done: false })
-      })
-      this.emitThinking(roomId, { actor: 'director', turnId: 'director', text: '', done: true })
-      if (this.cancelledRequests.has(roomId)) return
-      const reply = result.reply?.trim()
-      if (!reply) throw new Error('导演没有产出回复。')
-      this.store.addConsultation(roomId, null, 'player', playerText)
-      this.store.addConsultation(roomId, null, 'director', reply, result.usage, result.thinking)
-      if (!result.worldChange) this.core?.emitDomainEvent(domainEvent('director.reply.generated', { roomId, text: reply }))
-      if (result.worldChange) {
-        this.core?.emitDomainEvent(domainEvent('world-change.proposed', { roomId, change: result.worldChange, source: 'director' }))
-        if (this.get(roomId).autoPublish) {
-          // 沉浸模式：直接落地 + 写叙述 + 在场角色消化
-          this.store.saveWorldChange(roomId, result.worldChange, result.narration)
-          const worldChangeId = this.store.approveWorldChange(roomId)
-          if (result.narration?.trim()) {
-            this.store.addNarrationScene(roomId, result.narration, result.usage, worldChangeId)
-            this.emit(roomId)
-            await this.digestAfterSpeech(roomId, result.narration, 'world_change', worldChangeId)
-          } else {
-            this.emit(roomId)
-          }
-        } else {
-          // 上帝模式：进入待确认，玩家批准后落地并写叙述
-          this.store.saveWorldChange(roomId, result.worldChange, result.narration)
-          this.emit(roomId)
-        }
-      } else {
-        this.emit(roomId)
-      }
-    } finally {
-      this.activeTurns.delete(roomId)
-      this.activeDirectorChats.delete(roomId)
-      this.cancelledRequests.delete(roomId)
-    }
+    return this.chatService.directorChat(roomId, text)
   }
 
   /** 群聊模式：玩家批准导演对话产出的世界变更申请（无台词）→ 落地并写叙述 */
   async approveWorldChange(roomId: string, override?: import('./types.ts').WorldChangeRequest | null): Promise<void> {
-    const room = this.get(roomId)
-    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
-    if (room.phase !== 'world-change-approval' || room.speech) throw new Error('当前没有待确认的世界变更申请。')
-    const narration = room.pendingNarration
-    const change = override ?? room.pendingWorldChange ?? {}
-    const worldChangeId = this.store.approveWorldChange(roomId, override)
-    this.core?.emitDomainEvent(domainEvent('world-change.approved', { roomId, change }))
-    if (narration?.trim()) {
-      this.store.addNarrationScene(roomId, narration, undefined, worldChangeId)
-      this.emit(roomId)
-      await this.digestAfterSpeech(roomId, narration, 'world_change', worldChangeId)
-    } else {
-      this.emit(roomId)
-    }
+    return this.chatService.approveWorldChange(roomId, override)
   }
 
   /** 群聊模式：玩家拒绝导演对话产出的世界变更申请 → 清空申请 */
   async rejectWorldChange(roomId: string): Promise<void> {
-    const room = this.get(roomId)
-    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
-    if (room.phase !== 'world-change-approval' || room.speech) throw new Error('当前没有待确认的世界变更申请。')
-    this.store.rejectWorldChange(roomId)
-    this.core?.emitDomainEvent(domainEvent('world-change.rejected', { roomId, change: room.pendingWorldChange }))
-    this.emit(roomId)
-  }
-
-  /** 群聊模式：已批准正文发布后，所有在场角色并行写入结构化私有记忆。 */
-  private async digestAfterSpeech(roomId: string, sceneText: string, source: 'role_reaction' | 'world_change' = 'role_reaction', worldChangeId?: string): Promise<void> {
-    if (!this.workers.digest) return
-    if (this.digestingRooms.has(roomId)) return
-    this.digestingRooms.add(roomId)
-    try {
-      const snapshot = this.store.getRoom(roomId)
-      if (!snapshot) return
-      const present = snapshot.roles.filter(role => role.presence === 'present')
-      const scene = snapshot.scenes.at(-1)
-      if (!scene) return
-      await Promise.all(present.map(async role => {
-        try {
-          const digest = await this.workers.digest!(role, { id: scene.id, turnId: scene.turnId, text: sceneText, sceneTime: scene.sceneTime, sceneLocation: scene.sceneLocation, source, worldChangeId })
-          const entries = normalizeDigestEntries(digest.entries)
-          if (entries.length) this.store.insertNpcMemories(roomId, role.id, entries.map((entry, index) => ({
-            id: `digest-${scene.id}-${role.id}-${index}`,
-            sceneId: scene.id,
-            turnId: scene.turnId,
-            ...(worldChangeId ? { worldChangeId } : {}),
-            occurredAt: scene.sceneTime ?? '过去',
-            occurredLocation: scene.sceneLocation,
-            source,
-            ...entry,
-          })))
-        } catch (error) {
-          console.error(`[memory digest failed] ${role.id}: ${error}`)
-        }
-      }))
-      this.emit(roomId)
-    } finally {
-      this.digestingRooms.delete(roomId)
-    }
+    return this.chatService.rejectWorldChange(roomId)
   }
 
   cancelTurn(roomId: string): void {
+    if (this.get(roomId).mode === 'chat') {
+      this.chatService.cancel(roomId)
+      return
+    }
     const room = this.get(roomId)
     const directorChatActive = this.activeDirectorChats.has(roomId)
     const cancellablePhase = ['collecting-decisions', 'drafting', 'consulting-director', 'role-speaking', 'world-change-approval'].includes(room.phase)
@@ -665,18 +502,6 @@ function validateDecision(result: Decision, expected: Decision): Decision {
   if (result.participation !== expected.participation) throw new Error(`Worker returned unexpected participation for ${expected.roleId}`)
   if (!['completed', 'abstained', 'unavailable'].includes(result.status)) throw new Error(`Worker returned invalid status for ${expected.roleId}`)
   return result
-}
-
-/** 模型输出不可信：在写入前丢弃非法项，并将数值规范到协议允许范围。 */
-function normalizeDigestEntries(value: unknown): Array<import('./types.ts').MemoryDigestEntry> {
-  if (!Array.isArray(value)) return []
-  return value.flatMap(item => {
-    if (!item || typeof item !== 'object') return []
-    const entry = item as Record<string, unknown>
-    const text = typeof entry.text === 'string' ? entry.text.trim() : ''
-    if (!text) return []
-    return [{ text, ...(typeof entry.occurredAt === 'string' && entry.occurredAt.trim() ? { occurredAt: entry.occurredAt.trim() } : {}) }]
-  })
 }
 
 function validateDraft(draft: { id: string; turnId: string; text: string; stateUpdates: Record<string, string>; settingProposals: unknown[]; intentHandling: unknown[]; openQuestions: unknown[]; roleProposals?: Array<{ id: string; name: string; currentState: string; presence: string; selfModel: string }> }, turnId: string, roles: Array<{ id: string }>): void {

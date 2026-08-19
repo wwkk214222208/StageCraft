@@ -21,11 +21,11 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 
 ### 玩法方案插件
 
-通过 `CoreSolutionHost` 注册固定、版本化的 Workflow Definition、只读房间投影（WorkflowInstance、InteractionRequest）以及状态类别/状态投影。方案插件不访问 Store/RoomRuntime，也不能动态修改 Definition；安装和卸载是可撤销且按 owner 隔离的，默认 `StageCraftSolutionPlugin` 提供当前三条 StageCraft 流程和默认状态类别。
+通过 `CoreSolutionHost` 注册固定、版本化的 Workflow Definition、只读房间投影（WorkflowInstance、InteractionRequest）、状态类别/状态投影和可撤销的 Command Handler。方案插件不访问 Store/RoomRuntime，也不能动态修改 Definition；安装和卸载是可撤销且按 owner 隔离的，默认 `StageCraftSolutionPlugin` 提供当前三条 StageCraft 流程、默认状态类别和群聊命令处理器。
 
 ### 核心-LLM 路由插件
 
-负责 `ModelRequest` 与 `ModelResult`，包括 provider 路由、SSE、thinking 参数、usage、超时、取消和错误归一化。它不决定房间阶段，也不直接修改状态。
+负责 `ModelRequest` 与 `ModelResult`，包括 provider 路由、SSE、thinking 参数、usage、超时、取消和错误归一化。Core 以 requestId 等待匹配结果并隔离取消的迟到结果；它不决定房间阶段，也不直接修改状态。
 
 ## Workflow 边界
 
@@ -41,4 +41,4 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 
 ## 兼容策略
 
-本阶段只增加协议和装配骨架，不替换现有 `RoomRuntime`、`Store`、HTTP 路由和 `WorkerSet`。现有 API 继续作为兼容适配层；后续再逐步让旧 facade 委托给 Core Runtime。
+群聊的 Core commands 已由 StageCraft 方案 handler 处理，旧 `/api/chat/*` 与 `/api/world-change/*` 仅构造 Core command；群聊模型请求通过 Core LLM router，保留每角色 route metadata。`StageCraftChatService` 是独立的 Store-backed 群聊领域服务，生产 Core handler 直接依赖其窄端口；`RoomRuntime` 的群聊方法仅作为旧 API facade 反向委托该服务。导演模式和其余管理流程仍走旧 facade，尚未迁移。

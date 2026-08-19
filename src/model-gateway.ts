@@ -1,6 +1,7 @@
 import type { ConsultationMessage, Decision, Draft, Role } from './types.ts'
 import { loadPrompts, renderPrompt, type PromptTemplates } from './prompts.ts'
 import { buildThinkingParams } from './thinking-params.ts'
+import type { ModelRequest, ModelResult } from './core/protocol.ts'
 
 let prompts: PromptTemplates | undefined
 function getPrompts(): PromptTemplates {
@@ -545,9 +546,10 @@ function formatMemoryTimeline(role: Role): string {
   return lines.length > 0 ? lines.join('\n') : '（暂无记忆）'
 }
 
-export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole: (role: Role) => ModelGateway = () => directorGateway, options: { directorThinkingStrength?: import('./types.ts').ThinkingStrength } = {}) {
+export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole: (role: Role) => ModelGateway = () => directorGateway, options: { directorThinkingStrength?: import('./types.ts').ThinkingStrength; requestModel?: (request: ModelRequest) => Promise<ModelResult>; cancelModel?: () => Promise<void> } = {}) {
   const roleGateways = new Set<ModelGateway>()
   const directorThinking = options.directorThinkingStrength
+  let coreRequestSequence = 0
   const getRoleGateway = (role: Role) => { const gateway = gatewayForRole(role); roleGateways.add(gateway); return gateway }
   // 缓存键：角色 id + 人设 + 世界书（不变部分）；记忆时间线每回合变化，不参与缓存
   const prefixCache = new Map<string, string>()
@@ -645,7 +647,11 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       recovered.stateUpdates = normalizeStateUpdateKeys(recovered.stateUpdates, { roleNames: new Map(roles.map(role => [role.name, role.id])), playerName: playerCharacter?.name })
       return { id: `draft-${Date.now()}`, turnId, ...recovered, thinking: thinking || undefined, usage, createdAt: new Date().toISOString() }
     },
-    cancel(): void { directorGateway.cancelActiveRequests(); for (const role of roleGateways) role.cancelActiveRequests() },
+    cancel(): void {
+      if (options.cancelModel) void options.cancelModel().catch(() => {})
+      directorGateway.cancelActiveRequests()
+      for (const role of roleGateways) role.cancelActiveRequests()
+    },
     async consult(draft: Draft, messages: ConsultationMessage[], playerText: string): Promise<{ text: string; usage?: import('./types.ts').TokenUsage }> {
       let usage: import('./types.ts').TokenUsage | undefined
       const collectUsage = (u: { promptTokens: number; completionTokens: number }) => { usage = u }
@@ -703,21 +709,33 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         },
       }
       const schema = { type: 'object', additionalProperties: false, properties: { text: { type: 'string', description: '角色此刻的完整发言（台词或带台词的行动描述）' }, worldChange: { type: 'object', additionalProperties: false, description: '可选。仅当你认为剧情需要推进时间、改变地点或引入新人物时才填；没有变更就省略。', properties: worldChangeSchema.properties } }, required: ['text'] }
-      const result = await getRoleGateway(role).completeStreaming<{ text?: string; worldChange?: import('./types.ts').WorldChangeRequest }>(
-        renderPrompt(getPrompts().chat.system, { roleName: role.name, selfModel: role.selfModel, goalsSection: formatGoals(role), ...(loreText ? { worldLore: `相关世界设定：\n${loreText}` } : { worldLore: '' }) }),
-        renderPrompt(getPrompts().chat.user, {
-          scene: formatSceneContext(scene) || '（尚未设定场景时间地点）',
-          recentScene: recentScene || '（尚无已批准正文，这是本局第一次发言）',
-          memoryTimeline: formatMemoryTimeline(role),
-          publicRoles: publicRoleStates(publicRoles),
-          contribution: contribution || '玩家没有说话，只是注视着你。',
-        }),
-        'chat_speech',
-        schema,
-        { name: 'submit_chat_speech', description: '提交该角色此刻在群聊中的完整发言（可选附带世界变更申请）。', parameters: schema },
-        { onThinking: collectThinking, onUsage: collectUsage },
-        {}, { thinkingStrength: role.thinkingStrength },
-      )
+      const system = renderPrompt(getPrompts().chat.system, { roleName: role.name, selfModel: role.selfModel, goalsSection: formatGoals(role), ...(loreText ? { worldLore: `相关世界设定：\n${loreText}` } : { worldLore: '' }) })
+      const user = renderPrompt(getPrompts().chat.user, {
+        scene: formatSceneContext(scene) || '（尚未设定场景时间地点）',
+        recentScene: recentScene || '（尚无已批准正文，这是本局第一次发言）',
+        memoryTimeline: formatMemoryTimeline(role),
+        publicRoles: publicRoleStates(publicRoles),
+        contribution: contribution || '玩家没有说话，只是注视着你。',
+      })
+      const result = options.requestModel
+        ? await (async () => {
+          const modelResult = await options.requestModel!({ requestId: `chat-speech:${role.id}:${Date.now()}:${++coreRequestSequence}`, capability: 'role.speech', prompt: { system, user, metadata: { capability: 'role.speech', strategyId: 'stagecraft.chat.speech' } }, contract: { id: 'chat.speech', version: '1.0.0', schema }, route: { role: role.id, ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { model: role.modelOverride } : {}), purpose: 'chat.speech' }, metadata: { includeTelemetry: true, correlation: { roomId: scene?.roomId, turnId: scene?.turnId, actor: 'role', roleId: role.id } }, stream: true })
+          // Core 路径的增量思考由 Core model.thinking.delta 事件实时桥接；
+          // 这里只保留完整值用于持久化，避免在生成完成时重复推送整段。
+          if (modelResult.thinking) thinking = modelResult.thinking
+          if (modelResult.usage) collectUsage(modelResult.usage)
+          if (modelResult.error) throw new Error(modelResult.error)
+          return modelResult.output as { text?: string; worldChange?: import('./types.ts').WorldChangeRequest }
+        })()
+        : await getRoleGateway(role).completeStreaming<{ text?: string; worldChange?: import('./types.ts').WorldChangeRequest }>(
+          system,
+          user,
+          'chat_speech',
+          schema,
+          { name: 'submit_chat_speech', description: '提交该角色此刻的完整发言（可选附带世界变更申请）。', parameters: schema },
+          { onThinking: collectThinking, onUsage: collectUsage },
+          {}, { thinkingStrength: role.thinkingStrength },
+        )
       const text = result?.text?.trim()
       if (!text) throw new Error(`Role speech is missing text. Received fields: ${receivedFields(result)}`)
       const worldChange = normalizeWorldChange(result?.worldChange)
@@ -748,21 +766,31 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         },
         required: ['reply'],
       }
-      const result = await directorGateway.completeStreaming<{ reply?: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string }>(
-        renderPrompt(getPrompts().chat.directorChatSystem, {
+      const system = renderPrompt(getPrompts().chat.directorChatSystem, {
           scene: formatSceneContext({ time: context.sceneTime, location: context.sceneLocation }) || '（尚未设定场景时间地点）',
           recentScene: context.recentScene || '（尚无已批准正文）',
           roles: context.roles.map(role => `${role.name}（${role.id}，${role.presence === 'present' ? '在场' : role.presence === 'absent' ? '离场' : '不可用'}）：${role.currentState}`).join('\n'),
           lore: formatLoreAll(context.lore ?? []),
           history: (context.history ?? []).map(message => `${message.role === 'player' ? '玩家' : '导演'}：${message.text}`).join('\n'),
-        }),
-        renderPrompt(getPrompts().chat.directorChatUser, { playerText: playerText.trim() || '（玩家没有说话）' }),
-        'chat_director_chat',
-        schema,
-        { name: 'submit_director_chat', description: '提交导演对玩家建议的回复（可选附带世界变更申请与叙述）。', parameters: schema },
-        { onThinking: collectThinking, onUsage: collectUsage },
-        {}, { thinkingStrength: directorThinking },
-      )
+        })
+      const user = renderPrompt(getPrompts().chat.directorChatUser, { playerText: playerText.trim() || '（玩家没有说话）' })
+      const result = options.requestModel
+        ? await (async () => {
+          const modelResult = await options.requestModel!({ requestId: `chat-director:${Date.now()}:${++coreRequestSequence}`, capability: 'director.chat', prompt: { system, user, metadata: { capability: 'director.chat', strategyId: 'stagecraft.chat.director' } }, contract: { id: 'chat.director', version: '1.0.0', schema }, route: { purpose: 'chat.director' }, metadata: { includeTelemetry: true, correlation: { roomId: context.roomId, turnId: context.turnId, actor: 'director' } }, stream: true })
+          if (modelResult.thinking) thinking = modelResult.thinking
+          if (modelResult.usage) collectUsage(modelResult.usage)
+          if (modelResult.error) throw new Error(modelResult.error)
+          return modelResult.output as { reply?: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string }
+        })()
+        : await directorGateway.completeStreaming<{ reply?: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string }>(
+          system,
+          user,
+          'chat_director_chat',
+          schema,
+          { name: 'submit_director_chat', description: '提交导演对玩家建议的回复（可选附带世界变更申请与叙述）。', parameters: schema },
+          { onThinking: collectThinking, onUsage: collectUsage },
+          {}, { thinkingStrength: directorThinking },
+        )
       const reply = result?.reply?.trim()
       if (!reply) throw new Error(`Director reply is missing text. Received fields: ${receivedFields(result)}`)
       const worldChange = normalizeWorldChange(result?.worldChange)

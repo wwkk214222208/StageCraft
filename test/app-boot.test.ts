@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,6 +10,8 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'rp-test-'))
+  // 禁止测试继承 providers.example.json 或环境中的真实 API 配置。
+  writeFileSync(join(dataDir, 'providers.json'), JSON.stringify({ providers: [] }), 'utf8')
   const app = startTavern({ root, dataDir, port: 0, host: '127.0.0.1' })
   try {
     // 端口 0 = 系统分配，listen 完成前 address() 为 null，轮询等待
@@ -50,6 +52,18 @@ test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', asy
     const commandResult = await commandRes.json() as { ok: boolean; view: { state: { room?: { mode?: string } } } }
     assert.equal(commandResult.ok, true)
     assert.equal(commandResult.view.state.room?.mode, 'chat')
+
+    // 兼容 HTTP chat 路由仍构造带 chat scope 的 Core command，实际由新群聊服务执行。
+    const chatRoom = await (await fetch(`${base}/api/room`)).json() as { roles: Array<{ id: string }> }
+    const speakRes = await fetch(`${base}/api/chat/speak`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ roleId: chatRoom.roles[0].id }) })
+    assert.equal(speakRes.status, 200)
+    const spokenRoom = await (await fetch(`${base}/api/room`)).json() as { phase: string; speech?: { text?: string } }
+    assert.equal(spokenRoom.phase, 'awaiting-approval')
+    assert.ok(spokenRoom.speech?.text)
+    const retryRes = await fetch(`${base}/api/chat/retry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    assert.equal(retryRes.status, 400)
+    const retryError = await retryRes.json() as { error?: string }
+    assert.equal(retryError.error, '没有可重试的发言。')
 
     // REST：剧本列表与使用量
     const storiesRes = await fetch(`${base}/api/stories`)

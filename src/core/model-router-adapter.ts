@@ -8,9 +8,12 @@ export class ModelGatewayRouterAdapter implements CoreLlmRouterPlugin {
   private host?: CoreLlmRouterHost
   private readonly requests = new Set<string>()
   private readonly gateway: ModelGateway
+  private readonly routeGateway?: (request: ModelRequest) => ModelGateway
+  private readonly activeGateways = new Map<string, ModelGateway>()
 
-  constructor(gateway: ModelGateway) {
+  constructor(gateway: ModelGateway, routeGateway?: (request: ModelRequest) => ModelGateway) {
     this.gateway = gateway
+    this.routeGateway = routeGateway
   }
 
   install(host: CoreLlmRouterHost): Disposable {
@@ -19,37 +22,51 @@ export class ModelGatewayRouterAdapter implements CoreLlmRouterPlugin {
       dispose: () => {
         this.host = undefined
         this.gateway.cancelActiveRequests()
+        for (const gateway of this.activeGateways.values()) gateway.cancelActiveRequests()
+        this.activeGateways.clear()
       },
     }
   }
 
   async request(request: ModelRequest): Promise<void> {
     if (!this.host) throw new Error('ModelGateway router is not installed.')
+    const gateway = this.routeGateway?.(request) ?? this.gateway
     this.requests.add(request.requestId)
+    this.activeGateways.set(request.requestId, gateway)
     this.publish({ type: 'model.started', revision: 0, request })
     try {
+      let thinking = ''
+      let usage: import('../types.ts').TokenUsage | undefined
       const callbacks = {
-        onThinking: (text: string) => this.publish({ type: 'model.thinking.delta', revision: 0, requestId: request.requestId, text }),
+        onThinking: (text: string) => { thinking += text; this.publish({ type: 'model.thinking.delta', revision: 0, requestId: request.requestId, text }) },
+        onUsage: (value: import('../types.ts').TokenUsage) => { usage = value },
       }
       const result = request.stream === false
-        ? await this.gateway.complete(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, undefined, callbacks)
-        : await this.gateway.completeStreaming(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, undefined, callbacks)
-      const modelResult: ModelResult = { requestId: request.requestId, output: result }
+        ? await gateway.complete(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, undefined, callbacks)
+        : await gateway.completeStreaming(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, undefined, callbacks)
+      const includeTelemetry = request.metadata?.includeTelemetry === true
+      const modelResult: ModelResult = { requestId: request.requestId, output: result, ...(includeTelemetry && thinking ? { thinking } : {}), ...(includeTelemetry && usage ? { usage } : {}) }
       await this.host.submitModelResult(modelResult)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const result: ModelResult = { requestId: request.requestId, output: null, error: message }
       await this.host.submitModelResult(result)
-      this.publish({ type: 'error', revision: 0, requestId: request.requestId, message })
       throw error
     } finally {
       this.requests.delete(request.requestId)
+      this.activeGateways.delete(request.requestId)
     }
   }
 
   async cancel(requestId: string): Promise<void> {
     // 当前 ModelGateway 暴露的是 active request 集合级取消；requestId 仍保留在协议中。
-    if (this.requests.has(requestId)) this.gateway.cancelActiveRequests()
+    if (!requestId) {
+      this.gateway.cancelActiveRequests()
+      for (const gateway of this.activeGateways.values()) gateway.cancelActiveRequests()
+      return
+    }
+    const gateway = this.activeGateways.get(requestId)
+    if (this.requests.has(requestId)) (gateway ?? this.gateway).cancelActiveRequests()
   }
 
   private publish(event: CoreEvent): void {

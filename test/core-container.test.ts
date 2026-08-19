@@ -20,8 +20,9 @@ function humanPlugin(id: string, log: string[]): HumanCoreInteractionPlugin {
   return { id, install: () => ({ dispose: () => { log.push(`${id}:dispose`) } }), dispatch: async () => {}, publish: () => {} }
 }
 
-function llmPlugin(id: string, log: string[], onHost?: (host: Parameters<CoreLlmRouterPlugin['install']>[0]) => void, onRequest?: () => void): CoreLlmRouterPlugin {
-  return { id, install: host => { onHost?.(host); return { dispose: () => { log.push(`${id}:dispose`) } } }, request: async () => { onRequest?.() }, cancel: async () => {} }
+function llmPlugin(id: string, log: string[], onHost?: (host: Parameters<CoreLlmRouterPlugin['install']>[0]) => void, onRequest?: (host: Parameters<CoreLlmRouterPlugin['install']>[0]) => void | Promise<void>): CoreLlmRouterPlugin {
+  let installedHost: Parameters<CoreLlmRouterPlugin['install']>[0]
+  return { id, install: host => { installedHost = host; onHost?.(host); return { dispose: () => { log.push(`${id}:dispose`) } } }, request: async () => { await onRequest?.(installedHost) }, cancel: async () => {} }
 }
 
 test('Core plugin container rejects duplicate IDs and disposes in reverse installation order', async () => {
@@ -52,7 +53,7 @@ test('LLM model events are published through the core event stream and a dispose
   let publish: ((event: CoreEvent) => void) | undefined
   let submit: ((result: import('../src/core/protocol.ts').ModelResult) => Promise<void>) | undefined
   let firstRequests = 0
-  const first = container.addLlm(llmPlugin('test.route', log, host => { publish = host.publishModelEvent; submit = host.submitModelResult }, () => { firstRequests += 1 }))
+  const first = container.addLlm(llmPlugin('test.route', log, host => { publish = host.publishModelEvent; submit = host.submitModelResult }, host => { firstRequests += 1; return host.submitModelResult({ requestId: 'r1', output: { ok: true } }) }))
   publish?.({ type: 'model.thinking.delta', revision: 0, requestId: 'r1', text: '流' })
   assert.equal(events.at(-1)?.type, 'model.thinking.delta')
   await core.requestModel({ requestId: 'r1', capability: 'test', prompt: { system: '', user: '' }, contract: { id: 'test', version: '1', schema: {} }, stream: false })
@@ -64,7 +65,7 @@ test('LLM model events are published through the core event stream and a dispose
   await assert.rejects(submit?.({ requestId: 'late', output: { ok: true } }), /host is disposed/)
   assert.equal(events.some(event => event.type === 'model.completed' && event.result.requestId === 'late'), false)
   let secondRequests = 0
-  const second = container.addLlm(llmPlugin('test.route', log, undefined, () => { secondRequests += 1 }))
+  const second = container.addLlm(llmPlugin('test.route', log, undefined, host => { secondRequests += 1; return host.submitModelResult({ requestId: 'r2', output: { ok: true } }) }))
   // 旧 handle 的重复释放不能解绑后来安装的同 ID 路由。
   await first.dispose()
   await core.requestModel({ requestId: 'r2', capability: 'test', prompt: { system: '', user: '' }, contract: { id: 'test', version: '1', schema: {} }, stream: false })

@@ -6,7 +6,7 @@ import type { CoreEventLog } from './event-log.ts'
 import type { DomainEvent } from './domain-events.ts'
 import { validateWorkflowDefinition, WorkflowExecutor, WorkflowRegistry } from './workflow-engine.ts'
 import type { WorkflowInstanceStore } from './workflow-store.ts'
-import type { CoreLlmRouterPlugin, CoreRuntimeBindingPort, CoreSolutionBinding, CoreSolutionProjection, CoreSolutionProjectionProvider, CoreStateProjectionProvider, Disposable } from './plugins.ts'
+import type { CoreCommandHandler, CoreLlmRouterPlugin, CoreRuntimeBindingPort, CoreSolutionBinding, CoreSolutionProjection, CoreSolutionProjectionProvider, CoreStateProjectionProvider, Disposable } from './plugins.ts'
 import type { CoreStateRepository } from './state-repository.ts'
 import {
   CORE_PROTOCOL_VERSION,
@@ -41,17 +41,21 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   private readonly projectionProviders = new Map<string, CoreSolutionProjectionProvider>()
   private readonly stateProjectionProviders = new Map<string, CoreStateProjectionProvider>()
   private readonly stateProjectionOwners = new Map<string, string>()
+  private readonly commandHandlers = new Map<string, CoreCommandHandler>()
   private readonly interactionOwners = new Map<string, string>()
   private readonly categories = new Map<string, StateCategoryDefinition>()
   private readonly categoryOwners = new Map<string, string>()
   private legacyRuntime?: { runtime: RoomRuntime; defaultRoomId: string }
   private llmRouter?: CoreLlmRouterPlugin
   private llmRouterDisposable?: Disposable
+  private llmBindingSequence = 0
   private eventLog?: CoreEventLog
   private workflowStore?: WorkflowInstanceStore
   private stateRepository?: CoreStateRepository
   private lastRoom?: RoomSnapshot
   private solutionBindingCounter = 0
+  private readonly modelWaiters = new Map<string, { resolve: (result: ModelResult) => void; reject: (error: unknown) => void; bindingId: number }>()
+  private readonly cancelledModelRequests = new Map<string, number>()
 
   constructor() {
     this.workflowExecutor = new WorkflowExecutor(this.workflowRegistry)
@@ -210,6 +214,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     const projections = new Map<string, CoreSolutionProjectionProvider>()
     const categories = new Map<string, StateCategoryDefinition>()
     const stateProjections = new Map<string, CoreStateProjectionProvider>()
+    const commandHandlers = new Map<string, CoreCommandHandler>()
     const bindingOwner = `solution-binding:${++this.solutionBindingCounter}`
     let settled = false
     const host = {
@@ -245,6 +250,14 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         let active = true
         return { dispose: () => { if (active) { active = false; if (!settled) stateProjections.delete(provider.id) } } }
       },
+      registerCommandHandler: (handler: CoreCommandHandler): Disposable => {
+        if (settled) throw new Error('Solution binding is already settled.')
+        if (!handler.id.trim()) throw new Error('Core command handler id is required.')
+        if (commandHandlers.has(handler.id) || this.commandHandlers.has(handler.id)) throw new Error(`Core command handler already registered: ${handler.id}`)
+        commandHandlers.set(handler.id, handler)
+        let active = true
+        return { dispose: () => { if (active) { active = false; if (!settled) commandHandlers.delete(handler.id) } } }
+      },
     }
     return {
       host,
@@ -262,6 +275,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         for (const provider of stateProjections.values()) {
           if (this.stateProjectionProviders.has(provider.id)) throw new Error(`State projection already registered: ${provider.id}`)
         }
+        for (const handler of commandHandlers.values()) {
+          if (this.commandHandlers.has(handler.id)) throw new Error(`Core command handler already registered: ${handler.id}`)
+        }
         for (const definition of workflows.values()) {
           this.definitions.set(definition.id, definition)
           this.workflowRegistry.register(definition)
@@ -275,6 +291,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
           this.stateProjectionProviders.set(id, provider)
           this.stateProjectionOwners.set(id, bindingOwner)
         }
+        for (const [id, handler] of commandHandlers) this.commandHandlers.set(id, handler)
         settled = true
         return {
           dispose: () => {
@@ -297,6 +314,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
               this.categoryOwners.delete(id)
               delete this.state[id]
             }
+            for (const id of commandHandlers.keys()) this.commandHandlers.delete(id)
             this.replanActions()
           },
         }
@@ -308,6 +326,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         projections.clear()
         categories.clear()
         stateProjections.clear()
+        commandHandlers.clear()
       },
     }
   }
@@ -405,6 +424,17 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
       command = { ...command, type: 'submit-text', payload: { text: String(payload.text ?? ''), action: 'director-chat' } }
     }
     if (interaction && !this.commandMatchesInteraction(command, interaction)) throw new Error(`Command ${command.type} is not allowed for interaction: ${interaction.id}`)
+    const handler = [...this.commandHandlers.values()].find(candidate => candidate.canHandle(command))
+    if (handler) {
+      try {
+        await handler.handle(command, { core: this })
+        if (interaction) this.resolveInteraction(interaction, command)
+        return
+      } catch (error) {
+        this.emit({ type: 'error', revision: this.revision, message: error instanceof Error ? error.message : String(error) })
+        throw error
+      }
+    }
     if (!this.legacyRuntime) {
       this.emit({ type: 'error', revision: this.revision, message: `Core command has no runtime adapter: ${command.type}` })
       return
@@ -456,6 +486,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     }
     this.llmRouter = undefined
     this.llmRouterDisposable = undefined
+    const bindingId = ++this.llmBindingSequence
     let active = true
     const installed = router.install({
       submitModelResult: async result => {
@@ -470,6 +501,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
       dispose: async () => {
         if (!active) return
         active = false
+        this.rejectModelRequestsForBinding(bindingId, new Error('LLM router was disposed.'), true)
         // 身份检查很重要：旧绑定的释放不能清掉后来替换的新路由。
         if (this.llmRouter === router && this.llmRouterDisposable === binding) {
           this.llmRouter = undefined
@@ -488,8 +520,12 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     void this.bindLlmRouter(router)
   }
 
-  async requestModel(request: import('./protocol.ts').ModelRequest): Promise<void> {
+  async requestModel(request: import('./protocol.ts').ModelRequest): Promise<ModelResult> {
     if (!this.llmRouter) throw new Error('Core has no LLM router.')
+    if (this.modelWaiters.has(request.requestId)) throw new Error(`Model request ID is already active: ${request.requestId}`)
+    this.pruneCancelledModelRequests()
+    if (this.cancelledModelRequests.has(request.requestId)) throw new Error(`Model request ID was cancelled and cannot be reused yet: ${request.requestId}`)
+    const bindingId = this.llmBindingSequence
     if (request.workflowId) {
       const workflow = this.workflows.get(request.workflowId)
       if (workflow) {
@@ -500,7 +536,35 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         this.emit({ type: 'workflow.changed', revision: this.revision, workflow: next })
       }
     }
-    await this.llmRouter.request(request)
+    return new Promise<ModelResult>((resolve, reject) => {
+      let settled = false
+      const resolveResult = (result: ModelResult): void => {
+        if (settled) return
+        settled = true
+        this.modelWaiters.delete(request.requestId)
+        resolve(result)
+      }
+      const rejectRequest = (error: unknown): void => {
+        if (settled) return
+        settled = true
+        this.modelWaiters.delete(request.requestId)
+        this.clearPendingModelRequest(request.requestId)
+        this.emit({ type: 'error', revision: this.revision, requestId: request.requestId, message: error instanceof Error ? error.message : String(error) })
+        reject(error)
+      }
+      this.modelWaiters.set(request.requestId, { resolve: resolveResult, reject: rejectRequest, bindingId })
+      const router = this.llmRouter
+      if (!router) { rejectRequest(new Error('Core has no LLM router.')); return }
+      try {
+        void Promise.resolve(router.request(request)).catch(error => {
+          const waiter = this.modelWaiters.get(request.requestId)
+          if (waiter) waiter.reject(error)
+          else if (!settled) rejectRequest(error)
+        })
+      } catch (error) {
+        rejectRequest(error)
+      }
+    })
   }
 
   emitDomainEvent(event: DomainEvent): void {
@@ -524,6 +588,14 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   }
 
   async submitModelResult(result: ModelResult): Promise<void> {
+    this.pruneCancelledModelRequests()
+    const cancelledUntil = this.cancelledModelRequests.get(result.requestId)
+    if (cancelledUntil && cancelledUntil > Date.now()) { this.cancelledModelRequests.delete(result.requestId); return }
+    const waiter = this.modelWaiters.get(result.requestId)
+    if (waiter) {
+      this.modelWaiters.delete(result.requestId)
+      waiter.resolve(result)
+    }
     for (const [id, workflow] of this.workflows) {
       if (!workflow.pendingModelRequestIds.includes(result.requestId)) continue
       const next = { ...workflow, pendingModelRequestIds: workflow.pendingModelRequestIds.filter(requestId => requestId !== result.requestId), updatedAt: new Date().toISOString() }
@@ -533,6 +605,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
       this.emit({ type: 'workflow.changed', revision: this.revision, workflow: next })
     }
     this.emit({ type: 'model.completed', revision: this.revision, result })
+    if (result.error) this.emit({ type: 'error', revision: this.revision, requestId: result.requestId, message: result.error })
   }
 
   private availableCommands(): Array<{ type: HumanCommand['type']; label: string; enabled: boolean }> {
@@ -572,10 +645,56 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   }
 
   async cancel(requestId?: string): Promise<void> {
-    if (requestId && this.llmRouter) await this.llmRouter.cancel(requestId)
+    if (requestId) {
+      const waiter = this.modelWaiters.get(requestId)
+      if (waiter) {
+        this.modelWaiters.delete(requestId)
+        this.rememberCancelledModelRequest(requestId)
+        waiter.reject(new Error(`Model request cancelled: ${requestId}`))
+      }
+      if (this.llmRouter) await this.llmRouter.cancel(requestId)
+      return
+    }
+    for (const [id, waiter] of this.modelWaiters) {
+      this.modelWaiters.delete(id)
+      this.rememberCancelledModelRequest(id)
+      waiter.reject(new Error(`Model request cancelled: ${id}`))
+    }
+    if (this.llmRouter) await this.llmRouter.cancel('')
   }
 
   private emit(event: CoreEvent): void {
     for (const listener of this.listeners) listener(event)
+  }
+
+  private rejectModelRequestsForBinding(bindingId: number, error: Error, tombstone: boolean): void {
+    for (const [requestId, waiter] of [...this.modelWaiters]) {
+      if (waiter.bindingId !== bindingId) continue
+      this.modelWaiters.delete(requestId)
+      if (tombstone) this.rememberCancelledModelRequest(requestId)
+      waiter.reject(error)
+    }
+  }
+
+  private clearPendingModelRequest(requestId: string): void {
+    for (const [id, workflow] of this.workflows) {
+      if (!workflow.pendingModelRequestIds.includes(requestId)) continue
+      const next = { ...workflow, pendingModelRequestIds: workflow.pendingModelRequestIds.filter(item => item !== requestId), updatedAt: new Date().toISOString() }
+      this.workflows.set(id, next)
+      const roomId = String(next.locals.roomId ?? '')
+      if (roomId) this.workflowStore?.save(roomId, next)
+      this.emit({ type: 'workflow.changed', revision: this.revision, workflow: next })
+    }
+  }
+
+  private rememberCancelledModelRequest(requestId: string): void {
+    this.pruneCancelledModelRequests()
+    this.cancelledModelRequests.set(requestId, Date.now() + 5 * 60_000)
+    while (this.cancelledModelRequests.size > 512) this.cancelledModelRequests.delete(this.cancelledModelRequests.keys().next().value as string)
+  }
+
+  private pruneCancelledModelRequests(): void {
+    const now = Date.now()
+    for (const [requestId, expiresAt] of this.cancelledModelRequests) if (expiresAt <= now) this.cancelledModelRequests.delete(requestId)
   }
 }

@@ -1,6 +1,6 @@
-import type { Role, RoomMode, RoomPhase } from '../types.ts'
+import type { Role, RoomMode, RoomPhase, WorldChangeRequest } from '../types.ts'
 import type { InteractionRequest, WorkflowDefinition, WorkflowInstance } from './protocol.ts'
-import type { CoreSolutionPlugin, CoreSolutionProjectionProvider, CoreSolutionHost, CoreStateProjectionProvider, Disposable } from './plugins.ts'
+import type { CoreCommandHandler, CoreSolutionPlugin, CoreSolutionProjectionProvider, CoreSolutionHost, CoreStateProjectionProvider, Disposable } from './plugins.ts'
 import { defaultStateCategories, projectRoomSnapshot } from './state.ts'
 
 type WorkflowRoom = { id: string; mode: RoomMode; phase: RoomPhase; revision: number; roles?: Role[]; draft?: unknown; speech?: unknown; pendingWorldChange?: unknown }
@@ -62,6 +62,18 @@ export const directorTurnWorkflow: WorkflowDefinition = {
   ],
 }
 
+/** 群聊领域端口。实现位于 Core 外侧，方案只依赖这些稳定业务动作。 */
+export interface StageCraftChatPort {
+  speak(roomId: string, roleId: string, feedback?: string): Promise<void>
+  approveSpeech(roomId: string, text: string, worldChange?: WorldChangeRequest | null): Promise<void>
+  rejectSpeech(roomId: string): Promise<void>
+  retrySpeak?(roomId: string): Promise<void>
+  directorChat(roomId: string, text: string): Promise<void>
+  approveWorldChange(roomId: string, worldChange?: WorldChangeRequest | null): Promise<void>
+  rejectWorldChange(roomId: string): Promise<void>
+  cancel(roomId: string): void
+}
+
 const chatSpeechPhaseToStep: Partial<Record<RoomPhase, string>> = {
   'awaiting-player-input': 'awaiting-player-input', 'role-speaking': 'role-speaking', 'awaiting-approval': 'awaiting-approval', 'world-change-approval': 'world-change-approval',
 }
@@ -117,6 +129,13 @@ export function interactionFromRoom(room: WorkflowRoom): InteractionRequest | un
 /** 默认 StageCraft 玩法方案：把既有三条固定 Workflow 和房间兼容投影装配进 Core。 */
 export class StageCraftSolutionPlugin implements CoreSolutionPlugin {
   readonly id = 'stagecraft.solution'
+  private readonly chat?: StageCraftChatPort
+  private readonly defaultRoomId?: string
+
+  constructor(options: { chat?: StageCraftChatPort; defaultRoomId?: string } = {}) {
+    this.chat = options.chat
+    this.defaultRoomId = options.defaultRoomId
+  }
 
   install(host: CoreSolutionHost): Disposable {
     const registrations = [
@@ -126,12 +145,67 @@ export class StageCraftSolutionPlugin implements CoreSolutionPlugin {
       host.registerWorkflow(chatDirectorWorkflow),
       host.registerWorkflow(directorTurnWorkflow),
       host.registerProjection(stagecraftProjection),
+      ...(this.chat ? [host.registerCommandHandler(stagecraftChatCommandHandler(this.chat, this.defaultRoomId))] : []),
     ]
     return {
       dispose: async () => {
         for (const registration of registrations.reverse()) await registration.dispose()
       },
     }
+  }
+}
+
+function stagecraftChatCommandHandler(chat: StageCraftChatPort, defaultRoomId?: string): CoreCommandHandler {
+  const payloadOf = (command: import('./protocol.ts').HumanCommand): Record<string, unknown> => command.payload && typeof command.payload === 'object' ? command.payload as Record<string, unknown> : {}
+  const roomIdOf = (command: import('./protocol.ts').HumanCommand, payload: Record<string, unknown>): string => typeof payload.roomId === 'string' && payload.roomId.trim() ? payload.roomId : String(command.sessionId ?? defaultRoomId ?? '')
+  const worldChangeOf = (payload: Record<string, unknown>): WorldChangeRequest | null | undefined => payload.worldChange && typeof payload.worldChange === 'object' ? payload.worldChange as WorldChangeRequest : payload.worldChange === null ? null : undefined
+  return {
+    id: 'stagecraft.chat.command-handler',
+    canHandle(command) {
+      const payload = payloadOf(command)
+      const action = String(payload.action ?? '')
+      const interaction = command.interactionId ?? ''
+      const chatInteraction = interaction.endsWith(':role-select') || interaction.endsWith(':speech-approval') || interaction.endsWith(':world-change-approval') || interaction.endsWith(':director-suggestion')
+      const chatPayload = payload.scope === 'chat' || payload.mode === 'chat' || ['chat-speech', 'speech', 'world-change', 'director-chat'].includes(action)
+      if (command.type === 'select-role' || command.type === 'choose') return chatInteraction || chatPayload
+      if (command.type === 'cancel' || command.type === 'retry') return chatInteraction || chatPayload
+      if (command.type === 'submit-text') return interaction.endsWith(':director-suggestion') || action === 'director-chat'
+      if (command.type === 'approve' || command.type === 'reject') {
+        return ['speech', 'world-change'].includes(action) || interaction.endsWith(':speech-approval') || interaction.endsWith(':world-change-approval')
+      }
+      return false
+    },
+    async handle(command) {
+      const payload = payloadOf(command)
+      const roomId = roomIdOf(command, payload)
+      if (!roomId) throw new Error('Chat command requires roomId.')
+      if (command.type === 'select-role' || command.type === 'choose') {
+        await chat.speak(roomId, String(payload.roleId ?? ''), String(payload.feedback ?? ''))
+        return
+      }
+      if (command.type === 'submit-text') {
+        await chat.directorChat(roomId, String(payload.text ?? ''))
+        return
+      }
+      if (command.type === 'cancel') {
+        chat.cancel(roomId)
+        return
+      }
+      if (command.type === 'retry') {
+        if (!chat.retrySpeak) throw new Error('Chat retry is not supported.')
+        await chat.retrySpeak(roomId)
+        return
+      }
+      const worldChange = worldChangeOf(payload)
+      const action = String(payload.action ?? (command.interactionId?.endsWith(':world-change-approval') ? 'world-change' : 'speech'))
+      if (command.type === 'approve') {
+        if (action === 'world-change') await chat.approveWorldChange(roomId, worldChange)
+        else await chat.approveSpeech(roomId, String(payload.text ?? ''), worldChange)
+        return
+      }
+      if (action === 'world-change') await chat.rejectWorldChange(roomId)
+      else await chat.rejectSpeech(roomId)
+    },
   }
 }
 

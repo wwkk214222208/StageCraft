@@ -53,6 +53,18 @@ export interface CoreSolutionHost {
   registerProjection(provider: CoreSolutionProjectionProvider): Disposable
   registerStateCategory(category: StateCategoryDefinition): Disposable
   registerStateProjection(provider: CoreStateProjectionProvider): Disposable
+  registerCommandHandler(handler: CoreCommandHandler): Disposable
+}
+
+/** 玩法对 Core 命令的扩展点；实现不得绕过 Core 事件/状态边界。 */
+export interface CoreCommandHandler {
+  readonly id: string
+  canHandle(command: HumanCommand): boolean
+  handle(command: HumanCommand, context: CoreHandlerContext): Promise<void>
+}
+
+export interface CoreHandlerContext {
+  readonly core: CoreRuntimePort
 }
 
 export interface CoreSolutionProjection {

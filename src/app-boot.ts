@@ -26,6 +26,15 @@ import { HttpHumanCorePlugin } from './core/http-human-plugin.ts'
 import { StageCraftSolutionPlugin } from './core/solutions.ts'
 import { StoreCoreStateRepository } from './core/store-state-repository.ts'
 
+/** 生产 LLM 路由的无秘密选择规则：请求显式 route 优先于角色覆盖。 */
+export function resolveRouteProviderId(request: { route?: { providerId?: string } }, roleProviderId?: string, defaultProviderId?: string): string | undefined {
+  return request.route?.providerId ?? roleProviderId ?? defaultProviderId
+}
+
+export function resolveRouteModel(request: { route?: { model?: string } }, roleModelOverride?: string, fallbackModel?: string): string | undefined {
+  return request.route?.model ?? roleModelOverride ?? fallbackModel
+}
+
 export interface TavernOptions {
   /** 仓库根目录（默认：本文件所在目录的上一级） */
   root?: string
@@ -113,7 +122,17 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
     if (!config?.apiKey) { gateway = undefined; return }
     const defaults = providerStore.defaults()
     gateway = gatewayFromProvider(config, defaults.directorModel ?? config.selectedModel ?? config.models[0] ?? envRoute.model)
-    llmInstallation = container.addLlm(new ModelGatewayRouterAdapter(gateway))
+    llmInstallation = container.addLlm(new ModelGatewayRouterAdapter(gateway, request => {
+      const roleId = request.route?.role
+      if (!roleId) return gateway!
+      const role = runtime.get(roomId).roles.find(item => item.id === roleId)
+      const selectedProviderId = resolveRouteProviderId(request, role?.providerId, providerStore.getDefaultRole()?.id)
+      const selectedProvider = selectedProviderId ? providerStore.get(selectedProviderId) : providerStore.getDefaultRole()
+      if (!selectedProvider?.apiKey) return gateway!
+      const defaultsForRole = providerStore.defaults()
+      const fallbackModel = selectedProvider.id === providerStore.getDefaultRole()?.id ? defaultsForRole.defaultRoleModel : undefined
+      return gatewayFromProvider(selectedProvider, resolveRouteModel(request, role?.modelOverride, fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)!)
+    }))
     runtime.setWorkers(createRealWorkers(gateway, role => {
       const defaults = providerStore.defaults()
       const fallbackProvider = providerStore.getDefaultRole()
@@ -121,7 +140,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       if (!selectedProvider?.apiKey) return gateway!
       const fallbackModel = selectedProvider.id === fallbackProvider?.id ? defaults.defaultRoleModel : undefined
       return gatewayFromProvider(selectedProvider, role.modelOverride ?? fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)
-    }, { directorThinkingStrength: providerStore.directorThinking() }))
+    }, { directorThinkingStrength: providerStore.directorThinking(), requestModel: request => core.requestModel(request), cancelModel: () => core.cancel() }))
   }
   function activateProvider(config = providerStore.getDirector()): Promise<void> {
     const activation = providerActivation.then(async () => {
@@ -138,8 +157,8 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   container.addCore(new CoreRuntimePluginAdapter(core))
   const humanCore = new HttpHumanCorePlugin()
   container.addHuman(humanCore)
-  container.addSolution(new StageCraftSolutionPlugin())
   const runtime = new RoomRuntime(store, undefined, core)
+  container.addSolution(new StageCraftSolutionPlugin({ chat: runtime.getChatService(), defaultRoomId: roomId }))
   core.attachLegacyRuntime(runtime, roomId)
   core.attachStateRepository(new StoreCoreStateRepository(store))
   const restoredCoreState = core.restoreState(roomId)
@@ -276,36 +295,36 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       }
       if (url.pathname === '/api/chat/speak' && request.method === 'POST') {
         const body = await readJson(request)
-        await runtime.speak(roomId, String(body.roleId ?? ''), String(body.feedback ?? ''))
+        await core.dispatch({ id: `legacy-chat-speak-${Date.now()}`, actor: 'player', type: 'select-role', payload: { roomId, scope: 'chat', action: 'chat-speech', roleId: String(body.roleId ?? ''), feedback: String(body.feedback ?? '') } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/chat/approve-speech' && request.method === 'POST') {
         const body = await readJson(request)
         const wc = body?.worldChange
-        await runtime.approveSpeech(roomId, String(body?.text ?? ''), (wc && typeof wc === 'object') ? wc as import('./types.ts').WorldChangeRequest : null)
+        await core.dispatch({ id: `legacy-chat-approve-${Date.now()}`, actor: 'player', type: 'approve', payload: { roomId, scope: 'chat', action: 'speech', text: String(body?.text ?? ''), worldChange: (wc && typeof wc === 'object') ? wc as import('./types.ts').WorldChangeRequest : null } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/chat/reject-speech' && request.method === 'POST') {
-        await runtime.rejectSpeech(roomId)
+        await core.dispatch({ id: `legacy-chat-reject-${Date.now()}`, actor: 'player', type: 'reject', payload: { roomId, scope: 'chat', action: 'speech' } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/chat/retry' && request.method === 'POST') {
-        await runtime.retrySpeak(roomId)
+        await core.dispatch({ id: `legacy-chat-retry-${Date.now()}`, actor: 'player', type: 'retry', payload: { roomId, scope: 'chat', action: 'chat-speech' } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/chat/director-chat' && request.method === 'POST') {
         const body = await readJson(request)
-        await runtime.directorChat(roomId, String(body?.text ?? ''))
+        await core.dispatch({ id: `legacy-director-chat-${Date.now()}`, actor: 'player', type: 'submit-text', payload: { roomId, scope: 'chat', action: 'director-chat', text: String(body?.text ?? '') } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/world-change/approve' && request.method === 'POST') {
         const body = await readJson(request)
         const wc = body?.worldChange
-        await runtime.approveWorldChange(roomId, (wc && typeof wc === 'object') ? wc as import('./types.ts').WorldChangeRequest : null)
+        await core.dispatch({ id: `legacy-world-change-approve-${Date.now()}`, actor: 'player', type: 'approve', payload: { roomId, scope: 'chat', action: 'world-change', worldChange: (wc && typeof wc === 'object') ? wc as import('./types.ts').WorldChangeRequest : null } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/world-change/reject' && request.method === 'POST') {
-        await runtime.rejectWorldChange(roomId)
+        await core.dispatch({ id: `legacy-world-change-reject-${Date.now()}`, actor: 'player', type: 'reject', payload: { roomId, scope: 'chat', action: 'world-change' } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/st-cards/import' && request.method === 'POST') {
@@ -669,6 +688,11 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       try {
         // 插件释放必须先于 Store，避免 adapter 在关闭数据库后回写状态。
         await container.dispose()
+      } catch (error) {
+        firstError ??= error
+      }
+      try {
+        runtime.dispose()
       } catch (error) {
         firstError ??= error
       }
