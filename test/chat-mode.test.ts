@@ -50,13 +50,16 @@ test('群聊模式：发言 → 待审批台词 → 批准发布 → 在场角�
   assert.equal(room.phase, 'awaiting-player-input')
   assert.equal(room.scenes.at(-1)?.text, '「那把钥匙并不属于你。」')
   assert.equal(room.speech, undefined)
-  // 在场角色（aria/mira）都消化了记忆；不在场的 noel 没有
-  // 记忆按「当前场景时间」归档（seed 房间默认起始时间为第一日黄昏）
-  const sceneBucket = room.sceneTime ?? '未标注时间'
-  assert.ok((room.roles.find(role => role.id === 'aria')?.memoryTimeline[sceneBucket] ?? []).some(event => event.includes('场景')))
-  assert.ok((room.roles.find(role => role.id === 'mira')?.memoryTimeline[sceneBucket] ?? []).some(event => event.includes('场景')))
-  const noelDigested = (room.roles.find(role => role.id === 'noel')?.memoryTimeline[sceneBucket] ?? []).some(event => event.includes('场景'))
-  assert.equal(noelDigested, false)
+  // 在场角色（aria/mira）都消化为结构化私有记忆；不在场的 noel 没有。
+  const publishedScene = room.scenes.at(-1)!
+  for (const roleId of ['aria', 'mira']) {
+    const memory = room.roles.find(role => role.id === roleId)?.memories.find(item => item.sceneId === publishedScene.id)
+    assert.ok(memory?.text.includes('场景'))
+    assert.equal(memory?.turnId, publishedScene.turnId)
+    assert.equal(memory?.occurredAt, room.sceneTime)
+    assert.equal(memory?.source, 'role_reaction')
+  }
+  assert.equal(room.roles.find(role => role.id === 'noel')?.memories.some(item => item.sceneId === publishedScene.id), false)
 })
 
 test('群聊模式：不在场角色不能发言', async () => {
@@ -83,7 +86,7 @@ test('沉浸模式（群聊）：台词完成后自动发布并消化', async ()
   const room = runtime.get(roomId)
   assert.equal(room.phase, 'awaiting-player-input')
   assert.ok(room.scenes.at(-1)?.text.length > 0)
-  assert.ok((room.roles.find(role => role.id === 'aria')?.memoryTimeline['未标注时间'] ?? []).length > 0)
+  assert.ok((room.roles.find(role => role.id === 'aria')?.memories ?? []).length > 0)
 })
 
 test('重启剧本可带入模式与沉浸开关', () => {

@@ -232,7 +232,7 @@ export class RoomRuntime {
           if (result.narration?.trim()) {
             this.store.addNarrationScene(roomId, result.narration, result.usage)
             this.emit(roomId)
-            await this.digestAfterSpeech(roomId, result.narration)
+            await this.digestAfterSpeech(roomId, result.narration, 'world_change')
           } else {
             this.emit(roomId)
           }
@@ -263,7 +263,7 @@ export class RoomRuntime {
     if (narration?.trim()) {
       this.store.addNarrationScene(roomId, narration)
       this.emit(roomId)
-      await this.digestAfterSpeech(roomId, narration)
+      await this.digestAfterSpeech(roomId, narration, 'world_change')
     } else {
       this.emit(roomId)
     }
@@ -279,8 +279,8 @@ export class RoomRuntime {
     this.emit(roomId)
   }
 
-  /** 群聊模式：台词发布后，所有在场角色各跑一次消化调用，把记忆并入时间线 */
-  private async digestAfterSpeech(roomId: string, sceneText: string): Promise<void> {
+  /** 群聊模式：已批准正文发布后，所有在场角色并行写入结构化私有记忆。 */
+  private async digestAfterSpeech(roomId: string, sceneText: string, source: 'role_reaction' | 'world_change' = 'role_reaction'): Promise<void> {
     if (!this.workers.digest) return
     if (this.digestingRooms.has(roomId)) return
     this.digestingRooms.add(roomId)
@@ -288,14 +288,21 @@ export class RoomRuntime {
       const snapshot = this.store.getRoom(roomId)
       if (!snapshot) return
       const present = snapshot.roles.filter(role => role.presence === 'present')
-      // 记忆一律按「当前场景时间」归档，丢弃 LLM 自行理解的语义标签（如「情感」「重要约定」），
-      // 保证时间线是以场景时间为序的事实记录，而非语义分组。
-      const sceneTime = (snapshot.sceneTime ?? '').trim() || '未标注时间'
+      const scene = snapshot.scenes.at(-1)
+      if (!scene) return
       await Promise.all(present.map(async role => {
         try {
-          const digest = await this.workers.digest!(role, sceneText)
-          const events = Object.values(digest.events ?? {}).flat().map(item => String(item ?? '').trim()).filter(Boolean)
-          if (events.length) this.store.appendMemoryEvents(roomId, role.id, { [sceneTime]: events }, { fuzzy: false })
+          const digest = await this.workers.digest!(role, { id: scene.id, turnId: scene.turnId, text: sceneText, sceneTime: scene.sceneTime, sceneLocation: scene.sceneLocation, source })
+          const entries = normalizeDigestEntries(digest.entries)
+          if (entries.length) this.store.insertNpcMemories(roomId, role.id, entries.map((entry, index) => ({
+            id: `digest-${scene.id}-${role.id}-${index}`,
+            sceneId: scene.id,
+            turnId: scene.turnId,
+            occurredAt: scene.sceneTime ?? '未标注时间',
+            occurredLocation: scene.sceneLocation,
+            source,
+            ...entry,
+          })))
         } catch (error) {
           console.error(`[memory digest failed] ${role.id}: ${error}`)
         }
@@ -652,6 +659,30 @@ function validateDecision(result: Decision, expected: Decision): Decision {
   if (result.participation !== expected.participation) throw new Error(`Worker returned unexpected participation for ${expected.roleId}`)
   if (!['completed', 'abstained', 'unavailable'].includes(result.status)) throw new Error(`Worker returned invalid status for ${expected.roleId}`)
   return result
+}
+
+/** 模型输出不可信：在写入前丢弃非法项，并将数值规范到协议允许范围。 */
+function normalizeDigestEntries(value: unknown): Array<import('./types.ts').MemoryDigestEntry> {
+  if (!Array.isArray(value)) return []
+  const kinds = new Set<import('./types.ts').MemoryKind>(['fact', 'observation', 'interaction', 'promise', 'relationship', 'belief', 'emotion', 'goal_update'])
+  const confidences = [0, 0.25, 0.5, 0.75, 1] as const
+  return value.flatMap(item => {
+    if (!item || typeof item !== 'object') return []
+    const entry = item as Record<string, unknown>
+    const kind = typeof entry.kind === 'string' && kinds.has(entry.kind as import('./types.ts').MemoryKind) ? entry.kind as import('./types.ts').MemoryKind : undefined
+    const text = typeof entry.text === 'string' ? entry.text.trim() : ''
+    if (!kind || !text) return []
+    const rawSalience = typeof entry.salience === 'number' && Number.isFinite(entry.salience) ? entry.salience : 3
+    const rawConfidence = typeof entry.confidence === 'number' && Number.isFinite(entry.confidence) ? entry.confidence : 1
+    const confidence = confidences.reduce((closest, candidate) => Math.abs(candidate - rawConfidence) < Math.abs(closest - rawConfidence) ? candidate : closest, confidences[0])
+    return [{
+      kind,
+      text,
+      subjects: Array.isArray(entry.subjects) ? entry.subjects.filter((subject): subject is string => typeof subject === 'string').map(subject => subject.trim()).filter(Boolean) : [],
+      salience: Math.max(1, Math.min(5, Math.round(rawSalience))) as 1 | 2 | 3 | 4 | 5,
+      confidence,
+    }]
+  })
 }
 
 function validateDraft(draft: { id: string; turnId: string; text: string; stateUpdates: Record<string, string>; settingProposals: unknown[]; intentHandling: unknown[]; openQuestions: unknown[]; roleProposals?: Array<{ id: string; name: string; currentState: string; presence: string; selfModel: string }> }, turnId: string, roles: Array<{ id: string }>): void {

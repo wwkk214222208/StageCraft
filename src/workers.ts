@@ -5,6 +5,16 @@ export interface SceneContext {
   location?: string
 }
 
+/** 已批准正文的服务端场景快照。记忆 Worker 只能读取这些上下文，不能自行决定关联信息。 */
+export interface DigestSceneContext {
+  id: string
+  turnId: string
+  text: string
+  sceneTime?: string
+  sceneLocation?: string
+  source: 'role_reaction' | 'world_change'
+}
+
 /** 群聊模式导演对话/叙述所需的房间上下文摘要 */
 export interface DirectorChatContext {
   sceneTime?: string
@@ -23,8 +33,8 @@ export interface WorkerSet {
   decide(role: Role, participation: Decision['participation'], contribution: string, publicRoles?: Role[], scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[]): Promise<Decision>
   draft(turnId: string, contribution: string, decisions: Decision[], roles: Role[], consultations?: ConsultationMessage[], playerCharacter?: PlayerCharacter, scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string, previousDraft?: string): Promise<Draft>
   consult?(draft: Draft, messages: ConsultationMessage[], playerText: string): Promise<{ text: string; usage?: import('./types.ts').TokenUsage }>
-  /** 群聊模式：角色消化一条已批准正文，产出记忆中事件（时间标签 → 事件列表） */
-  digest?(role: Role, sceneText: string): Promise<import('./types.ts').MemoryDigest>
+  /** 群聊模式：角色消化一条已批准正文，产出结构化私有记忆。 */
+  digest?(role: Role, scene: DigestSceneContext): Promise<import('./types.ts').MemoryDigest>
   /** 群聊模式：无导演发言协议——产出角色此刻的完整发言（台词/带台词的行动），非决策式简短回应 */
   speak?(role: Role, contribution: string, publicRoles?: Role[], scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string): Promise<{ text: string; thinking?: string; usage?: import('./types.ts').TokenUsage; worldChange?: import('./types.ts').WorldChangeRequest }>
   /**
@@ -120,13 +130,17 @@ async function runFakeConsultation(draft: Draft, _messages: ConsultationMessage[
   return { text: `我理解你的问题是“${playerText.trim().slice(0, 120)}”。当前正文仍是待审批版本；你可以要求我据此重写，或者结束咨询并直接审批现有草稿。`, usage: { promptTokens: 900, completionTokens: 40 } }
 }
 
-async function runFakeDigest(role: Role, sceneText: string): Promise<import('./types.ts').MemoryDigest> {
+async function runFakeDigest(role: Role, scene: DigestSceneContext): Promise<import('./types.ts').MemoryDigest> {
   await delay(200)
-  const snippet = sceneText.trim().slice(0, 40)
+  const snippet = scene.text.trim().slice(0, 40)
   return {
-    events: {
-      '未标注时间': [`${role.name} 经历了场景「${snippet}」，将其记为值得留意的经过。`],
-    },
+    entries: [{
+      kind: 'observation',
+      text: `${role.name} 经历了场景「${snippet}」，将其记为值得留意的经过。`,
+      subjects: [],
+      salience: 3,
+      confidence: 1,
+    }],
   }
 }
 

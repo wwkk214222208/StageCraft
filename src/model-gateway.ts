@@ -658,25 +658,29 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       if (!result || typeof result.text !== 'string' || !result.text.trim()) throw new Error('Director consultation output is missing text.')
       return { text: result.text, ...(usage ? { usage } : {}) }
     },
-    async digest(role: Role, sceneText: string): Promise<import('./types.ts').MemoryDigest> {
+    async digest(role: Role, scene: import('./workers.ts').DigestSceneContext): Promise<import('./types.ts').MemoryDigest> {
       const gateway = getRoleGateway(role)
-      const result = await gateway.completeStreaming<{ events?: Record<string, string[]> }>(
+      const entrySchema = {
+        type: 'object', additionalProperties: false,
+        properties: {
+          kind: { type: 'string', enum: ['fact', 'observation', 'interaction', 'promise', 'relationship', 'belief', 'emotion', 'goal_update'] },
+          text: { type: 'string' },
+          subjects: { type: 'array', items: { type: 'string' } },
+          salience: { type: 'integer', minimum: 1, maximum: 5 },
+          confidence: { type: 'number', enum: [0, 0.25, 0.5, 0.75, 1] },
+        },
+        required: ['kind', 'text', 'subjects', 'salience', 'confidence'],
+      }
+      const schema = { type: 'object', additionalProperties: false, properties: { entries: { type: 'array', items: entrySchema } }, required: ['entries'] }
+      const result = await gateway.completeStreaming<{ entries?: import('./types.ts').MemoryDigestEntry[] }>(
         renderPrompt(getPrompts().role.digestSystem, { roleName: role.name }),
-        renderPrompt(getPrompts().role.digestUser, { sceneText }),
+        renderPrompt(getPrompts().role.digestUser, { sceneText: scene.text }),
         'memory_digest',
-        { type: 'object', additionalProperties: false, properties: { events: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } }, required: ['events'] },
-        { name: 'submit_memory_digest', description: '提交该角色从场景正文中提取的记忆事件。', parameters: { type: 'object', additionalProperties: false, properties: { events: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } }, required: ['events'] } },
+        schema,
+        { name: 'submit_memory_digest', description: '提交该角色从场景正文中提取的结构化私有记忆。', parameters: schema },
         {}, { thinkingStrength: role.thinkingStrength },
       )
-      const events = result?.events
-      if (!events || typeof events !== 'object' || Array.isArray(events)) return { events: {} }
-      const cleaned: Record<string, string[]> = {}
-      for (const [when, items] of Object.entries(events)) {
-        if (!Array.isArray(items)) continue
-        const list = items.map(item => String(item ?? '').trim()).filter(Boolean)
-        if (list.length > 0) cleaned[when.trim() || '未标注时间'] = list
-      }
-      return { events: cleaned }
+      return { entries: Array.isArray(result?.entries) ? result.entries : [] }
     },
     async speak(role: Role, contribution: string, publicRoles: Role[] = [], scene?: { time?: string; location?: string }, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string): Promise<{ text: string; thinking?: string; usage?: import('./types.ts').TokenUsage; worldChange?: import('./types.ts').WorldChangeRequest }> {
       let thinking = ''
