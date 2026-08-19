@@ -52,7 +52,7 @@ function promptGuidance(strength: ThinkingStrength): string {
 /**
  * 根据模型家族与强度档位，生成 OpenAI 兼容请求体字段或提示词引导。
  * 各家族参数标准（官方文档确认）：
- * - DeepSeek：thinking {type: enabled/disabled} + reasoning_effort low/high/max
+ * - DeepSeek：只有 thinking enabled/disabled 两挡，不伪造多级 reasoning_effort
  * - GLM 5.2：thinking {type: enabled/disabled} + reasoning_effort max/xhigh/high/medium/low/minimal/none
  * - Gemini 3.x（OpenAI 兼容层）：reasoning_effort 自动映射 thinking_level（minimal/low/medium/high；2.5 可用 none 关）
  * - OpenAI GPT-5.6：reasoning_effort none/minimal/low/medium/high/xhigh/max（Chat Completions）
@@ -65,7 +65,7 @@ export function buildThinkingParams(model: string, strength: ThinkingStrength): 
     case 'deepseek':
       return off(strength)
         ? { body: { thinking: { type: 'disabled' } } }
-        : { body: { thinking: { type: 'enabled' }, reasoning_effort: effort(strength, { brief: 'low', standard: 'high', deep: 'max' }) } }
+        : { body: { thinking: { type: 'enabled' } } }
     case 'glm':
       return off(strength)
         ? { body: { thinking: { type: 'disabled' } } }

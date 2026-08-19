@@ -219,7 +219,7 @@ header strong{font:600 18px system-ui,sans-serif;color:#e4edfd;letter-spacing:.2
 #mode-badge{font-size:11px;color:#8fa1c9;border:1px solid #3a4a6e;border-radius:3px;padding:2px 6px;white-space:nowrap}
 #mode-badge.chat{color:#b7c8fe;border-color:#4176e6}
 .speech-approval textarea{min-height:120px}
-#center-draft-text{min-height:min(52vh,520px)}
+#center-draft-text{min-height:min(60vh,640px)}
 /* 设置栏：复选框靠在栏目名字右边 */
 label.settings-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
 label.settings-row input[type=checkbox]{width:auto;margin:0}
@@ -248,7 +248,7 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 .scene.narration .scene-text{white-space:pre-wrap;line-height:1.8}
 /* 待审批台词：气泡头 + 可编辑正文 + 操作 */
 .speech-approval{border:1px solid #4868b2;border-radius:14px;padding:8px 10px;background:#2b3247;margin:10px 0}
-.speech-textarea{width:100%;min-height:110px;background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:6px;padding:8px 10px;font:13px/1.6 inherit;resize:vertical;margin-top:8px}
+.speech-textarea{width:100%;min-height:min(50vh,520px);background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:6px;padding:8px 10px;font:13px/1.6 inherit;resize:vertical;margin-top:8px}
 .speech-approval .draft-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
 
 /* ── 头像：仅左栏与对话气泡用圆形；完整肖像保持方形原图 ── */
