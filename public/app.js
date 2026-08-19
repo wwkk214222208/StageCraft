@@ -295,7 +295,7 @@ async function loadProviders() { const data = await (await fetch('/api/providers
 function updateModels(provider, selector, selected) { $(selector).innerHTML = (provider?.models ?? []).map(model => `<option>${escape(model)}</option>`).join(''); $(selector).value = selected ?? provider?.selectedModel ?? provider?.models?.[0] ?? '' }
 function thinkingChoicesForModel(model) {
   const name = String(model ?? '').toLowerCase()
-  if (/deepseek/.test(name)) return [['off', '关闭'], ['standard', '开启']]
+  if (/deepseek/.test(name)) return [['off', '关闭'], ['standard', 'high'], ['deep', 'max']]
   if (/kimi/.test(name)) return [['brief', '低'], ['standard', '高'], ['deep', '最高']]
   if (/doubao|seed/.test(name)) return [['off', '关闭'], ['brief', '自动'], ['standard', '开启']]
   return [['off', '关闭'], ['brief', '简略'], ['standard', '标准'], ['deep', '深度']]
