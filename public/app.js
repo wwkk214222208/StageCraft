@@ -24,7 +24,7 @@ const $ = selector => document.querySelector(selector) ?? missingElement
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 // 记忆已迁移为左栏同级页面；保留隐藏字段仅供旧剧本兼容保存，不能再由用户编辑。
 document.querySelectorAll('[data-inspector-tab="memory"], [data-inspector-panel="memory"]').forEach(element => element.remove())
-document.querySelectorAll('#role-modal #inspector-memory').forEach(element => { const label = element.closest('label'); if (label) label.hidden = true })
+document.querySelectorAll('#role-modal #inspector-memory, #new-role-memory').forEach(element => { const label = element.closest('label'); if (label) label.hidden = true })
 document.addEventListener('click', event => { const roleId = event.target.closest?.('[data-memory-role]')?.dataset.memoryRole; if (roleId && room) inspectedRole = room.roles.find(role => role.id === roleId) })
 
 // ── token 计数小字（可开关；只展示，不进入正文） ──
@@ -462,7 +462,16 @@ function renderStoryRoles() {
     })
   })
 }
-$('#story-role-add').onclick = () => { storyEditRoles.push({ id: `new-role-${Date.now()}`, name: '新角色', portraitRef: '/assets/default.svg', currentState: '尚未进入具体场景，等待剧情展开。', presence: 'absent', memoryTimeline: { '未标注时间': [] }, impressions: {}, selfModel: '待补充的角色设定。' }); renderStoryRoles() }
+const storyInitialMemories = role => role.initialMemories ?? Object.entries(role.memoryTimeline ?? {}).flatMap(([occurredAt, items]) => (items ?? []).map(text => ({ kind: 'fact', text, subjects: [], occurredAt, salience: 3, confidence: 1 })))
+function renderStoryInitialMemories(role) {
+  let panel = $('#story-initial-memories')
+  if (!panel || panel === missingElement) { panel = document.createElement('section'); panel.id = 'story-initial-memories'; $('#inspector-story-fields').append(panel) }
+  const memories = storyInitialMemories(role)
+  panel.innerHTML = `<h4 class="field-title">初始记忆 <small>（开局时写入角色私有记忆）</small></h4><div class="story-memory-list">${memories.map((memory, index) => `<article class="memory-record"><div class="inspector-row"><label>类型<select data-story-memory="kind" data-index="${index}">${['fact','observation','interaction','promise','relationship','belief','emotion','goal_update'].map(kind => `<option value="${kind}" ${memory.kind === kind ? 'selected' : ''}>${kind}</option>`).join('')}</select></label><label>时间<input data-story-memory="occurredAt" data-index="${index}" value="${escape(memory.occurredAt ?? '未标注时间')}"></label><label>重要度<input type="number" min="1" max="5" data-story-memory="salience" data-index="${index}" value="${memory.salience ?? 3}"></label></div><label>内容<textarea data-story-memory="text" data-index="${index}">${escape(memory.text ?? '')}</textarea></label><label>关联人物（逗号分隔）<input data-story-memory="subjects" data-index="${index}" value="${escape((memory.subjects ?? []).join(', '))}"></label><button type="button" class="danger" data-story-memory-delete="${index}">删除此条</button></article>`).join('')}</div><button type="button" class="small-btn" id="story-memory-add">＋ 添加初始记忆</button>`
+}
+function collectStoryInitialMemories() { return [...document.querySelectorAll('#story-initial-memories .memory-record')].map((_, index) => { const field = name => document.querySelector(`#story-initial-memories [data-story-memory="${name}"][data-index="${index}"]`); return { kind: field('kind').value, text: field('text').value.trim(), subjects: field('subjects').value.split(/[,，、]/).map(item => item.trim()).filter(Boolean), occurredAt: field('occurredAt').value.trim() || '未标注时间', salience: Math.max(1, Math.min(5, Number(field('salience').value) || 3)), confidence: 1 } }).filter(memory => memory.text) }
+document.addEventListener('click', event => { const add = event.target.closest?.('#story-memory-add'); const remove = event.target.closest?.('[data-story-memory-delete]'); if (!add && !remove) return; const role = storyEditRoles[storyEditRoleIndex]; if (!role) return; role.initialMemories = collectStoryInitialMemories(); if (add) role.initialMemories.push({ kind: 'fact', text: '', subjects: [], occurredAt: '未标注时间', salience: 3, confidence: 1 }); else role.initialMemories.splice(Number(remove.dataset.storyMemoryDelete), 1); renderStoryInitialMemories(role) })
+$('#story-role-add').onclick = () => { storyEditRoles.push({ id: `new-role-${Date.now()}`, name: '新角色', portraitRef: '/assets/default.svg', currentState: '尚未进入具体场景，等待剧情展开。', presence: 'absent', initialMemories: [], impressions: {}, selfModel: '待补充的角色设定。' }); renderStoryRoles() }
 function openStoryRoleEditor(index) {
   const role = storyEditRoles[index]
   if (!role) return
@@ -473,7 +482,7 @@ function openStoryRoleEditor(index) {
   $('#inspector-model').innerHTML = '<option value="">使用默认</option>'
   $('#inspector-self-model').value = role.selfModel ?? ''
   $('#inspector-goals').value = (role.goals ?? []).join('\n')
-  $('#inspector-memory').value = formatTimelineForEdit(role)
+  renderStoryInitialMemories(role)
   renderImpressionsFrom(role.impressions ?? {})
   $('#inspector-story-fields').hidden = false
   $('#inspector-story-name').value = role.name ?? ''
@@ -643,7 +652,7 @@ function setInspectorReadOnly(on) {
 }
 function renderStructuredMemories(role) { const list = $('#inspector-memory-structured'); if (!list) return; const memories = role?.memories ?? []; list.innerHTML = `<button type="button" class="small-btn" data-memory-add="${escape(role.id)}">＋ 新增记忆</button>${memories.length ? memories.map(memory => `<article class="memory-record" data-memory-id="${escape(memory.id)}"><header><b>${escape(memory.kind)}</b><small>${escape(memory.occurredAt)} · 重要度 ${memory.salience}</small></header><p>${escape(memory.text)}</p><small>${escape((memory.subjects ?? []).join('、') || '无关联人物')} · 置信度 ${memory.confidence}</small><div><button type="button" data-memory-edit="${escape(memory.id)}">编辑</button><button type="button" data-memory-supersede="${escape(memory.id)}">替代</button><button type="button" data-memory-retract="${escape(memory.id)}">撤回</button></div></article>`).join('') : '<p class="hint">暂无结构化记忆</p>'}` }
 document.addEventListener('click', event => { const target = event.target.closest('[data-memory-retract],[data-memory-add],[data-memory-edit],[data-memory-supersede]'); if (!target) return; const roleId = target.dataset.memoryAdd; const memoryId = target.dataset.memoryRetract || target.dataset.memoryEdit || target.dataset.memorySupersede; const role = room?.roles.find(item => item.id === (roleId || inspectedRole?.id)); const current = role?.memories?.find(item => item.id === memoryId); if (roleId) { const text = prompt('记忆内容'); if (!text?.trim()) return; return api('/api/roles/memories', { roleId, entries: [{ text, kind: 'fact', subjects: [], salience: 3, confidence: 1 }] }).then(refreshRoom) } if (target.dataset.memoryRetract) return api('/api/roles/memories/retract', { memoryId }).then(refreshRoom); if (!current) return; const text = prompt(target.dataset.memorySupersede ? '替代后的记忆内容' : '记忆内容', current.text); if (!text?.trim()) return; const entry = { text, kind: current.kind, subjects: current.subjects ?? [], occurredAt: current.occurredAt, occurredLocation: current.occurredLocation, salience: current.salience, confidence: current.confidence }; return api(target.dataset.memorySupersede ? '/api/roles/memories/supersede' : '/api/roles/memories/update', { memoryId, entry }).then(refreshRoom) })
-function openInspector(roleId) { inspectedRole = room.roles.find(role => role.id === roleId); if (!inspectedRole) return; storyEditRoleIndex = null; $('#inspector-story-fields').hidden = true; $('#role-modal-title').textContent = `${inspectedRole.name} 角色设置`; $('#inspector-role-id').value = roleId; $('#inspector-provider').innerHTML = `<option value="">使用默认</option>${providers.map(provider => `<option value="${escape(provider.id)}">${escape(provider.name)}</option>`).join('')}`; $('#inspector-provider').value = inspectedRole.providerId ?? ''; updateInspectorModels(); $('#inspector-model').value = inspectedRole.modelOverride ?? ''; $('#inspector-thinking').value = inspectedRole.thinkingStrength ?? 'standard'; $('#inspector-self-model').value = inspectedRole.selfModel; $('#inspector-goals').value = (inspectedRole.goals ?? []).join('\n'); $('#inspector-memory').value = formatTimelineForEdit(inspectedRole); renderStructuredMemories(inspectedRole); renderImpressionsList(); $('#inspector-avatar-preview').src = inspectedRole.portraitRef; $('#inspector-avatar-preview').onerror = function () { this.onerror = null; this.src = '/assets/default.svg' }; // 沉浸模式：角色面板只读
+function openInspector(roleId) { inspectedRole = room.roles.find(role => role.id === roleId); if (!inspectedRole) return; storyEditRoleIndex = null; $('#inspector-story-fields').hidden = true; $('#story-initial-memories')?.remove(); $('#role-modal-title').textContent = `${inspectedRole.name} 角色设置`; $('#inspector-role-id').value = roleId; $('#inspector-provider').innerHTML = `<option value="">使用默认</option>${providers.map(provider => `<option value="${escape(provider.id)}">${escape(provider.name)}</option>`).join('')}`; $('#inspector-provider').value = inspectedRole.providerId ?? ''; updateInspectorModels(); $('#inspector-model').value = inspectedRole.modelOverride ?? ''; $('#inspector-thinking').value = inspectedRole.thinkingStrength ?? 'standard'; $('#inspector-self-model').value = inspectedRole.selfModel; $('#inspector-goals').value = (inspectedRole.goals ?? []).join('\n'); renderStructuredMemories(inspectedRole); renderImpressionsList(); $('#inspector-avatar-preview').src = inspectedRole.portraitRef; $('#inspector-avatar-preview').onerror = function () { this.onerror = null; this.src = '/assets/default.svg' }; // 沉浸模式：角色面板只读
   setInspectorReadOnly(!!room?.autoPublish && storyEditRoleIndex === null);
   positionInspectorModals() }
 $('#inspector-save').onclick = event => {
@@ -659,7 +668,8 @@ $('#inspector-save').onclick = event => {
       role.currentState = $('#inspector-story-state').value
       role.selfModel = $('#inspector-self-model').value
       role.goals = collectGoalsFromEdit()
-      role.memoryTimeline = parseTimelineFromEdit($('#inspector-memory').value)
+      role.initialMemories = collectStoryInitialMemories()
+      delete role.memoryTimeline
       role.impressions = impressions
     }
     storyEditRoleIndex = null
@@ -667,8 +677,7 @@ $('#inspector-save').onclick = event => {
     renderStoryRoles()
     return
   }
-  const parsed = parseTimelineFromEdit($('#inspector-memory').value)
-  api('/api/roles/intervene', { roleId: $('#inspector-role-id').value, selfModel: $('#inspector-self-model').value, memoryTimeline: JSON.stringify(parsed), providerId: $('#inspector-provider').value, modelOverride: $('#inspector-model').value, impressions: JSON.stringify(impressions), goals: JSON.stringify(collectGoalsFromEdit()), thinkingStrength: $('#inspector-thinking').value }).then(ok => { if (ok) closeInspectorModals() })
+  api('/api/roles/intervene', { roleId: $('#inspector-role-id').value, selfModel: $('#inspector-self-model').value, providerId: $('#inspector-provider').value, modelOverride: $('#inspector-model').value, impressions: JSON.stringify(impressions), goals: JSON.stringify(collectGoalsFromEdit()), thinkingStrength: $('#inspector-thinking').value }).then(ok => { if (ok) closeInspectorModals() })
 }
 $('#inspector-close').onclick = () => closeInspectorModals()
 // 左侧肖像面板已并入 #role-modal，单独关闭按钮已移除
@@ -754,7 +763,7 @@ $('#create-role-save').onclick = event => {
   const selfModel = $('#new-role-self-model').value.trim()
   if (!name) { alert('名称不能为空。'); return }
   if (!selfModel) { alert('人设不能为空。'); return }
-  const payload = { name, selfModel, presence: $('#new-role-presence').value, memoryTimeline: JSON.stringify(parseTimelineFromEdit($('#new-role-memory').value)), portraitRef: pendingCreateAvatar ?? '/assets/default.svg', goals: JSON.stringify(collectGoalsInput('#new-role-goals')) }
+  const payload = { name, selfModel, presence: $('#new-role-presence').value, portraitRef: pendingCreateAvatar ?? '/assets/default.svg', goals: JSON.stringify(collectGoalsInput('#new-role-goals')) }
   const currentState = $('#new-role-state').value.trim()
   if (currentState) payload.currentState = currentState
   api('/api/roles/create', payload).then(ok => { if (ok) $('#create-role-modal').close() })

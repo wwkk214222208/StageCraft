@@ -74,6 +74,20 @@ test('a package creates an independent initialized room whose opening is the fir
   assert.equal(room.phase, 'awaiting-player-input')
 })
 
+test('structured initial memories seed canonical story records instead of legacy timeline entries', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-story-initial-memory-'))
+  const store = new Store(join(root, 'app.sqlite'))
+  const roomId = store.createRoomFromPackage({
+    id: 'structured-memory-story', title: '结构化记忆剧本', opening: '', playerCharacter: { name: '玩家', persona: '', currentState: '' },
+    roles: [{ id: 'keeper', name: '守秘人', portraitRef: '/assets/default.svg', currentState: '守在门前。', presence: 'present', selfModel: '谨慎。', memoryTimeline: { '旧时间': ['不应作为初始记录写入。'] }, initialMemories: [{ kind: 'promise', text: '答应保护银钥匙。', subjects: ['玩家'], occurredAt: '开场前', salience: 5, confidence: 1 }] }],
+  }, 'structured-memory-room')
+  const memory = store.getRoom(roomId)!.roles[0].memories![0]
+  assert.equal(memory.text, '答应保护银钥匙。')
+  assert.equal(memory.kind, 'promise')
+  assert.equal(memory.source, 'story')
+  assert.equal(memory.occurredAt, '开场前')
+})
+
 test('restarting a room seeds the opening as the first history scene', () => {
   const story = loadStoryPackage(stories, '七女神纪元')
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-story-restart-'))

@@ -37,6 +37,8 @@ export interface Role {
   memoryTimeline: Record<string, string[]>
   /** 结构化私有记忆；新存档的 canonical 记忆来源。 */
   memories?: NpcMemory[]
+  /** 剧本阶段配置的初始记忆；开局时写入结构化记忆记录。 */
+  initialMemories?: InitialMemory[]
   /** 该角色对其他角色的印象（姓名 → 文字）；随剧情可被角色自己更新，也可在角色设置中修改 */
   impressions?: Record<string, string>
   /** 长期目标（独立字段，私密：Director 看不到，仅供角色自己）；替代旧版写在 selfModel 私有段的文本解析 */
@@ -236,6 +238,8 @@ export type MemorySource = 'story' | 'world_change' | 'role_reaction' | 'manual'
 export type MemoryKind = 'fact' | 'observation' | 'interaction' | 'promise' | 'relationship' | 'belief' | 'emotion' | 'goal_update'
 export type MemoryStatus = 'active' | 'superseded' | 'retracted' | 'archived'
 export interface MemoryDigestEntry { kind: MemoryKind; text: string; subjects: string[]; salience: 1 | 2 | 3 | 4 | 5; confidence: 0 | 0.25 | 0.5 | 0.75 | 1 }
+/** 剧本中的角色初始记忆；不含运行期 ID 与审计字段。 */
+export interface InitialMemory extends MemoryDigestEntry { occurredAt?: string; occurredLocation?: string }
 export interface MemoryDigest { entries?: MemoryDigestEntry[]; events?: Record<string, string[]> }
 export interface NpcMemory { id: string; roomId: string; roleId: string; sceneId?: string; turnId?: string; worldChangeId?: string; occurredAt: string; occurredLocation?: string; source: MemorySource; kind: MemoryKind; text: string; subjects: string[]; visibility: 'private'; salience: number; confidence: number; status: MemoryStatus; supersedes: string[]; supersededBy?: string; dedupeKey: string; createdAt: string; updatedAt: string }
 

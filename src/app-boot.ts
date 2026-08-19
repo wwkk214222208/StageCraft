@@ -370,13 +370,13 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       }
       if (url.pathname === '/api/roles/intervene' && request.method === 'POST') {
         const body = await readJson(request)
-        runtime.interveneRole(roomId, String(body.roleId), String(body.selfModel ?? ''), JSON.parse(String(body.memoryTimeline ?? '{}')) as Record<string, string[]>, { providerId: body.providerId ? String(body.providerId) : undefined, modelOverride: body.modelOverride ? String(body.modelOverride) : undefined, ...(typeof body.impressions === 'string' ? { impressions: JSON.parse(body.impressions) as Record<string, string> } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}), ...(body.thinkingStrength ? { thinkingStrength: String(body.thinkingStrength) as import('./types.ts').ThinkingStrength } : {}) })
+        runtime.interveneRole(roomId, String(body.roleId), String(body.selfModel ?? ''), typeof body.memoryTimeline === 'string' ? JSON.parse(body.memoryTimeline) as Record<string, string[]> : undefined, { providerId: body.providerId ? String(body.providerId) : undefined, modelOverride: body.modelOverride ? String(body.modelOverride) : undefined, ...(typeof body.impressions === 'string' ? { impressions: JSON.parse(body.impressions) as Record<string, string> } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}), ...(body.thinkingStrength ? { thinkingStrength: String(body.thinkingStrength) as import('./types.ts').ThinkingStrength } : {}) })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/create' && request.method === 'POST') {
         const body = await readJson(request)
         const id = String(body.id ?? '').trim() || `role-${Date.now()}`
-        runtime.createRole(roomId, { id, name: String(body.name ?? '').trim(), portraitRef: String(body.portraitRef ?? '/assets/default.svg'), currentState: String(body.currentState ?? '刚刚进入当前场景。'), presence: ['present', 'absent', 'unavailable'].includes(String(body.presence)) ? String(body.presence) as 'present' | 'absent' | 'unavailable' : 'present', selfModel: String(body.selfModel ?? ''), memoryTimeline: JSON.parse(String(body.memoryTimeline ?? '{}')) as Record<string, string[]>, ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}) })
+        runtime.createRole(roomId, { id, name: String(body.name ?? '').trim(), portraitRef: String(body.portraitRef ?? '/assets/default.svg'), currentState: String(body.currentState ?? '刚刚进入当前场景。'), presence: ['present', 'absent', 'unavailable'].includes(String(body.presence)) ? String(body.presence) as 'present' | 'absent' | 'unavailable' : 'present', selfModel: String(body.selfModel ?? ''), memoryTimeline: typeof body.memoryTimeline === 'string' ? JSON.parse(body.memoryTimeline) as Record<string, string[]> : undefined, ...(Array.isArray(body.initialMemories) ? { initialMemories: body.initialMemories as import('./types.ts').InitialMemory[] } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}) })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/delete' && request.method === 'POST') {
@@ -444,7 +444,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         if (!role) throw new Error('角色不存在。')
         const story = loadStoryPackage(storiesRoot, storyId)
         const index = story.roles.findIndex(item => item.id === roleId)
-        const updated = { id: role.id, name: role.name, portraitRef: role.portraitRef, currentState: role.currentState, presence: role.presence, memoryTimeline: role.memoryTimeline ?? {}, selfModel: role.selfModel, ...(role.impressions && Object.keys(role.impressions).length ? { impressions: role.impressions } : index >= 0 && story.roles[index].impressions ? { impressions: story.roles[index].impressions } : {}), ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { modelOverride: role.modelOverride } : {}) }
+        const updated = { id: role.id, name: role.name, portraitRef: role.portraitRef, currentState: role.currentState, presence: role.presence, initialMemories: (role.memories ?? []).map(memory => ({ kind: memory.kind, text: memory.text, subjects: memory.subjects, occurredAt: memory.occurredAt, occurredLocation: memory.occurredLocation, salience: memory.salience as 1 | 2 | 3 | 4 | 5, confidence: memory.confidence as 0 | 0.25 | 0.5 | 0.75 | 1 })), selfModel: role.selfModel, ...(role.impressions && Object.keys(role.impressions).length ? { impressions: role.impressions } : index >= 0 && story.roles[index].impressions ? { impressions: story.roles[index].impressions } : {}), ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { modelOverride: role.modelOverride } : {}) }
         if (index >= 0) story.roles[index] = updated; else story.roles.push(updated)
         saveStoryPackage(storiesRoot, story)
         return json(response, 200, { ok: true })
@@ -458,7 +458,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         const storyImpressions = new Map(story.roles.map(item => [item.id, item.impressions]))
         story.roles = room.roles.map(role => ({
           id: role.id, name: role.name, portraitRef: role.portraitRef, currentState: role.currentState, presence: role.presence,
-          memoryTimeline: role.memoryTimeline ?? {}, selfModel: role.selfModel,
+          initialMemories: (role.memories ?? []).map(memory => ({ kind: memory.kind, text: memory.text, subjects: memory.subjects, occurredAt: memory.occurredAt, occurredLocation: memory.occurredLocation, salience: memory.salience as 1 | 2 | 3 | 4 | 5, confidence: memory.confidence as 0 | 0.25 | 0.5 | 0.75 | 1 })), selfModel: role.selfModel,
           ...(role.impressions && Object.keys(role.impressions).length ? { impressions: role.impressions } : storyImpressions.get(role.id) ? { impressions: storyImpressions.get(role.id) } : {}),
           ...(role.providerId ? { providerId: role.providerId } : {}),
           ...(role.modelOverride ? { modelOverride: role.modelOverride } : {}),

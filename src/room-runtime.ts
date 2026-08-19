@@ -509,7 +509,7 @@ export class RoomRuntime {
     this.emit(roomId)
   }
 
-  interveneRole(roomId: string, roleId: string, selfModel: string, memoryTimeline: Record<string, string[]>, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
+  interveneRole(roomId: string, roleId: string, selfModel: string, memoryTimeline: Record<string, string[]> | undefined, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
     const room = this.get(roomId)
     if (room.phase !== 'awaiting-player-input') throw new Error('Private role intervention requires an idle room.')
     this.store.updateRolePrivateState(roomId, roleId, selfModel, memoryTimeline, config)
@@ -532,7 +532,7 @@ export class RoomRuntime {
     this.emit(roomId)
   }
 
-  createRole(roomId: string, role: { id: string; name: string; portraitRef: string; currentState: string; presence: 'present' | 'absent' | 'unavailable'; selfModel: string; memoryTimeline: Record<string, string[]>; goals?: string[] }): void {
+  createRole(roomId: string, role: { id: string; name: string; portraitRef: string; currentState: string; presence: 'present' | 'absent' | 'unavailable'; selfModel: string; memoryTimeline?: Record<string, string[]>; initialMemories?: import('./types.ts').InitialMemory[]; goals?: string[] }): void {
     if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('新建角色需要在空闲时进行。')
     this.store.createRole(roomId, role)
     this.emit(roomId)

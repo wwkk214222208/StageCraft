@@ -421,7 +421,7 @@ export class Store {
     this.withTransaction(() => {
       this.db.prepare('INSERT INTO rooms (id, title, player_name, player_persona, player_state, scene_time, scene_location, phase, lore, story_id, mode, auto_publish) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(roomId, story.title, story.playerCharacter?.name ?? '玩家', story.playerCharacter?.persona ?? '由玩家自由定义的参与者。', story.playerCharacter?.currentState ?? '刚刚进入当前场景。', story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, 'awaiting-player-input', JSON.stringify(story.lore ?? []), story.id, options.mode ?? 'director', options.autoPublish ? 1 : 0)
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      for (const role of story.roles) { insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {})); this.seedNpcMemories(roomId, role.id, role.memoryTimeline) }
+      for (const role of story.roles) { insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {})); this.seedNpcMemories(roomId, role.id, role.memoryTimeline, 'import', role.initialMemories) }
       if (story.opening) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(`opening-${roomId}`, roomId, 'opening', story.opening, story.sceneTime ?? null, story.sceneLocation ?? null, new Date().toISOString())
     })
     return roomId
@@ -459,7 +459,7 @@ export class Store {
       this.db.prepare('DELETE FROM reaction_previews WHERE room_id = ?').run(roomId)
       this.db.prepare('DELETE FROM roles WHERE room_id = ?').run(roomId)
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      for (const role of story.roles) { insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {})); this.seedNpcMemories(roomId, role.id, role.memoryTimeline) }
+      for (const role of story.roles) { insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {})); this.seedNpcMemories(roomId, role.id, role.memoryTimeline, 'import', role.initialMemories) }
       if (story.opening) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(`opening-${roomId}-${Date.now()}`, roomId, 'opening', story.opening, story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, new Date().toISOString())
       this.db.prepare("UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, scene_time = ?, scene_location = ?, phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL, last_error = NULL, lore = ?, story_id = ?, mode = ?, auto_publish = ?, speech = NULL, pending_world_change = NULL, pending_narration = NULL WHERE id = ?").run(story.title, story.playerCharacter?.name ?? '玩家', story.playerCharacter?.persona ?? '由玩家自由定义的参与者。', story.playerCharacter?.currentState ?? '刚刚进入当前场景。', story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, JSON.stringify(story.lore ?? []), story.id, options.mode ?? 'director', options.autoPublish ? 1 : 0, roomId)
     })
@@ -491,8 +491,10 @@ export class Store {
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
-  seedNpcMemories(roomId: string, roleId: string, timeline: Record<string, string[]> | undefined, source: import('./types.ts').MemorySource = 'import'): void {
-    const entries = Object.entries(timeline ?? {}).flatMap(([occurredAt, items], index) => Array.isArray(items) ? items.map((text, itemIndex) => ({ id: `import-${roomId}-${roleId}-${index}-${itemIndex}`, occurredAt, source, kind: 'fact' as const, text: String(text ?? ''), subjects: [], salience: 3, confidence: 1 })) : [])
+  seedNpcMemories(roomId: string, roleId: string, timeline: Record<string, string[]> | undefined, source: import('./types.ts').MemorySource = 'import', initialMemories?: import('./types.ts').InitialMemory[]): void {
+    const entries = initialMemories?.length
+      ? initialMemories.map((memory, index) => ({ id: `story-${roomId}-${roleId}-${index}`, occurredAt: memory.occurredAt ?? '未标注时间', occurredLocation: memory.occurredLocation, source: 'story' as const, kind: memory.kind, text: String(memory.text ?? ''), subjects: memory.subjects ?? [], salience: memory.salience, confidence: memory.confidence }))
+      : Object.entries(timeline ?? {}).flatMap(([occurredAt, items], index) => Array.isArray(items) ? items.map((text, itemIndex) => ({ id: `import-${roomId}-${roleId}-${index}-${itemIndex}`, occurredAt, source, kind: 'fact' as const, text: String(text ?? ''), subjects: [], salience: 3, confidence: 1 })) : [])
     this.insertNpcMemories(roomId, roleId, entries)
   }
 
@@ -924,8 +926,15 @@ export class Store {
     })
   }
 
-  updateRolePrivateState(roomId: string, roleId: string, selfModel: string, memoryTimeline: Record<string, string[]>, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
-    const result = this.db.prepare('UPDATE roles SET self_model = ?, memory_timeline = ?, provider_id = ?, model_override = ?, impressions = ?, goals = ?, thinking_strength = ? WHERE room_id = ? AND id = ?').run(selfModel, JSON.stringify(memoryTimeline), config.providerId || null, config.modelOverride || null, JSON.stringify(config.impressions ?? {}), JSON.stringify(config.goals ?? []), config.thinkingStrength || null, roomId, roleId)
+  updateRolePrivateState(roomId: string, roleId: string, selfModel: string, memoryTimeline: Record<string, string[]> | undefined, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
+    const withTimeline = memoryTimeline !== undefined
+    const sql = withTimeline
+      ? 'UPDATE roles SET self_model = ?, memory_timeline = ?, provider_id = ?, model_override = ?, impressions = ?, goals = ?, thinking_strength = ? WHERE room_id = ? AND id = ?'
+      : 'UPDATE roles SET self_model = ?, provider_id = ?, model_override = ?, impressions = ?, goals = ?, thinking_strength = ? WHERE room_id = ? AND id = ?'
+    const values = withTimeline
+      ? [selfModel, JSON.stringify(memoryTimeline), config.providerId || null, config.modelOverride || null, JSON.stringify(config.impressions ?? {}), JSON.stringify(config.goals ?? []), config.thinkingStrength || null, roomId, roleId]
+      : [selfModel, config.providerId || null, config.modelOverride || null, JSON.stringify(config.impressions ?? {}), JSON.stringify(config.goals ?? []), config.thinkingStrength || null, roomId, roleId]
+    const result = this.db.prepare(sql).run(...values)
     if (Number(result.changes) !== 1) throw new Error('Role not found.')
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
@@ -954,12 +963,12 @@ export class Store {
   }
 
   /** 玩家新建角色（id 由调用方生成） */
-  createRole(roomId: string, role: { id: string; name: string; portraitRef: string; currentState: string; presence: 'present' | 'absent' | 'unavailable'; selfModel: string; memoryTimeline: Record<string, string[]>; impressions?: Record<string, string>; goals?: string[] }): void {
+  createRole(roomId: string, role: { id: string; name: string; portraitRef: string; currentState: string; presence: 'present' | 'absent' | 'unavailable'; selfModel: string; memoryTimeline?: Record<string, string[]>; initialMemories?: import('./types.ts').InitialMemory[]; impressions?: Record<string, string>; goals?: string[] }): void {
     const existing = this.db.prepare('SELECT 1 FROM roles WHERE room_id = ? AND id = ?').get(roomId, role.id)
     if (existing) throw new Error(`角色已存在：${role.id}`)
     this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {}))
-    this.seedNpcMemories(roomId, role.id, role.memoryTimeline)
+    this.seedNpcMemories(roomId, role.id, role.memoryTimeline, 'import', role.initialMemories)
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
