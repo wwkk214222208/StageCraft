@@ -1,5 +1,6 @@
 import type { ThinkingStrength, TokenUsage } from '../types.ts'
 import type { DomainEvent } from './domain-events.ts'
+import type { ViewContribution } from './extensions.ts'
 
 /** 核心协议版本；外部 adapter 以此版本协商，不直接依赖内部 RoomRuntime。 */
 export const CORE_PROTOCOL_VERSION = '1.0'
@@ -191,6 +192,8 @@ export interface CoreView {
   actions: CoreAction[]
   availableCommands: Array<{ type: HumanCommand['type']; label: string; enabled: boolean }>
   recentEvents: StateEvent[]
+  /** Optional generic extension output; absent for legacy consumers. */
+  viewContributions?: ViewContribution[]
 }
 
 export type CoreEvent =

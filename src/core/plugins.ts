@@ -13,6 +13,7 @@ import type { RoomSnapshot } from '../types.ts'
 import type { StateCategoryDefinition } from './state.ts'
 import type { CoreStateCommit, CoreStateRestore, CoreStateRepository } from './state-repository.ts'
 import type { StateModuleManifest, StateReducer, StateSchemaDefinition, StateTransactionRequest, StateTransactionResult } from './state-transaction.ts'
+import type { EffectHandlerDefinition, PromptContributorDefinition, ProposalTypeDefinition, RecordCollectionDefinition, ViewContributorDefinition } from './extensions.ts'
 
 /** 可逆资源句柄：HTTP、Cordis、SSE 等 adapter 安装后都必须能释放。 */
 export interface Disposable {
@@ -48,6 +49,16 @@ export interface CoreRuntimeBindingPort {
   registerStateSchema(schema: StateSchemaDefinition): Disposable
   registerStateReducer(reducer: StateReducer): Disposable
   transactState(request: StateTransactionRequest): StateTransactionResult
+  registerRecordCollection(definition: RecordCollectionDefinition): Disposable
+  operateRecord(request: import('./extensions.ts').RecordOperationRequest): import('./extensions.ts').RecordOperationResult
+  registerProposalType(definition: ProposalTypeDefinition): Disposable
+  operateProposal(request: import('./extensions.ts').ProposalOperationRequest): import('./extensions.ts').Proposal | import('./extensions.ts').Proposal[] | undefined
+  registerEffectHandler(definition: EffectHandlerDefinition): Disposable
+  invokeEffect(id: string, input: unknown): Promise<unknown>
+  registerPromptContributor(definition: PromptContributorDefinition): Disposable
+  composePrompt(input: unknown): import('./extensions.ts').PromptFragment[]
+  registerViewContributor(definition: ViewContributorDefinition): Disposable
+  composeView(input: unknown): import('./extensions.ts').ViewContribution[]
 }
 
 export type { CoreStateCommit, CoreStateRestore, CoreStateRepository }
@@ -62,6 +73,11 @@ export interface CoreSolutionHost {
   registerStateModule(manifest: StateModuleManifest): Disposable
   registerStateSchema(schema: StateSchemaDefinition): Disposable
   registerStateReducer(reducer: StateReducer): Disposable
+  registerRecordCollection(definition: RecordCollectionDefinition): Disposable
+  registerProposalType(definition: ProposalTypeDefinition): Disposable
+  registerEffectHandler(definition: EffectHandlerDefinition): Disposable
+  registerPromptContributor(definition: PromptContributorDefinition): Disposable
+  registerViewContributor(definition: ViewContributorDefinition): Disposable
 }
 
 /** 玩法对 Core 命令的扩展点；实现不得绕过 Core 事件/状态边界。 */

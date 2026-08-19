@@ -3,6 +3,7 @@ import type { CoreRuntimePort } from './protocol.ts'
 import type { CoreLlmRouterPlugin, CoreRuntimeBindingPort, CoreRuntimePlugin, CoreSolutionPlugin, Disposable, HumanCoreInteractionPlugin } from './plugins.ts'
 import type { CoreStateRepository } from './state-repository.ts'
 import type { StateModuleManifest, StateReducer, StateSchemaDefinition, StateTransactionRequest, StateTransactionResult } from './state-transaction.ts'
+import type { CoreExtensionPort } from './extensions.ts'
 import type { DefaultCorePluginContainer } from './container.ts'
 import { CoreRuntimePluginAdapter } from './runtime-plugin.ts'
 
@@ -20,6 +21,7 @@ export interface StageCraftService {
     registerReducer(reducer: StateReducer): Disposable
     transact(request: StateTransactionRequest): StateTransactionResult
   }
+  readonly extensions: CoreExtensionPort
   readonly install: {
     core(plugin: CoreRuntimePlugin): Disposable
     human(plugin: HumanCoreInteractionPlugin): Disposable
@@ -39,6 +41,18 @@ export function createStageCraftService(core: CoreRuntimePort & CoreRuntimeBindi
       registerSchema: schema => core.registerStateSchema(schema),
       registerReducer: reducer => core.registerStateReducer(reducer),
       transact: request => core.transactState(request),
+    },
+    extensions: {
+      registerRecordCollection: definition => core.registerRecordCollection(definition),
+      operateRecord: request => core.operateRecord({ ...request, roomId: request.roomId ?? roomId }),
+      registerProposalType: definition => core.registerProposalType(definition),
+      operateProposal: request => core.operateProposal({ ...request, roomId: request.roomId ?? roomId }),
+      registerEffectHandler: definition => core.registerEffectHandler(definition),
+      invokeEffect: (id, input) => core.invokeEffect(id, input),
+      registerPromptContributor: definition => core.registerPromptContributor(definition),
+      composePrompt: input => core.composePrompt(input),
+      registerViewContributor: definition => core.registerViewContributor(definition),
+      composeView: input => core.composeView(input),
     },
     install: {
       core: plugin => container.addCore(plugin),
