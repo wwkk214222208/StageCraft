@@ -1,11 +1,13 @@
 /**
  * dsh-rp 验证脚本：
  * ① 用 stub ctx 调用插件 apply，证明"插件能启动酒馆"；
- * ② 若本机有 @deepseek-ai/cordis（如 dsh-harness 的 node_modules），
- *    用真实 Cordis 跑完整生命周期（ctx.plugin → start → 请求 → stop）。
+ * ② 默认从宿主解析 @deepseek-ai/cordis；显式 CORDIS_PATH 时加载指定绝对路径，
+ *    用真实 Cordis 跑完整生命周期（ctx.plugin → 请求 → fiber.dispose）。
  * 运行：node dsh-rp/verify.mjs
  */
 import { setTimeout as sleep } from 'node:timers/promises'
+import { pathToFileURL } from 'node:url'
+import { resolve } from 'node:path'
 import * as rp from './src/index.ts'
 
 const PORT = Number(process.env.RP_PORT ?? 18787)
@@ -42,21 +44,25 @@ const closeApp = disposers.pop()
 await closeApp()
 console.log('[stub ctx] disposer 关闭服务器+数据库 OK')
 
-// ---------- ② 真实 Cordis（dsh vendor 版，可选） ----------
-// Cordis 4：ctx.plugin() 同步执行 apply（返回 Fiber），卸载用 fiber.dispose()，没有 start/stop。
+// ---------- ② 真实 Cordis（DSH vendor 版） ----------
+// Cordis 4：ctx.plugin() 返回 Fiber（thenable），卸载用 fiber.dispose()，没有 start/stop。
 const entry = { name: rp.name, inject: rp.inject, apply: rp.apply }
 try {
-  const cordisPath = process.env.CORDIS_PATH ?? '/root/dsh-harness/node_modules/@deepseek-ai/cordis/lib/index.js'
-  const { Context } = await import(`file://${cordisPath}`)
+  const cordisModule = process.env.CORDIS_PATH
+    ? await import(pathToFileURL(resolve(process.env.CORDIS_PATH)).href)
+    : await import('@deepseek-ai/cordis')
+  const { Context } = cordisModule
   const ctx = new Context()
   const fiber = ctx.plugin(entry)
+  await fiber
   await waitForReady(`${base}/api/room`)
   console.log('[real cordis] ctx.plugin 后 /api/room 响应 OK')
   await fiber.dispose()
   // dispose 后端口应已释放
   const after = await fetch(`${base}/api/room`).catch(() => null)
-  console.log(after ? '[real cordis] dispose 后端口仍可访问（异常）' : '[real cordis] fiber.dispose 卸载后端口已释放 OK')
+  if (after) throw new Error('fiber.dispose 后 HTTP 端口仍可访问')
+  console.log('[real cordis] fiber.dispose 卸载后端口已释放 OK')
 } catch (error) {
-  console.warn(`[real cordis] 跳过（需本机有 @deepseek-ai/cordis，可用 CORDIS_PATH 指定）：${error.message}`)
+  console.error(`[real cordis] 验证失败：${error instanceof Error ? error.stack ?? error.message : String(error)}`)
+  process.exitCode = 1
 }
-process.exit(0)

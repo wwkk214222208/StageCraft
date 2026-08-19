@@ -2,11 +2,15 @@
   "name": "stagecraft",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "node --experimental-strip-types src/server.ts",
     "start": "node --experimental-strip-types src/server.ts",
     "test": "node --experimental-strip-types --test --test-concurrency=8 test/*.test.ts"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "npm:cordis@4.0.0-rc.7"
   },
   "engines": {
     "node": ">=24"
