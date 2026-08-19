@@ -524,6 +524,9 @@ export class RoomRuntime {
 
   retractNpcMemory(roomId: string, memoryId: string): void { this.store.retractNpcMemory(roomId, memoryId); this.emit(roomId) }
 
+  updateNpcMemory(roomId: string, memoryId: string, entry: Parameters<Store['updateNpcMemory']>[2]): void { if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('管理 NPC 记忆需要在空闲时进行。'); this.store.updateNpcMemory(roomId, memoryId, entry); this.emit(roomId) }
+  supersedeNpcMemory(roomId: string, memoryId: string, entry: Omit<Parameters<Store['supersedeNpcMemory']>[2], 'id'>): void { if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('管理 NPC 记忆需要在空闲时进行。'); this.store.supersedeNpcMemory(roomId, memoryId, { ...entry, id: `manual-${randomUUID()}` }); this.emit(roomId) }
+
   saveLore(roomId: string, lore: import('./types.ts').LoreEntry[]): void {
     this.store.saveLore(roomId, lore)
     this.emit(roomId)

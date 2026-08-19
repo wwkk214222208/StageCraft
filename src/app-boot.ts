@@ -362,6 +362,12 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       if (url.pathname === '/api/roles/memories/retract' && request.method === 'POST') {
         const body = await readJson(request); runtime.retractNpcMemory(roomId, String(body.memoryId)); return json(response, 200, { ok: true })
       }
+      if (url.pathname === '/api/roles/memories/update' && request.method === 'POST') {
+        const body = await readJson(request); runtime.updateNpcMemory(roomId, String(body.memoryId), body.entry ?? {}); return json(response, 200, { ok: true })
+      }
+      if (url.pathname === '/api/roles/memories/supersede' && request.method === 'POST') {
+        const body = await readJson(request); runtime.supersedeNpcMemory(roomId, String(body.memoryId), body.entry ?? {}); return json(response, 200, { ok: true })
+      }
       if (url.pathname === '/api/roles/intervene' && request.method === 'POST') {
         const body = await readJson(request)
         runtime.interveneRole(roomId, String(body.roleId), String(body.selfModel ?? ''), JSON.parse(String(body.memoryTimeline ?? '{}')) as Record<string, string[]>, { providerId: body.providerId ? String(body.providerId) : undefined, modelOverride: body.modelOverride ? String(body.modelOverride) : undefined, ...(typeof body.impressions === 'string' ? { impressions: JSON.parse(body.impressions) as Record<string, string> } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}), ...(body.thinkingStrength ? { thinkingStrength: String(body.thinkingStrength) as import('./types.ts').ThinkingStrength } : {}) })

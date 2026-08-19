@@ -479,6 +479,25 @@ export class Store {
 
   retractNpcMemory(roomId: string, memoryId: string): void { this.db.prepare("UPDATE npc_memories SET status = 'retracted', updated_at = ? WHERE room_id = ? AND id = ?").run(new Date().toISOString(), roomId, memoryId) }
 
+  updateNpcMemory(roomId: string, memoryId: string, entry: { kind?: import('./types.ts').MemoryKind; text?: string; subjects?: string[]; occurredAt?: string; occurredLocation?: string; salience?: number; confidence?: number }): void {
+    const current = this.db.prepare('SELECT id FROM npc_memories WHERE room_id = ? AND id = ?').get(roomId, memoryId)
+    if (!current) throw new Error('记忆不存在。')
+    const text = String(entry.text ?? '').trim()
+    if (!text) throw new Error('记忆内容不能为空。')
+    const kinds = ['fact', 'observation', 'interaction', 'promise', 'relationship', 'belief', 'emotion', 'goal_update']
+    if (!entry.kind || !kinds.includes(entry.kind)) throw new Error('无效的记忆类型。')
+    this.db.prepare('UPDATE npc_memories SET kind = ?, text = ?, subjects = ?, occurred_at = ?, occurred_location = ?, salience = ?, confidence = ?, updated_at = ? WHERE room_id = ? AND id = ?')
+      .run(entry.kind, text, JSON.stringify((entry.subjects ?? []).map(String).map(value => value.trim()).filter(Boolean)), String(entry.occurredAt ?? '未标注时间').trim() || '未标注时间', entry.occurredLocation?.trim() || null, Math.max(1, Math.min(5, Math.round(entry.salience ?? 3))), Math.max(0, Math.min(1, entry.confidence ?? 1)), new Date().toISOString(), roomId, memoryId)
+    this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
+  }
+
+  supersedeNpcMemory(roomId: string, memoryId: string, replacement: { id: string; kind: import('./types.ts').MemoryKind; text: string; subjects: string[]; occurredAt: string; occurredLocation?: string; salience: number; confidence: number }): void {
+    const prior = this.db.prepare("SELECT role_id FROM npc_memories WHERE room_id = ? AND id = ? AND status = 'active'").get(roomId, memoryId) as { role_id: string } | undefined
+    if (!prior) throw new Error('可替代的记忆不存在。')
+    this.insertNpcMemories(roomId, prior.role_id, [{ ...replacement, source: 'manual' }])
+    this.db.prepare("UPDATE npc_memories SET status = 'superseded', superseded_by = ?, updated_at = ? WHERE room_id = ? AND id = ?").run(replacement.id, new Date().toISOString(), roomId, memoryId)
+  }
+
   getRoom(roomId: string): RoomSnapshot | undefined {
     const room = this.db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId) as {
       id: string; title: string; player_name: string; player_persona: string; player_state: string; player_portrait_ref: string; scene_time: string | null; scene_location: string | null; phase: RoomPhase; revision: number; player_contribution: string | null; last_error: string | null; mode: string; auto_publish: number; speech: string | null; pending_world_change: string | null; pending_narration: string | null
