@@ -1,3 +1,4 @@
+import type { CoreSolutionHost, Disposable, CoreSolutionPlugin } from './plugins.ts'
 import type { RoomRuntime } from '../room-runtime.ts'
 import type { HumanCommand } from './protocol.ts'
 import type { RoomMode, ThinkingStrength, WorldChangeRequest } from '../types.ts'
@@ -7,15 +8,22 @@ export interface CoreCommandContext {
   defaultRoomId: string
 }
 
-export interface CoreLegacyCommandAdapter {
-  dispatch(command: HumanCommand): Promise<void>
-}
-
-/** Explicit compatibility adapter. Production startTavern does not install it. */
-export class LegacyRuntimeCommandAdapter implements CoreLegacyCommandAdapter {
+/**
+ * Explicit compatibility solution. It is intentionally outside CoreRuntimeSkeleton;
+ * production does not install it, while old tests/integrators may opt in explicitly.
+ */
+export class LegacyRuntimeSolutionPlugin implements CoreSolutionPlugin {
+  readonly id = 'legacy.runtime.solution'
   private readonly context: CoreCommandContext
   constructor(context: CoreCommandContext) { this.context = context }
-  dispatch(command: HumanCommand): Promise<void> { return dispatchLegacyCommand(this.context, command) }
+
+  install(host: CoreSolutionHost): Disposable {
+    return host.registerCommandHandler({
+      id: `${this.id}.command-handler`,
+      canHandle: command => ['submit-text', 'select-role', 'cancel', 'approve', 'reject', 'restart', 'edit-proposal', 'role-management', 'choose'].includes(command.type),
+      handle: command => dispatchLegacyCommand(this.context, command),
+    })
+  }
 }
 
 function record(command: HumanCommand): Record<string, unknown> {
@@ -26,7 +34,7 @@ function roomIdOf(payload: Record<string, unknown>, fallback: string): string {
   return typeof payload.roomId === 'string' && payload.roomId.trim() ? payload.roomId : fallback
 }
 
-/** 组合根中的群聊/导演命令由方案 Handler 负责；这里保留未安装方案时的历史兼容回退及管理命令。 */
+/** 兼容方案只在显式安装时执行旧 RoomRuntime facade；Core 本身不提供回退。 */
 export async function dispatchLegacyCommand(context: CoreCommandContext, command: HumanCommand): Promise<void> {
   const payload = record(command)
   const roomId = roomIdOf(payload, context.defaultRoomId)

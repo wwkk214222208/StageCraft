@@ -1,7 +1,5 @@
 import type { RoomSnapshot } from '../types.ts'
 import { roomSnapshotEvent, type StateCategoryDefinition } from './state.ts'
-import type { RoomRuntime } from '../room-runtime.ts'
-import { LegacyRuntimeCommandAdapter, type CoreLegacyCommandAdapter } from './command-adapter.ts'
 import type { CoreEventLog } from './event-log.ts'
 import type { DomainEvent } from './domain-events.ts'
 import { validateWorkflowDefinition, WorkflowExecutor, WorkflowRegistry } from './workflow-engine.ts'
@@ -43,7 +41,6 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   private readonly interactionOwners = new Map<string, string>()
   private readonly categories = new Map<string, StateCategoryDefinition>()
   private readonly categoryOwners = new Map<string, string>()
-  private legacyAdapter?: CoreLegacyCommandAdapter
   private llmRouter?: CoreLlmRouterPlugin
   private llmRouterDisposable?: Disposable
   private llmBindingSequence = 0
@@ -131,7 +128,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     this.commitStateCandidate(next, events, workflows, actions, this.roomIdFromEvents(events))
   }
 
-  projectRoom(room: RoomSnapshot, causedBy = 'legacy-room-runtime', options: { persist?: boolean } = {}): void {
+  projectRoom(room: RoomSnapshot, causedBy = 'core.project-room', options: { persist?: boolean } = {}): void {
     const persist = options.persist !== false
     const candidateState = this.projectState(room)
     const solutionProjection = this.projectSolution(room)
@@ -410,19 +407,6 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     return Boolean(definition && instance.definitionVersion === definition.version && definition.steps[instance.step])
   }
 
-  /** @deprecated Install a CoreLegacyCommandAdapter explicitly instead. Production never calls this. */
-  attachLegacyRuntime(runtime: RoomRuntime, defaultRoomId: string): Disposable {
-    return this.installLegacyAdapter(new LegacyRuntimeCommandAdapter({ runtime, defaultRoomId }))
-  }
-
-  /** Explicitly install the compatibility adapter; never used by the production composition root. */
-  installLegacyAdapter(adapter: CoreLegacyCommandAdapter): Disposable {
-    const previous = this.legacyAdapter
-    this.legacyAdapter = adapter
-    let active = true
-    return { dispose: () => { if (!active) return; active = false; if (this.legacyAdapter === adapter) this.legacyAdapter = previous } }
-  }
-
   async dispatch(command: HumanCommand): Promise<void> {
     const interaction = command.interactionId ? this.interactions.get(command.interactionId) : undefined
     if (command.interactionId && !interaction) throw new Error(`Interaction is not pending: ${command.interactionId}`)
@@ -442,18 +426,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         throw error
       }
     }
-    if (!this.legacyAdapter) {
-      const error = new Error(`Core command has no handler: ${command.type}`)
-      this.emit({ type: 'error', revision: this.revision, message: error.message })
-      throw error
-    }
-    try {
-      await this.legacyAdapter.dispatch(command)
-      if (interaction) this.resolveInteraction(interaction, command)
-    } catch (error) {
-      this.emit({ type: 'error', revision: this.revision, message: error instanceof Error ? error.message : String(error) })
-      throw error
-    }
+    const error = new Error(`Core command has no handler: ${command.type}`)
+    this.emit({ type: 'error', revision: this.revision, message: error.message })
+    throw error
   }
 
   private resolveInteraction(interaction: import('./protocol.ts').InteractionRequest, command: HumanCommand): void {

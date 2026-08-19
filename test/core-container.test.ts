@@ -90,6 +90,7 @@ test('startTavern installs the initial provider synchronously and closes Store a
 
 test('startTavern close releases installed container plugins before the Store', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'rp-container-test-'))
+  writeFileSync(join(dataDir, 'providers.json'), JSON.stringify({ providers: [] }), 'utf8')
   const app = startTavern({ root, dataDir, port: 0, host: '127.0.0.1' })
   let disposed = false
   app.container.addHuman({ id: 'test.app-human', install: () => ({ dispose: () => { disposed = true } }), dispatch: async () => {}, publish: () => {} })

@@ -9,11 +9,12 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import type { WorkerSet } from '../src/workers.ts'
-import { installStageCraftSolution } from './core-solution-test-utils.ts'
+import { installStageCraftSolution, installLegacyRuntimeSolution } from './core-solution-test-utils.ts'
 
 test('rejecting chat speech with world change clears proposal and restores role select', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-speech-reject-'))
   let store: Store | undefined
+  let container: import('../src/core/container.ts').DefaultCorePluginContainer | undefined
   try {
     store = new Store(join(root, 'state.sqlite'))
     const story = loadStoryPackage(fileURLToPath(new URL('../stories', import.meta.url)), 'eldoria')
@@ -25,9 +26,9 @@ test('rejecting chat speech with world change clears proposal and restores role 
       speak: async () => ({ text: '我不再前进。', worldChange: { location: '北塔' } }),
     }
     const core = new CoreRuntimeSkeleton()
-    installStageCraftSolution(core)
+    container = installStageCraftSolution(core)
     const runtime = new RoomRuntime(store, workers, core)
-    core.attachLegacyRuntime(runtime, roomId)
+    installLegacyRuntimeSolution(container, runtime, roomId)
     core.attachWorkflowStore({ save: (id, instance) => store!.saveWorkflowInstance(id, instance), list: id => store!.listWorkflowInstances(id) })
     core.projectRoom(store.getRoom(roomId))
     const select = core.getView().interactions.find(item => item.kind === 'role-select')!
@@ -41,6 +42,7 @@ test('rejecting chat speech with world change clears proposal and restores role 
     assert.equal(core.getView().workflows.find(item => item.definitionId === 'stagecraft.chat.speech')!.step, 'awaiting-player-input')
     assert.equal(core.getView().interactions.find(item => item.kind === 'role-select') !== undefined, true)
   } finally {
+    await container?.dispose()
     store?.close()
     rmSync(root, { recursive: true, force: true })
   }

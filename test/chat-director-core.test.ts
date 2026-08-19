@@ -9,11 +9,12 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import type { WorkerSet } from '../src/workers.ts'
-import { installStageCraftSolution } from './core-solution-test-utils.ts'
+import { installStageCraftSolution, installLegacyRuntimeSolution } from './core-solution-test-utils.ts'
 
 test('chat.director suggestion uses Core interaction and returns to suggestion state', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-director-core-'))
   let store: Store | undefined
+  let container: import('../src/core/container.ts').DefaultCorePluginContainer | undefined
   try {
     store = new Store(join(root, 'state.sqlite'))
     const story = loadStoryPackage(fileURLToPath(new URL('../stories', import.meta.url)), 'eldoria')
@@ -21,9 +22,9 @@ test('chat.director suggestion uses Core interaction and returns to suggestion s
     store.restartRoom(roomId, story, { mode: 'chat' })
     const workers: WorkerSet = { decide: async () => ({ roleId: 'aria', participation: 'excluded', status: 'abstained' }), draft: async () => ({ text: '' }), directorChat: async () => ({ reply: '收到，我会留意北塔。' }) }
     const core = new CoreRuntimeSkeleton()
-    installStageCraftSolution(core)
+    container = installStageCraftSolution(core)
     const runtime = new RoomRuntime(store, workers, core)
-    core.attachLegacyRuntime(runtime, roomId)
+    installLegacyRuntimeSolution(container, runtime, roomId)
     core.attachWorkflowStore({ save: (id, instance) => store!.saveWorkflowInstance(id, instance), list: id => store!.listWorkflowInstances(id) })
     core.projectRoom(store.getRoom(roomId))
     const interaction = core.getView().interactions.find(item => item.id.includes('director-suggestion'))!
@@ -33,6 +34,7 @@ test('chat.director suggestion uses Core interaction and returns to suggestion s
     assert.equal(workflow.step, 'awaiting-suggestion')
     assert.equal(store.getRoom(roomId).consultations.at(-1)?.role, 'director')
   } finally {
+    await container?.dispose()
     store?.close()
     rmSync(root, { recursive: true, force: true })
   }

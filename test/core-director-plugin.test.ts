@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { DefaultCorePluginContainer } from '../src/core/container.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { StageCraftSolutionPlugin } from '../src/core/solutions.ts'
+import { LegacyRuntimeSolutionPlugin } from '../src/core/command-adapter.ts'
 import type { ModelRequest } from '../src/core/protocol.ts'
 import { ModelGatewayRouterAdapter } from '../src/core/model-router-adapter.ts'
 import { RoomRuntime } from '../src/room-runtime.ts'
@@ -47,7 +48,7 @@ test('Director Core handler completes the real InteractionRequest chain without 
     if (['submitTurn', 'proceedToDraft', 'approve', 'rejectDraft', 'cancelTurn', 'retryDirector', 'reconsiderReaction', 'consult', 'finishConsultation', 'redraft'].includes(String(property))) return () => { legacyCalls += 1; throw new Error('legacy path must not be called') }
     return Reflect.get(target, property, receiver)
   } })
-  env.core.attachLegacyRuntime(legacyProxy, env.roomId)
+  env.container.addSolution(new LegacyRuntimeSolutionPlugin({ runtime: legacyProxy, defaultRoomId: env.roomId }))
   try {
     const first = env.core.getView().interactions.find(item => item.id.endsWith(':player-input'))!
     await env.core.dispatch({ id: 'turn', actor: 'player', interactionId: first.id, type: 'submit-text', payload: { roomId: env.roomId, text: '沿林间小路前进' } })

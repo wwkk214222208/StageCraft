@@ -42,3 +42,7 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 ## 兼容策略
 
 群聊、导演和管理/重启命令均由已安装的 StageCraft Command Handler 接管；旧 HTTP 路由只构造带 scope/action 或 operation 的 Core command。两条垂直流程分别由独立的 Store-backed `StageCraftChatService` 与 `StageCraftDirectorService` 持有，角色/房间编辑由独立的 `StageCraftManagementService` 持有，模型请求通过 Core LLM router 并保留非敏感 route/correlation metadata。生产组合根不安装 legacy runtime adapter；`RoomRuntime` 仅作为旧测试和外部兼容 facade。Core 对没有 handler 的命令 fail closed 并抛出可诊断错误。
+
+## 当前完成状态与限制
+
+Core Runtime 的通用内核、插件容器、状态仓储、Workflow Registry/Executor、HTTP 人机插件和 LLM 路由边界已经进入正式启动链；StageCraft 的 Store-backed domain services 仍是当前业务状态变化的执行者，并通过 Core 投影与事务仓储保持一致。Workflow Executor 当前负责固定定义的注册、投影和合法转换，不是通用的自动业务编排器。旧 RoomRuntime 业务 facade 只为兼容测试和外部调用保留；显式 `LegacyRuntimeSolutionPlugin` 也仅用于兼容场景，生产组合根不安装它。未来仍需在不破坏这些边界的前提下继续收紧旧外部接口和迁移策略。

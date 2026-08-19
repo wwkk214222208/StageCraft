@@ -194,7 +194,6 @@ test('chat speech uses the Core LLM router request/result path', async () => {
     const runtime = new RoomRuntime(store, undefined, core)
     runtime.setRoomConfig(roomId, { mode: 'chat', autoPublish: false })
     container.addSolution(new StageCraftSolutionPlugin({ chat: runtime.getChatService(), defaultRoomId: roomId }))
-    core.attachLegacyRuntime(runtime, roomId)
     core.projectRoom(runtime.get(roomId))
     const requests: ModelRequest[] = []
     const thinkingEvents: Array<{ actor: string; text: string; done: boolean }> = []

@@ -8,19 +8,20 @@ import { Store } from '../src/store.ts'
 import { RoomRuntime } from '../src/room-runtime.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
-import { installStageCraftSolution } from './core-solution-test-utils.ts'
+import { installStageCraftSolution, installLegacyRuntimeSolution } from './core-solution-test-utils.ts'
 
 test('Core interaction is pending, validates command type, then resolves after legacy dispatch', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-interaction-'))
   let store: Store | undefined
+  let container: import('../src/core/container.ts').DefaultCorePluginContainer | undefined
   try {
     store = new Store(join(root, 'state.sqlite'))
     const story = loadStoryPackage(fileURLToPath(new URL('../stories', import.meta.url)), 'eldoria')
     const roomId = store.seed(story)
     const core = new CoreRuntimeSkeleton()
-    installStageCraftSolution(core)
+    container = installStageCraftSolution(core)
     const runtime = new RoomRuntime(store, undefined, core)
-    core.attachLegacyRuntime(runtime, roomId)
+    installLegacyRuntimeSolution(container, runtime, roomId)
     core.attachWorkflowStore({ save: (id, instance) => store!.saveWorkflowInstance(id, instance), list: id => store!.listWorkflowInstances(id) })
     core.projectRoom(store.getRoom(roomId))
     const interaction = core.getView().interactions[0]
@@ -34,6 +35,7 @@ test('Core interaction is pending, validates command type, then resolves after l
     assert.equal(core.getView().workflows[0].pendingInteractionIds.includes(interaction.id), false)
     assert.equal(store.listWorkflowInstances(roomId).every(item => !item.pendingInteractionIds.includes(interaction.id)), true)
   } finally {
+    await container?.dispose()
     store?.close()
     rmSync(root, { recursive: true, force: true })
   }

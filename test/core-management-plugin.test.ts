@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { Store } from '../src/store.ts'
 import { RoomRuntime } from '../src/room-runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
+import { LegacyRuntimeSolutionPlugin } from '../src/core/command-adapter.ts'
 
 test('management commands use the installed narrow handler and reject invalid operations without legacy fallback', async () => {
   const core = new CoreRuntimeSkeleton()
@@ -113,10 +114,12 @@ test('RoomRuntime facade delegates to its single Store-backed management service
 test('legacy compatibility adapter works only while explicitly installed', async () => {
   const core = new CoreRuntimeSkeleton()
   let calls = 0
-  const installation = core.installLegacyAdapter({ dispatch: async () => { calls += 1 } })
+  const container = new DefaultCorePluginContainer(core)
+  const installation = container.addSolution(new LegacyRuntimeSolutionPlugin({ runtime: { submitTurn: async () => { calls += 1 } } as any, defaultRoomId: 'room-1' }))
   await core.dispatch({ id: 'legacy', actor: 'operator', type: 'submit-text', payload: {} })
   assert.equal(calls, 1)
-  installation.dispose()
+  await installation.dispose()
   await assert.rejects(() => core.dispatch({ id: 'closed', actor: 'operator', type: 'submit-text', payload: {} }), /Core command has no handler: submit-text/)
   assert.equal(calls, 1)
+  await container.dispose()
 })

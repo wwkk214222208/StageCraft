@@ -79,8 +79,8 @@ export function projectRoomSnapshot(room: RoomSnapshot): CoreStateSnapshot {
   }
 }
 
-/** 为兼容旧服务调用生成统一 StateEvent；实际状态仍由旧 Store 负责落库。 */
-export function roomSnapshotEvent(room: RoomSnapshot, causedBy = 'legacy-room-runtime', categories = projectRoomSnapshot(room).categories): StateEvent {
+/** 将 Store-backed domain service 的完整房间投影转换为统一 StateEvent，供 Core 投影与事务仓储使用。 */
+export function roomSnapshotEvent(room: RoomSnapshot, causedBy = 'core.project-room', categories = projectRoomSnapshot(room).categories): StateEvent {
   return {
     id: `state-snapshot-${room.id}-${room.revision}`,
     type: 'room.snapshot.projected',

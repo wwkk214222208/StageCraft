@@ -10,7 +10,7 @@ import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import type { WorkerSet } from '../src/workers.ts'
 import type { WorldChangeRequest } from '../src/types.ts'
-import { installStageCraftSolution } from './core-solution-test-utils.ts'
+import { installStageCraftSolution, installLegacyRuntimeSolution } from './core-solution-test-utils.ts'
 
 function setup(root: string, worldChange: WorldChangeRequest) {
   const store = new Store(join(root, 'state.sqlite'))
@@ -24,20 +24,22 @@ function setup(root: string, worldChange: WorldChangeRequest) {
     speak: async () => ({ text: '我指向远方。', worldChange }),
   }
   const core = new CoreRuntimeSkeleton()
-  installStageCraftSolution(core)
+  const container = installStageCraftSolution(core)
   const runtime = new RoomRuntime(store, workers, core)
-  core.attachLegacyRuntime(runtime, roomId)
+  installLegacyRuntimeSolution(container, runtime, roomId)
   core.attachWorkflowStore({ save: (id, instance) => store.saveWorkflowInstance(id, instance), list: id => store.listWorkflowInstances(id) })
   core.projectRoom(store.getRoom(roomId))
-  return { store, core, roomId }
+  return { store, core, roomId, container }
 }
 
 test('chat speech world-change approval returns to role selection', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-world-change-'))
   let store: Store | undefined
+  let container: import('../src/core/container.ts').DefaultCorePluginContainer | undefined
   try {
     const setupResult = setup(root, { time: '翌日', location: '北塔' })
     store = setupResult.store
+    container = setupResult.container
     const select = setupResult.core.getView().interactions.find(item => item.kind === 'role-select')!
     await setupResult.core.dispatch({ id: 'select', actor: 'player', interactionId: select.id, type: 'select-role', payload: { roleId: select.options![0].id } })
     const approval = setupResult.core.getView().interactions.find(item => item.id.includes('world-change-approval'))!
@@ -47,6 +49,7 @@ test('chat speech world-change approval returns to role selection', async () => 
     assert.equal(setupResult.core.getView().workflows.find(item => item.definitionId === 'stagecraft.chat.speech')!.step, 'awaiting-player-input')
     assert.equal(setupResult.core.getView().interactions.find(item => item.kind === 'role-select') !== undefined, true)
   } finally {
+    await container?.dispose()
     store?.close()
     rmSync(root, { recursive: true, force: true })
   }
