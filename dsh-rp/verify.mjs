@@ -1,6 +1,6 @@
 /**
  * dsh-rp 验证脚本：
- * ① 用 stub ctx 调用插件 apply，证明"插件能启动酒馆"；
+ * ① 用 stub ctx 调用打包产物 apply，证明安装目录自包含；
  * ② 默认从宿主解析 @deepseek-ai/cordis；显式 CORDIS_PATH 时加载指定绝对路径，
  *    用真实 Cordis 跑完整生命周期（ctx.plugin → 请求 → fiber.dispose）。
  * 运行：node dsh-rp/verify.mjs
@@ -8,7 +8,7 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
-import * as rp from './src/index.ts'
+import * as rp from './dist/index.js'
 
 const PORT = Number(process.env.RP_PORT ?? 18787)
 process.env.RP_PORT = String(PORT)

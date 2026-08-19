@@ -4,3 +4,6 @@
 - insert:
     - id: rp
       name: 'dsh-rp'
+      config:
+        port: 8799
+        host: '127.0.0.1'

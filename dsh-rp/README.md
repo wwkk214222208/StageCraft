@@ -1,36 +1,45 @@
-# dsh-rp —— StageCraft 的 Cordis/dsh 适配壳
+# dsh-rp —— StageCraft 的 Cordis/dsh bundle
 
-把[角色酒馆](..)（StageCraft）包成一个**自包含 Cordis 插件**，让 dsh 用户用 dsh 自己的插件体系装上并启动酒馆——蹭 DeepSeek Harness 的热度与分发渠道，核心代码零改动、零 dsh 服务依赖。
+这是一个可直接安装的 AGPL-3.0-only DSH bundle。它把 StageCraft 的同一份业务实现打包为 dist/index.js；独立运行入口和 DSH 入口不会维护两套逻辑，bundle 不依赖安装目录之外的仓库源码。
 
-## 为什么是"壳"而不是重写
+## 运行模型
 
-- `inject = []`：不依赖 dsh 的 `llm / session / web / agents` 等服务，应用自包含（自己的 SQLite、自己的端口、自己的前端）。
-- 热度照蹭、退出通道还在：装进 dsh 是加分项，不装也照常独立运行。
-- 与 [../src/app-boot.ts](../src/app-boot.ts) 共用同一套启动逻辑（`startTavern()`），独立入口 `npm run dev` 与插件壳行为完全一致。
+- DSH 只提供 Cordis 宿主；Tavern 自己负责 SQLite、HTTP、静态资源与模型连接。
+- 构建脚本把公开的默认剧本、提示词和 UI 资源写入 dist/。
+- data/、save/、custom/ 和本地媒体不会进入 bundle。
 
-## 验证
+## 验证与打包
 
-```bash
-node dsh-rp/verify.mjs
-```
+构建并验证：
 
-脚本会：① 用 stub ctx 调用插件 `apply` 启动酒馆并请求 `/api/room`；② 若本机有 `@deepseek-ai/cordis`（如 dsh-harness 的 node_modules），用**真实 Cordis** `ctx.plugin + ctx.start/stop` 跑一遍完整生命周期。
+    node dsh-rp/scripts/build.mjs
+    node dsh-rp/verify.mjs
+    cd dsh-rp
+    npm pack
 
-## 装进 dsh profile
+验证脚本会用宿主解析到的 @deepseek-ai/cordis 加载真实打包入口，执行 ctx.plugin、请求 /api/room，再等待 fiber.dispose() 释放端口。
 
-1. 把本目录加进 profile 的依赖（官方命令：`dsh plugin --profile <name> add <path-or-git-url>`，或手动 `pnpm add` 进 profile workspace）。
-2. `cordis.patch.yml` 已提供标准 bundle 行（`- insert: [{ id: rp, name: 'dsh-rp' }]`），或手动在 `cordis.patch.yml` 追加同样内容。
-3. `dsh --profile <name>` 启动后访问 `http://127.0.0.1:8799`（可用 `RP_PORT` 改端口）。
+npm pack 产物只包含 dist/、bundle patch、许可证与 README；生成的 tgz 不提交到仓库。
 
-## 配置（环境变量）
+## 安装到 DSH
 
-| 变量 | 默认 | 说明 |
+1. 将本包安装到目标 profile 的 node_modules。
+2. 使用本包提供的 cordis.patch.yml，或在 profile patch 中插入 id 为 rp、name 为 dsh-rp 的配置行。
+3. 用 dsh --profile name --dump-config 确认该行已进入组合配置。
+4. 启动 profile 后访问配置的 HTTP 地址。
+
+## Cordis Config
+
+cordis.patch.yml 中的 config 是正式配置入口：
+
+| 字段 | 默认 | 说明 |
 |---|---|---|
-| `RP_PORT` | `8799` | 酒馆 HTTP 端口（避开独立酒馆 8787 与 dsh web GUI 8898） |
-| `RP_ROOT` | 仓库根（`../..` 相对本文件） | 数据/剧本/静态资源根目录 |
+| port | 8799 | 酒馆 HTTP 端口 |
+| host | 127.0.0.1 | HTTP 监听地址 |
+| root | bundle 的 dist/ | 数据、剧本、提示词和静态资源根目录 |
 
-## 原型限制（发布前要做的事）
+RP_PORT、HOST、RP_ROOT 仍作为独立开发运行时的兼容回退；DSH 配置字段优先。
 
-- `main` 指向 `src/index.ts`（TS 源码）：Node 24 默认 type stripping 可直接跑；发布 npm 前应像每个 `dsh-*` 包一样编译出 `lib/`。
-- 尚未声明 `Config`（schemastery schema）——按 dsh 插件规范加上 `Config` 后即可在 `cordis.patch.yml` 里配端口/数据目录，而不用环境变量。
-- `root` 按仓库布局解析（`dsh-rp/src` 上两级）；真正发布后应改为读取宿主提供的路径配置。
+## 许可证与源码
+
+bundle 为 AGPL-3.0-only。LICENSE、NOTICE.md 和构建生成的 dist/SOURCE.md 随产物提供；若 SOURCE_REPOSITORY_URL 未设置，构建脚本会明确标记为开发产物，发布者必须在正式分发前提供可访问的对应源码位置。

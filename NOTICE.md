@@ -4,10 +4,9 @@
 
 ## 徽标（header 左侧图形）
 
-页面 header 的鱼形徽标（`public/index.html` 内嵌 SVG）为第三方**商标/版权素材**，本仓库仅作本地自用展示，**未获得原作者授权**。
+页面 header 使用本项目自有的简单代码原生标识；未分发第三方徽标素材。
 
-- 再分发、打包发布或商用本项目时，请**自行替换或移除**该徽标，直至你取得相应授权。
-- 本项目的开源许可（AGPL-3.0）**不覆盖**该徽标的图形权利；图形权利归其原作者所有。
+- 该标识为本项目源码原生绘制，不包含第三方徽标素材。
 
 ## SillyTavern（AGPL-3.0）默认内容
 
@@ -21,7 +20,7 @@
 
 - `data/`（数据库、提供商密钥配置、运行日志）、`save/`（存档）与 `custom/`、`stories/custom/`（私人剧本、私有文档、备份）**不随仓库发布**，见 `.gitignore`。
 
-## Cordis / DSH 生态（阶段一新增）
+## Cordis / DSH 生态及构建依赖
 
 本阶段只依赖 Cordis，不复制其源码。DSH 使用的 scoped 宿主包名为
 `@deepseek-ai/cordis`；本项目插件将其声明为精确版本
@@ -36,6 +35,11 @@
 - **@standard-schema/spec 1.1.0** — MIT，Cordis 的运行时依赖，作者 Colin
   McDonnell，来源：
   <https://github.com/standard-schema/standard-schema>。
+- **@deepseek-ai/schemastery 3.18.1** — MIT，DSH 配置 schema 依赖，来源为
+  DSH 仓库的 `vendor/schemastery`：
+  <https://github.com/deepseek-ai/deepseek-harness/tree/main/vendor/schemastery>。
+- **esbuild 0.28.2** — MIT，仅用于构建 bundle，不进入运行时包，来源：
+  <https://github.com/evanw/esbuild>。
 
 DSH（DeepSeek Harness）本身是 MIT 项目；本阶段不复制或重新分发 DSH
 源码，只按其 Cordis 宿主插件接口接入。实际宿主版本和上游许可文本以 DSH
