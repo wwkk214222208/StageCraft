@@ -696,6 +696,7 @@ export class Store {
       for (const proposal of proposals) {
         if (existing.has(proposal.id)) continue
         insert.run(roomId, proposal.id, proposal.name, proposal.portraitRef ?? '/assets/default.svg', proposal.currentState, proposal.presence ?? 'present', JSON.stringify(proposal.memoryTimeline ?? {}), JSON.stringify(proposal.goals ?? []), proposal.selfModel, '{}')
+        this.seedNpcMemories(roomId, proposal.id, proposal.memoryTimeline)
         existing.add(proposal.id)
       }
     }
@@ -876,6 +877,7 @@ export class Store {
       for (const proposal of roleProposals) {
         if (roleIds.has(proposal.id) || this.db.prepare('SELECT 1 FROM roles WHERE room_id = ? AND id = ?').get(roomId, proposal.id)) throw new Error(`Role already exists: ${proposal.id}`)
         insertRole.run(roomId, proposal.id, proposal.name, proposal.portraitRef, proposal.currentState, proposal.presence, JSON.stringify(proposal.memoryTimeline ?? {}), JSON.stringify(proposal.goals ?? []), proposal.selfModel, '{}')
+        this.seedNpcMemories(roomId, proposal.id, proposal.memoryTimeline)
       }
       for (const [roleId, currentState] of Object.entries(stateUpdates)) {
         if (roleId === 'player') this.db.prepare('UPDATE rooms SET player_state = ? WHERE id = ?').run(currentState, roomId)
