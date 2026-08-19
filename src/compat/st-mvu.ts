@@ -325,12 +325,12 @@ export function selectWorldbook(entries: CardWorldbookEntry[], query: WorldbookS
 }
 
 export function worldbookDiagnostics(entries: CardWorldbookEntry[]): CompatDiagnostic[] {
-  const diagnostics: CompatDiagnostic[] = []
+  const counts = new Map<string, number>()
   for (const entry of entries) {
     const extensions = entry.extensions && typeof entry.extensions === 'object' ? entry.extensions as Record<string, unknown> : {}
-    for (const capability of ['probability', 'cooldown', 'sticky', 'group', 'recursive', 'prevent_recursion', 'exclude_recursion', 'delay_until_recursion', 'delay', 'useProbability', 'group_weight', 'group_override', 'use_group_scoring', 'scan_depth', 'depth', 'triggers', 'vectorized', 'use_regex']) if (entry[capability] !== undefined || extensions[capability] !== undefined) diagnostics.push({ level: 'warning', code: `worldbook.${capability}.unsupported`, message: `${capability} is not implemented for entry ${entry.id}.` })
+    for (const capability of ['probability', 'cooldown', 'sticky', 'group', 'recursive', 'prevent_recursion', 'exclude_recursion', 'delay_until_recursion', 'delay', 'useProbability', 'group_weight', 'group_override', 'use_group_scoring', 'scan_depth', 'depth', 'triggers', 'vectorized', 'use_regex']) if (entry[capability] !== undefined || extensions[capability] !== undefined) counts.set(capability, (counts.get(capability) ?? 0) + 1)
   }
-  return diagnostics
+  return [...counts.entries()].map(([capability, count]) => ({ level: 'warning' as const, code: `worldbook.${capability}.unsupported`, message: `${capability} is not implemented for ${count} worldbook entr${count === 1 ? 'y' : 'ies'}.` }))
 }
 
 function mapMvuPath(path: string, moduleId: string): string {

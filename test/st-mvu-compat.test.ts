@@ -81,8 +81,12 @@ test('worldbook selector implements SillyTavern numeric selective logic', () => 
 
 test('worldbook diagnostics report ignored recursion and grouping capabilities', () => {
   const entry = parseCardPackage(JSON.stringify({ character_book: { entries: [{ id: 'unsupported', content: '', extensions: { delay_until_recursion: true, delay: 2, useProbability: true, group_weight: 2, group_override: true, use_group_scoring: true, scan_depth: 3, depth: 2, triggers: ['x'], vectorized: true, use_regex: true } }] } })).worldbook[0]
-  const codes = worldbookDiagnostics([entry]).map(item => item.code)
+  const second = { ...entry, id: 'unsupported-second' }
+  const diagnostics = worldbookDiagnostics([entry, second])
+  const codes = diagnostics.map(item => item.code)
   for (const name of ['delay_until_recursion', 'delay', 'useProbability', 'group_weight', 'group_override', 'use_group_scoring', 'scan_depth', 'depth', 'triggers', 'vectorized', 'use_regex']) assert.ok(codes.includes(`worldbook.${name}.unsupported`))
+  assert.equal(codes.filter(code => code === 'worldbook.delay.unsupported').length, 1)
+  assert.match(diagnostics.find(item => item.code === 'worldbook.delay.unsupported')?.message ?? '', /2/)
 })
 
 test('MVU decoder maps safe pointers, ignores analysis and rejects ambiguity/escape', () => {
