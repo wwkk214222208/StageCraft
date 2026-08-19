@@ -516,9 +516,9 @@ export class RoomRuntime {
     this.emit(roomId)
   }
 
-  storeNpcMemories(roomId: string, roleId: string, entries: Array<{ id?: string; kind?: import('./types.ts').MemoryKind; text?: string; subjects?: string[]; occurredAt?: string; salience?: number; confidence?: number }>): void {
+  storeNpcMemories(roomId: string, roleId: string, entries: Array<{ id?: string; text?: string; occurredAt?: string }>): void {
     if (this.get(roomId).phase !== 'awaiting-player-input') throw new Error('管理 NPC 记忆需要在空闲时进行。')
-    this.store.insertNpcMemories(roomId, roleId, entries.map((entry, index) => ({ id: entry.id ?? `manual-${Date.now()}-${index}`, kind: entry.kind ?? 'fact', text: String(entry.text ?? ''), subjects: entry.subjects ?? [], occurredAt: entry.occurredAt ?? this.get(roomId).sceneTime ?? '未标注时间', salience: entry.salience ?? 3, confidence: entry.confidence ?? 1, source: 'manual' })))
+    this.store.insertNpcMemories(roomId, roleId, entries.map((entry, index) => ({ id: entry.id ?? `manual-${Date.now()}-${index}`, text: String(entry.text ?? ''), occurredAt: entry.occurredAt ?? this.get(roomId).sceneTime ?? '未标注时间', source: 'manual' })))
     this.emit(roomId)
   }
 
@@ -668,24 +668,12 @@ function validateDecision(result: Decision, expected: Decision): Decision {
 /** 模型输出不可信：在写入前丢弃非法项，并将数值规范到协议允许范围。 */
 function normalizeDigestEntries(value: unknown): Array<import('./types.ts').MemoryDigestEntry> {
   if (!Array.isArray(value)) return []
-  const kinds = new Set<import('./types.ts').MemoryKind>(['fact', 'observation', 'interaction', 'promise', 'relationship', 'belief', 'emotion', 'goal_update'])
-  const confidences = [0, 0.25, 0.5, 0.75, 1] as const
   return value.flatMap(item => {
     if (!item || typeof item !== 'object') return []
     const entry = item as Record<string, unknown>
-    const kind = typeof entry.kind === 'string' && kinds.has(entry.kind as import('./types.ts').MemoryKind) ? entry.kind as import('./types.ts').MemoryKind : undefined
     const text = typeof entry.text === 'string' ? entry.text.trim() : ''
-    if (!kind || !text) return []
-    const rawSalience = typeof entry.salience === 'number' && Number.isFinite(entry.salience) ? entry.salience : 3
-    const rawConfidence = typeof entry.confidence === 'number' && Number.isFinite(entry.confidence) ? entry.confidence : 1
-    const confidence = confidences.reduce((closest, candidate) => Math.abs(candidate - rawConfidence) < Math.abs(closest - rawConfidence) ? candidate : closest, confidences[0])
-    return [{
-      kind,
-      text,
-      subjects: Array.isArray(entry.subjects) ? entry.subjects.filter((subject): subject is string => typeof subject === 'string').map(subject => subject.trim()).filter(Boolean) : [],
-      salience: Math.max(1, Math.min(5, Math.round(rawSalience))) as 1 | 2 | 3 | 4 | 5,
-      confidence,
-    }]
+    if (!text) return []
+    return [{ text, ...(typeof entry.occurredAt === 'string' && entry.occurredAt.trim() ? { occurredAt: entry.occurredAt.trim() } : {}) }]
   })
 }
 

@@ -136,11 +136,7 @@ async function runFakeDigest(role: Role, scene: DigestSceneContext): Promise<imp
   const snippet = scene.text.trim().slice(0, 40)
   return {
     entries: [{
-      kind: 'observation',
       text: `${role.name} 经历了场景「${snippet}」，将其记为值得留意的经过。`,
-      subjects: [],
-      salience: 3,
-      confidence: 1,
     }],
   }
 }

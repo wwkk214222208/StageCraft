@@ -470,35 +470,33 @@ export class Store {
     return rows.map(rowToNpcMemory)
   }
 
-  insertNpcMemories(roomId: string, roleId: string, entries: Array<{ id: string; sceneId?: string; turnId?: string; worldChangeId?: string; occurredAt: string; occurredLocation?: string; source: import('./types.ts').MemorySource; kind: import('./types.ts').MemoryKind; text: string; subjects: string[]; salience: number; confidence: number }>): void {
+  insertNpcMemories(roomId: string, roleId: string, entries: Array<{ id: string; sceneId?: string; turnId?: string; worldChangeId?: string; occurredAt: string; occurredLocation?: string; source: import('./types.ts').MemorySource; text: string }>): void {
     const now = new Date().toISOString()
     const insert = this.db.prepare(`INSERT OR IGNORE INTO npc_memories (id, room_id, role_id, scene_id, turn_id, world_change_id, occurred_at, occurred_location, source, kind, text, subjects, salience, confidence, dedupe_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    for (const entry of entries) { const text = entry.text.trim(); if (!text) continue; const dedupe = `${entry.sceneId ?? entry.turnId ?? 'manual'}:${entry.kind}:${text}`; insert.run(entry.id, roomId, roleId, entry.sceneId ?? null, entry.turnId ?? null, entry.worldChangeId ?? null, entry.occurredAt || '未标注时间', entry.occurredLocation ?? null, entry.source, entry.kind, text, JSON.stringify(entry.subjects ?? []), Math.max(1, Math.min(5, Math.round(entry.salience))), Math.max(0, Math.min(1, entry.confidence)), dedupe, now, now) }
+    for (const entry of entries) { const text = entry.text.trim(); if (!text) continue; const dedupe = `${entry.sceneId ?? entry.turnId ?? 'manual'}:${text}`; insert.run(entry.id, roomId, roleId, entry.sceneId ?? null, entry.turnId ?? null, entry.worldChangeId ?? null, entry.occurredAt || '未标注时间', entry.occurredLocation ?? null, entry.source, 'fact', text, '[]', 3, 1, dedupe, now, now) }
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
   retractNpcMemory(roomId: string, memoryId: string): void { this.db.prepare("UPDATE npc_memories SET status = 'retracted', updated_at = ? WHERE room_id = ? AND id = ?").run(new Date().toISOString(), roomId, memoryId) }
 
-  updateNpcMemory(roomId: string, memoryId: string, entry: { kind?: import('./types.ts').MemoryKind; text?: string; subjects?: string[]; occurredAt?: string; occurredLocation?: string; salience?: number; confidence?: number }): void {
+  updateNpcMemory(roomId: string, memoryId: string, entry: { text?: string; occurredAt?: string }): void {
     const current = this.db.prepare('SELECT id FROM npc_memories WHERE room_id = ? AND id = ?').get(roomId, memoryId)
     if (!current) throw new Error('记忆不存在。')
     const text = String(entry.text ?? '').trim()
     if (!text) throw new Error('记忆内容不能为空。')
-    const kinds = ['fact', 'observation', 'interaction', 'promise', 'relationship', 'belief', 'emotion', 'goal_update']
-    if (!entry.kind || !kinds.includes(entry.kind)) throw new Error('无效的记忆类型。')
-    this.db.prepare('UPDATE npc_memories SET kind = ?, text = ?, subjects = ?, occurred_at = ?, occurred_location = ?, salience = ?, confidence = ?, updated_at = ? WHERE room_id = ? AND id = ?')
-      .run(entry.kind, text, JSON.stringify((entry.subjects ?? []).map(String).map(value => value.trim()).filter(Boolean)), String(entry.occurredAt ?? '未标注时间').trim() || '未标注时间', entry.occurredLocation?.trim() || null, Math.max(1, Math.min(5, Math.round(entry.salience ?? 3))), Math.max(0, Math.min(1, entry.confidence ?? 1)), new Date().toISOString(), roomId, memoryId)
+    this.db.prepare('UPDATE npc_memories SET text = ?, occurred_at = ?, updated_at = ? WHERE room_id = ? AND id = ?')
+      .run(text, String(entry.occurredAt ?? '未标注时间').trim() || '未标注时间', new Date().toISOString(), roomId, memoryId)
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
   seedNpcMemories(roomId: string, roleId: string, timeline: Record<string, string[]> | undefined, source: import('./types.ts').MemorySource = 'import', initialMemories?: import('./types.ts').InitialMemory[]): void {
     const entries = initialMemories?.length
-      ? initialMemories.map((memory, index) => ({ id: `story-${roomId}-${roleId}-${index}`, occurredAt: memory.occurredAt ?? '未标注时间', occurredLocation: memory.occurredLocation, source: 'story' as const, kind: memory.kind, text: String(memory.text ?? ''), subjects: memory.subjects ?? [], salience: memory.salience, confidence: memory.confidence }))
-      : Object.entries(timeline ?? {}).flatMap(([occurredAt, items], index) => Array.isArray(items) ? items.map((text, itemIndex) => ({ id: `import-${roomId}-${roleId}-${index}-${itemIndex}`, occurredAt, source, kind: 'fact' as const, text: String(text ?? ''), subjects: [], salience: 3, confidence: 1 })) : [])
+      ? initialMemories.map((memory, index) => ({ id: `story-${roomId}-${roleId}-${index}`, occurredAt: memory.occurredAt ?? '未标注时间', source: 'story' as const, text: String(memory.text ?? '') }))
+      : Object.entries(timeline ?? {}).flatMap(([occurredAt, items], index) => Array.isArray(items) ? items.map((text, itemIndex) => ({ id: `import-${roomId}-${roleId}-${index}-${itemIndex}`, occurredAt, source, text: String(text ?? '') })) : [])
     this.insertNpcMemories(roomId, roleId, entries)
   }
 
-  supersedeNpcMemory(roomId: string, memoryId: string, replacement: { id: string; kind: import('./types.ts').MemoryKind; text: string; subjects: string[]; occurredAt: string; occurredLocation?: string; salience: number; confidence: number }): void {
+  supersedeNpcMemory(roomId: string, memoryId: string, replacement: { id: string; text: string; occurredAt: string }): void {
     const prior = this.db.prepare("SELECT role_id FROM npc_memories WHERE room_id = ? AND id = ? AND status = 'active'").get(roomId, memoryId) as { role_id: string } | undefined
     if (!prior) throw new Error('可替代的记忆不存在。')
     this.insertNpcMemories(roomId, prior.role_id, [{ ...replacement, source: 'manual' }])
@@ -900,7 +898,7 @@ export class Store {
       const mindUpdates = this.db.prepare('SELECT role_id, private_reaction FROM pending_mind_updates WHERE room_id = ? AND turn_id = ? ORDER BY id').all(roomId, draft.turn_id) as Array<{ role_id: string; private_reaction: string }>
       for (const update of mindUpdates) {
         if (!update.private_reaction?.trim()) continue
-        this.insertNpcMemories(roomId, update.role_id, [{ id: `reaction-${sceneId}-${update.role_id}`, sceneId, turnId: draft.turn_id, occurredAt: effectiveTime, occurredLocation: effectiveLocation || undefined, source: 'role_reaction', kind: 'emotion', text: update.private_reaction.trim(), subjects: [], salience: 3, confidence: 1 }])
+        this.insertNpcMemories(roomId, update.role_id, [{ id: `reaction-${sceneId}-${update.role_id}`, sceneId, turnId: draft.turn_id, occurredAt: effectiveTime, occurredLocation: effectiveLocation || undefined, source: 'role_reaction', text: update.private_reaction.trim() }])
       }
       this.db.prepare('DELETE FROM pending_mind_updates WHERE room_id = ? AND turn_id = ?').run(roomId, draft.turn_id)
       this.db.prepare('DELETE FROM reaction_previews WHERE room_id = ? AND turn_id = ?').run(roomId, draft.turn_id)
@@ -1091,7 +1089,7 @@ export function mergeTimelineEvent(timeline: Record<string, string[]>, when: str
   return true
 }
 
-function rowToNpcMemory(row: any): import('./types.ts').NpcMemory { return { id: row.id, roomId: row.room_id, roleId: row.role_id, ...(row.scene_id ? { sceneId: row.scene_id } : {}), ...(row.turn_id ? { turnId: row.turn_id } : {}), ...(row.world_change_id ? { worldChangeId: row.world_change_id } : {}), occurredAt: row.occurred_at, ...(row.occurred_location ? { occurredLocation: row.occurred_location } : {}), source: row.source, kind: row.kind, text: row.text, subjects: JSON.parse(row.subjects ?? '[]'), visibility: 'private', salience: Number(row.salience), confidence: Number(row.confidence), status: row.status, supersedes: JSON.parse(row.supersedes ?? '[]'), ...(row.superseded_by ? { supersededBy: row.superseded_by } : {}), dedupeKey: row.dedupe_key, createdAt: row.created_at, updatedAt: row.updated_at } }
+function rowToNpcMemory(row: any): import('./types.ts').NpcMemory { return { id: row.id, roomId: row.room_id, roleId: row.role_id, ...(row.scene_id ? { sceneId: row.scene_id } : {}), ...(row.turn_id ? { turnId: row.turn_id } : {}), ...(row.world_change_id ? { worldChangeId: row.world_change_id } : {}), occurredAt: row.occurred_at, ...(row.occurred_location ? { occurredLocation: row.occurred_location } : {}), source: row.source, text: row.text, visibility: 'private', status: row.status, supersedes: JSON.parse(row.supersedes ?? '[]'), ...(row.superseded_by ? { supersededBy: row.superseded_by } : {}), dedupeKey: row.dedupe_key, createdAt: row.created_at, updatedAt: row.updated_at } }
 
 function rowToRole(row: any): Role {
   const impressions = JSON.parse(row.impressions ?? '{}') as Record<string, string>

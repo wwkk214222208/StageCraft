@@ -15,9 +15,9 @@ test('群聊 digest 只写入规范化的结构化记忆，并使用已批准场
   const runtime = new RoomRuntime(store, {
     ...fakeWorkers,
     digest: async () => ({ entries: [
-      { kind: 'interaction', text: '  玩家交出了银钥匙。  ', subjects: ['玩家', 7], salience: 8, confidence: 0.6 },
-      { kind: 'invalid', text: '不应写入。', subjects: [], salience: 3, confidence: 1 },
-      { kind: 'fact', text: '   ', subjects: [], salience: 3, confidence: 1 },
+      { text: '  玩家交出了银钥匙。  ' },
+      { text: '不应写入。' },
+      { text: '   ' },
     ] } as any),
   })
   runtime.setRoomConfig(roomId, { mode: 'chat' })
@@ -30,16 +30,12 @@ test('群聊 digest 只写入规范化的结构化记忆，并使用已批准场
   const aria = room.roles.find(role => role.id === 'aria')!
   const memory = aria.memories.find(item => item.text === '玩家交出了银钥匙。')!
   assert.ok(memory)
-  assert.equal(memory.kind, 'interaction')
-  assert.deepEqual(memory.subjects, ['玩家'])
-  assert.equal(memory.salience, 5)
-  assert.equal(memory.confidence, 0.5)
   assert.equal(memory.sceneId, scene.id)
   assert.equal(memory.turnId, scene.turnId)
   assert.equal(memory.occurredAt, scene.sceneTime)
   assert.equal(memory.occurredLocation, scene.sceneLocation)
   assert.equal(memory.source, 'role_reaction')
-  assert.equal(aria.memories.some(item => item.text === '不应写入。'), false)
+  assert.equal(aria.memories.some(item => item.text === '不应写入。'), true)
   assert.equal(Object.values(aria.memoryTimeline).flat().some(item => item.includes('银钥匙')), false)
 })
 
@@ -63,11 +59,15 @@ test('真实 digest Worker 请求 entries schema，不接受旧 events 协议', 
     onSummary: () => {},
     fetchImpl: async (_input, init) => {
       request = JSON.parse(String(init?.body))
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ entries: [{ kind: 'fact', text: 'Aria 看见了银钥匙。', subjects: ['玩家'], salience: 4, confidence: 1 }] }) } }] }), { status: 200, headers: { 'content-type': 'application/json' } })
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ entries: [{ text: 'Aria 看见了银钥匙。' }] }) } }] }), { status: 200, headers: { 'content-type': 'application/json' } })
     },
   })
   const digest = await createRealWorkers(gateway).digest!(role, { id: 'scene-1', turnId: 'turn-1', text: '玩家展示了银钥匙。', sceneTime: '夜晚', sceneLocation: '大厅', source: 'role_reaction' })
-  assert.deepEqual(digest.entries, [{ kind: 'fact', text: 'Aria 看见了银钥匙。', subjects: ['玩家'], salience: 4, confidence: 1 }])
+  assert.deepEqual(digest.entries, [{ text: 'Aria 看见了银钥匙。' }])
   assert.ok(request.response_format.json_schema.schema.properties.entries)
   assert.equal(request.response_format.json_schema.schema.properties.events, undefined)
+  assert.equal(request.response_format.json_schema.schema.properties.entries.items.properties.kind, undefined)
+  assert.equal(request.response_format.json_schema.schema.properties.entries.items.properties.subjects, undefined)
+  assert.equal(request.response_format.json_schema.schema.properties.entries.items.properties.salience, undefined)
+  assert.equal(request.response_format.json_schema.schema.properties.entries.items.properties.confidence, undefined)
 })

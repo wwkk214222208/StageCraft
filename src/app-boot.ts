@@ -444,7 +444,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         if (!role) throw new Error('角色不存在。')
         const story = loadStoryPackage(storiesRoot, storyId)
         const index = story.roles.findIndex(item => item.id === roleId)
-        const updated = { id: role.id, name: role.name, portraitRef: role.portraitRef, currentState: role.currentState, presence: role.presence, initialMemories: (role.memories ?? []).map(memory => ({ kind: memory.kind, text: memory.text, subjects: memory.subjects, occurredAt: memory.occurredAt, occurredLocation: memory.occurredLocation, salience: memory.salience as 1 | 2 | 3 | 4 | 5, confidence: memory.confidence as 0 | 0.25 | 0.5 | 0.75 | 1 })), selfModel: role.selfModel, ...(role.impressions && Object.keys(role.impressions).length ? { impressions: role.impressions } : index >= 0 && story.roles[index].impressions ? { impressions: story.roles[index].impressions } : {}), ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { modelOverride: role.modelOverride } : {}) }
+        const updated = { id: role.id, name: role.name, portraitRef: role.portraitRef, currentState: role.currentState, presence: role.presence, initialMemories: (role.memories ?? []).map(memory => ({ text: memory.text, occurredAt: memory.occurredAt })), selfModel: role.selfModel, ...(role.impressions && Object.keys(role.impressions).length ? { impressions: role.impressions } : index >= 0 && story.roles[index].impressions ? { impressions: story.roles[index].impressions } : {}), ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { modelOverride: role.modelOverride } : {}) }
         if (index >= 0) story.roles[index] = updated; else story.roles.push(updated)
         saveStoryPackage(storiesRoot, story)
         return json(response, 200, { ok: true })
@@ -458,7 +458,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         const storyImpressions = new Map(story.roles.map(item => [item.id, item.impressions]))
         story.roles = room.roles.map(role => ({
           id: role.id, name: role.name, portraitRef: role.portraitRef, currentState: role.currentState, presence: role.presence,
-          initialMemories: (role.memories ?? []).map(memory => ({ kind: memory.kind, text: memory.text, subjects: memory.subjects, occurredAt: memory.occurredAt, occurredLocation: memory.occurredLocation, salience: memory.salience as 1 | 2 | 3 | 4 | 5, confidence: memory.confidence as 0 | 0.25 | 0.5 | 0.75 | 1 })), selfModel: role.selfModel,
+          initialMemories: (role.memories ?? []).map(memory => ({ text: memory.text, occurredAt: memory.occurredAt })), selfModel: role.selfModel,
           ...(role.impressions && Object.keys(role.impressions).length ? { impressions: role.impressions } : storyImpressions.get(role.id) ? { impressions: storyImpressions.get(role.id) } : {}),
           ...(role.providerId ? { providerId: role.providerId } : {}),
           ...(role.modelOverride ? { modelOverride: role.modelOverride } : {}),

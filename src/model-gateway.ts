@@ -527,10 +527,10 @@ function formatGoals(role: Role): string {
 function formatMemoryTimeline(role: Role): string {
   const memories = (role.memories ?? []).filter(memory => memory.status === 'active' && memory.visibility === 'private')
   if (memories.length > 0) {
-    return memories
-      .sort((a, b) => b.salience - a.salience || b.occurredAt.localeCompare(a.occurredAt) || b.createdAt.localeCompare(a.createdAt))
+      return memories
+      .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.createdAt.localeCompare(a.createdAt))
       .slice(0, 30)
-      .map(memory => `【${memory.occurredAt}】${memory.occurredLocation ? ` ${memory.occurredLocation}` : ''}（${memory.kind}；重要度 ${memory.salience}）\n- ${memory.text}`)
+      .map(memory => `【${memory.occurredAt}】\n- ${memory.text}`)
       .join('\n')
   }
   const timeline = role.memoryTimeline ?? {}
@@ -671,13 +671,10 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       const entrySchema = {
         type: 'object', additionalProperties: false,
         properties: {
-          kind: { type: 'string', enum: ['fact', 'observation', 'interaction', 'promise', 'relationship', 'belief', 'emotion', 'goal_update'] },
           text: { type: 'string' },
-          subjects: { type: 'array', items: { type: 'string' } },
-          salience: { type: 'integer', minimum: 1, maximum: 5 },
-          confidence: { type: 'number', enum: [0, 0.25, 0.5, 0.75, 1] },
+          occurredAt: { type: 'string', description: '可省略；系统通常使用已批准场景时间。' },
         },
-        required: ['kind', 'text', 'subjects', 'salience', 'confidence'],
+        required: ['text'],
       }
       const schema = { type: 'object', additionalProperties: false, properties: { entries: { type: 'array', items: entrySchema } }, required: ['entries'] }
       const result = await gateway.completeStreaming<{ entries?: import('./types.ts').MemoryDigestEntry[] }>(
