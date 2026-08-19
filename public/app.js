@@ -14,6 +14,9 @@ let skipArmed = false
 let sidebarTab = 'roles' // 左侧栏标签：roles | lore
 let expandedMemoryId = null
 let draggingMemoryId = null
+const WHALE_MEME_PREFS_KEY = 'stagecraft-whale-meme'
+let whaleMemeEnabled = true
+try { whaleMemeEnabled = localStorage.getItem(WHALE_MEME_PREFS_KEY) !== '0' } catch {}
 const TOKEN_PREFS_KEY = 'stagecraft-token-count'
 let tokenCountEnabled = false
 try { tokenCountEnabled = localStorage.getItem(TOKEN_PREFS_KEY) === '1' } catch {}
@@ -37,6 +40,12 @@ if (basicPanels.length > 1) { basicPanels[0].append(...basicPanels[1].childNodes
 const modelPanel = document.querySelector('[data-inspector-panel="model"]')
 const modelSettings = document.querySelector('.inspector-fields > .inspector-row')
 if (modelPanel && modelSettings) modelPanel.prepend(modelSettings)
+document.querySelector('#model-mode')?.remove()
+document.querySelector('#load-archive')?.closest('.load-label')?.remove()
+const whaleMemeSetting = document.createElement('label')
+whaleMemeSetting.className = 'settings-row'
+whaleMemeSetting.innerHTML = '开启鲸鱼梗<input id="settings-whale-meme" type="checkbox">'
+document.querySelector('#settings-debug')?.closest('.settings-row')?.after(whaleMemeSetting)
 document.querySelector('#role-modal .inspector-portrait-panel .hint')?.remove()
 modelPanel?.querySelector(':scope > .hint')?.remove()
 document.querySelectorAll('#role-modal #inspector-memory, #new-role-memory').forEach(element => element.closest('label')?.remove())
@@ -125,10 +134,10 @@ function render(next) {
   const readOnly = !!room.autoPublish // 沉浸模式：场景/角色状态/角色面板只读
   const sceneBar = $('#scene-bar')
   const sceneParts = readOnly
-    ? [room.sceneTime ? `🕐 ${escape(room.sceneTime)}` : '', room.sceneLocation ? `📍 ${escape(room.sceneLocation)}` : ''].filter(Boolean)
+    ? [room.sceneTime ? `🕐 ${escape(room.sceneTime)}` : '🕐 未设置时间', room.sceneLocation ? `📍 ${escape(room.sceneLocation)}` : '📍 未设置地点']
     : [room.sceneTime ? `🕐 <button class="scene-edit" data-scene-field="time" title="点击修改场景时间">${escape(room.sceneTime)}</button>` : `<button class="scene-edit" data-scene-field="time">＋ 设置时间</button>`, room.sceneLocation ? `📍 <button class="scene-edit" data-scene-field="location" title="点击修改场景地点">${escape(room.sceneLocation)}</button>` : `<button class="scene-edit" data-scene-field="location">＋ 设置地点</button>`]
   sceneBar.hidden = false
-  sceneBar.innerHTML = `<div class="scene-bar-inner">${sceneParts.join('　')}</div>`
+  sceneBar.innerHTML = `<div class="scene-bar-inner"><span class="scene-context">${sceneParts[0]}</span><span class="scene-context">${sceneParts[1]}</span></div>`
   sceneBar.querySelectorAll('[data-scene-field]').forEach(button => button.addEventListener('click', () => {
     const field = button.dataset.sceneField
     const current = field === 'time' ? room.sceneTime : room.sceneLocation
@@ -233,7 +242,7 @@ function render(next) {
 async function refreshRoom() { const response = await fetch('/api/room'); render(await response.json()) }
 async function api(path, body) { const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!response.ok) { alert((await response.json()).error || '请求失败'); return false }; const data = await response.json(); await refreshRoom(); return data }
 async function loadStories() { const response = await fetch('/api/stories'); const stories = await response.json(); $('#story-select').innerHTML = stories.map(story => `<option value="${escape(story.id)}">${escape(story.title)}${story.custom ? '' : '（默认）'}</option>`).join('') }
-async function loadProviders() { const data = await (await fetch('/api/providers')).json(); providers = data.providers; const options = providers.map(provider => `<option value="${escape(provider.id)}">${escape(provider.name)}${provider.hasApiKey ? '（已配置）' : '（无密钥）'}</option>`).join(''); $('#provider-select').innerHTML = options; $('#director-provider-select').innerHTML = options; $('#provider-select').value = data.defaults.defaultRoleProviderId ?? providers[0]?.id ?? ''; $('#director-provider-select').value = data.defaults.directorProviderId ?? providers[0]?.id ?? ''; updateModels(providers.find(item => item.id === $('#provider-select').value), '#model-select', data.defaults.defaultRoleModel); updateModels(providers.find(item => item.id === $('#director-provider-select').value), '#director-model-select', data.defaults.directorModel); $('#director-thinking').value = data.defaults.directorThinkingStrength ?? 'standard'; const usage = await (await fetch('/api/usage')).json(); $('#model-mode').textContent = usage.route === '模拟' ? '模拟' : `${usage.route} / ${usage.model}` }
+async function loadProviders() { const data = await (await fetch('/api/providers')).json(); providers = data.providers; const options = providers.map(provider => `<option value="${escape(provider.id)}">${escape(provider.name)}${provider.hasApiKey ? '（已配置）' : '（无密钥）'}</option>`).join(''); $('#provider-select').innerHTML = options; $('#director-provider-select').innerHTML = options; $('#provider-select').value = data.defaults.defaultRoleProviderId ?? providers[0]?.id ?? ''; $('#director-provider-select').value = data.defaults.directorProviderId ?? providers[0]?.id ?? ''; updateModels(providers.find(item => item.id === $('#provider-select').value), '#model-select', data.defaults.defaultRoleModel); updateModels(providers.find(item => item.id === $('#director-provider-select').value), '#director-model-select', data.defaults.directorModel); $('#director-thinking').value = data.defaults.directorThinkingStrength ?? 'standard' }
 function updateModels(provider, selector, selected) { $(selector).innerHTML = (provider?.models ?? []).map(model => `<option>${escape(model)}</option>`).join(''); $(selector).value = selected ?? provider?.selectedModel ?? provider?.models?.[0] ?? '' }
 
 $('#connection-settings').onclick = () => $('#connection-modal').showModal()
@@ -262,10 +271,11 @@ $('#player-avatar-url').onclick = async () => {
   } catch { /* api() 已 alert */ }
 }
 $('#story-settings').onclick = () => { refreshArchiveList(); const storySelect = $('#story-select'); if (room?.storyId && [...storySelect.options].some(option => option.value === room.storyId)) storySelect.value = room.storyId; const modeLabel = room?.mode === 'chat' ? '群聊' : '导演'; $('#archive-name').value = room?.title?.trim() ? `${room.title.trim()}-${modeLabel}` : (room?.storyId ?? ''); $('#room-mode-select').value = room?.mode ?? 'director'; $('#room-auto-publish').checked = !!room?.autoPublish; $('#story-modal').showModal() }
-$('#app-settings').onclick = () => { $('#settings-auto-publish').checked = !!room?.autoPublish; $('#settings-token-count').checked = tokenCountEnabled; $('#settings-debug').checked = !$('#debug-stream').hidden; $('#settings-modal').showModal() }
+$('#app-settings').onclick = () => { $('#settings-auto-publish').checked = !!room?.autoPublish; $('#settings-token-count').checked = tokenCountEnabled; $('#settings-debug').checked = !$('#debug-stream').hidden; $('#settings-whale-meme').checked = whaleMemeEnabled; $('#settings-modal').showModal() }
 $('#settings-auto-publish').onchange = () => api('/api/room-config', { autoPublish: $('#settings-auto-publish').checked })
 $('#settings-token-count').onchange = () => { tokenCountEnabled = $('#settings-token-count').checked; try { localStorage.setItem(TOKEN_PREFS_KEY, tokenCountEnabled ? '1' : '0') } catch {} render(room) }
 $('#settings-debug').onchange = () => { const stream = $('#debug-stream'); stream.hidden = !$('#settings-debug').checked }
+$('#settings-whale-meme').onchange = () => { whaleMemeEnabled = $('#settings-whale-meme').checked; try { localStorage.setItem(WHALE_MEME_PREFS_KEY, whaleMemeEnabled ? '1' : '0') } catch {}; applyWhaleMeme() }
 
 // ── ST 角色卡导入（坯子） ──
 let stImportFile = null
@@ -388,7 +398,6 @@ $('#player-save').onclick = event => { event.preventDefault(); api('/api/player-
 $('#restart').onclick = event => { event.preventDefault(); if (confirm('重开将清除当前剧本的回合、草稿和已批准正文。继续吗？')) api('/api/restart', { storyId: $('#story-select').value, mode: $('#room-mode-select').value, autoPublish: $('#room-auto-publish').checked }).then(ok => { if (ok) $('#story-modal').close() }) }
 $('#save-archive').onclick = event => { event.preventDefault(); api('/api/archive/save', { name: $('#archive-name').value.trim() }).then(ok => { if (ok) { $('#archive-name').value = ''; refreshArchiveList() } }) }
 $('#edit-story').onclick = event => { event.preventDefault(); openStoryEditor() }
-$('#load-archive').onchange = async event => { const file = event.target.files[0]; if (file) await api('/api/archive/import', JSON.parse(await file.text())) }
 
 // ── 存档管理（任务 A）──
 async function refreshArchiveList() {
@@ -400,7 +409,7 @@ async function refreshArchiveList() {
     const data = await response.json()
     const files = data.files ?? []
     listEl.innerHTML = files.length
-      ? `<ul class="archive-list">${files.map(name => `<li><span class="archive-name">${escape(name)}</span><span class="archive-actions"><button data-archive-load="${escape(name)}">读档</button><button class="danger" data-archive-delete="${escape(name)}">删除</button></span></li>`).join('')}</ul>`
+      ? `<ul class="archive-list">${files.map(name => `<li><span class="archive-name">${escape(name)}</span><span class="archive-actions"><button type="button" data-archive-load="${escape(name)}">读档</button><button type="button" class="danger" data-archive-delete="${escape(name)}">删除</button></span></li>`).join('')}</ul>`
       : '<p class="hint">暂无存档。</p>'
   } catch (error) {
     listEl.innerHTML = `<p class="error">${escape(error.message)}</p>`
@@ -868,6 +877,17 @@ $('#show-thinking').addEventListener('change', event => { thinkingPrefs.show = e
 $('#auto-expand-thinking').addEventListener('change', event => { thinkingPrefs.autoExpand = event.target.checked; localStorage.setItem(THINKING_PREFS_KEY, JSON.stringify(thinkingPrefs)); renderThinkingPanel(); if (room) render(room) })
 
 // ── 标题栏中部横幅：八股文循环播放（15s 一换，八股三词加粗换色）──
+let renderWhaleTagline = () => {}
+function applyWhaleMeme() {
+  document.title = whaleMemeEnabled ? 'DeepPlugin HARNESS' : 'StageCraft'
+  const brandTitle = document.querySelector('.brand strong')
+  if (brandTitle) brandTitle.textContent = whaleMemeEnabled ? 'DeepPlugin HARNESS' : 'StageCraft'
+  const logo = document.querySelector('.brand-logo')
+  if (logo) logo.hidden = !whaleMemeEnabled
+  const tagline = $('#tagline')
+  tagline.hidden = !whaleMemeEnabled
+  if (!whaleMemeEnabled) { tagline.innerHTML = ''; tagline.title = '' } else renderWhaleTagline()
+}
 ;(function initTagline() {
   const el = document.getElementById('tagline')
   if (!el) return
@@ -879,8 +899,10 @@ $('#auto-expand-thinking').addEventListener('change', event => { thinkingPrefs.a
   ]
   let idx = 0
   const swap = () => {
+    if (!whaleMemeEnabled) return
     el.style.opacity = '0'
     setTimeout(() => {
+      if (!whaleMemeEnabled) return
       const html = TAGLINES[idx % TAGLINES.length]
       el.innerHTML = html
       el.title = html.replace(/<[^>]+>/g, '')
@@ -888,6 +910,7 @@ $('#auto-expand-thinking').addEventListener('change', event => { thinkingPrefs.a
       idx++
     }, 350)
   }
-  swap()
+  renderWhaleTagline = swap
+  applyWhaleMeme()
   setInterval(swap, 15000)
 })()

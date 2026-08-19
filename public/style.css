@@ -149,6 +149,7 @@
 #prompts-modal summary{cursor:pointer;padding:7px 10px;color:#b7c8fe;font-size:12px;font-weight:600}
 #prompts-modal .prompt-textarea{width:100%;min-height:110px;background:#1b2133;color:#e4edfd;border:0;border-top:1px solid #3a4a6e;padding:8px 10px;font:12px/1.5 ui-monospace,Consolas,monospace;resize:vertical}
 #prompts-modal .prompts-footer{display:flex;justify-content:flex-end}
+#prompts-modal .prompt-file-actions{display:flex;gap:10px;margin:2px 0 6px}
 
 #role-modal header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #3a4a6e;flex:0 0 auto}
 #role-modal header h3{margin:0;color:#b7c8fe;font:600 17px Georgia,serif}
@@ -162,8 +163,9 @@
 
 /* ── 追加：场景栏在右侧「本回合」面板顶部（普通流内元素）── */
 #scene-bar{width:100%;z-index:auto;border:1px solid #3a4a6e;border-radius:6px;background:#232c43;padding:8px 10px;margin-bottom:10px}
-#scene-bar .scene-bar-inner{color:#b7c8fe;font:600 13px Georgia,serif;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
-#scene-bar .scene-edit{background:none;border:1px dashed #5686fe;color:#b7c8fe;padding:2px 7px;border-radius:4px;font-size:12px;cursor:pointer}
+#scene-bar .scene-bar-inner{color:#b7c8fe;font:600 13px Georgia,serif;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+#scene-bar .scene-context{display:flex;align-items:center;gap:5px;min-width:0;white-space:nowrap;overflow:hidden}
+#scene-bar .scene-edit{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:none;border:1px dashed #5686fe;color:#b7c8fe;padding:2px 7px;border-radius:4px;font-size:12px;cursor:pointer}
 #scene-bar .scene-edit:hover{background:#2b3449;color:#d3e2ff}
 #scene-bar .scene-edit-input{background:#1b2133;color:#b7c8fe;border:1px solid #5686fe;border-radius:4px;padding:3px 7px;font:inherit;font-size:12px;min-width:110px;width:100%}
 
@@ -199,6 +201,8 @@
 .lore-role-check input{accent-color:#5686fe}
 .small-btn{background:none;border:1px dashed #5686fe;color:#b7c8fe;padding:5px 12px;font-size:12px;border-radius:4px;margin-top:8px;cursor:pointer}
 .small-btn:hover{background:#2b3449}
+.lore-add,.small-btn,#inspector-impression-add{background:#3a4c78;color:#b7c8fe;border:1px solid #5686fe;border-radius:3px}
+.lore-add:hover,.small-btn:hover,#inspector-impression-add:hover{background:#46609a;color:#d3e2ff}
 
 /* ── DeepSeek Harness 品牌（装模作样层）：鲸鱼 + 标题 + 主色 ── */
 .brand{display:flex;align-items:center;gap:9px;min-width:0}
@@ -264,6 +268,6 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 #roles, #story, #workbench, #scenes, .role-modal form, #story-edit-modal form, .archive-list, .thinking-block pre { scrollbar-color: #3a4a6e #161c2c; }
 
 /* ── 标题栏中部：八股文循环横幅（15s 一换，八股三词加粗换色）── */
-.header-tagline{flex:1;text-align:center;color:#9fb2dd;font:12px/1.25 system-ui,sans-serif;letter-spacing:.3px;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;transition:opacity .45s ease;user-select:none;padding:1px 0}
+.header-tagline{flex:1;text-align:center;color:#9fb2dd;font:12px/1.25 system-ui,sans-serif;letter-spacing:.3px;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;transition:opacity .45s ease;user-select:none;padding:1px 0}.header-tagline[hidden]{display:none}
 .header-tagline .obagu{margin:0;font-weight:700;color:#ff8fa3;text-shadow:0 0 9px rgba(255,120,150,.45)}
 .header-tools{flex-shrink:0}
