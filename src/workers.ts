@@ -13,6 +13,7 @@ export interface DigestSceneContext {
   sceneTime?: string
   sceneLocation?: string
   source: 'role_reaction' | 'world_change'
+  worldChangeId?: string
 }
 
 /** 群聊模式导演对话/叙述所需的房间上下文摘要 */

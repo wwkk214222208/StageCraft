@@ -176,13 +176,13 @@ export class RoomRuntime {
     const speech = room.speech
     const playerText = room.playerContribution ?? ''
     const worldChange = worldChangeOverride ?? speech.worldChange ?? null
-    this.store.approveSpeech(roomId, text, undefined, worldChangeOverride)
+    const worldChangeId = this.store.approveSpeech(roomId, text, undefined, worldChangeOverride)
     this.core?.emitDomainEvent(domainEvent('speech.approved', { roomId, text, worldChange }))
     if (worldChange) this.core?.emitDomainEvent(domainEvent('world-change.approved', { roomId, change: worldChange }))
     this.core?.emitDomainEvent(domainEvent('scene.published', { roomId, speaker: speech.roleId, text: text.trim() }))
     this.emit(roomId)
     // 记忆消化时把玩家发言一并并入，否则角色只记得自己的台词、记不住玩家说了什么
-    await this.digestAfterSpeech(roomId, [playerText, text.trim()].filter(Boolean).join('\n'))
+    await this.digestAfterSpeech(roomId, [playerText, text.trim()].filter(Boolean).join('\n'), 'role_reaction', worldChangeId)
   }
 
   /**
@@ -228,11 +228,11 @@ export class RoomRuntime {
         if (this.get(roomId).autoPublish) {
           // 沉浸模式：直接落地 + 写叙述 + 在场角色消化
           this.store.saveWorldChange(roomId, result.worldChange, result.narration)
-          this.store.approveWorldChange(roomId)
+          const worldChangeId = this.store.approveWorldChange(roomId)
           if (result.narration?.trim()) {
-            this.store.addNarrationScene(roomId, result.narration, result.usage)
+            this.store.addNarrationScene(roomId, result.narration, result.usage, worldChangeId)
             this.emit(roomId)
-            await this.digestAfterSpeech(roomId, result.narration, 'world_change')
+            await this.digestAfterSpeech(roomId, result.narration, 'world_change', worldChangeId)
           } else {
             this.emit(roomId)
           }
@@ -258,12 +258,12 @@ export class RoomRuntime {
     if (room.phase !== 'world-change-approval' || room.speech) throw new Error('当前没有待确认的世界变更申请。')
     const narration = room.pendingNarration
     const change = override ?? room.pendingWorldChange ?? {}
-    this.store.approveWorldChange(roomId, override)
+    const worldChangeId = this.store.approveWorldChange(roomId, override)
     this.core?.emitDomainEvent(domainEvent('world-change.approved', { roomId, change }))
     if (narration?.trim()) {
-      this.store.addNarrationScene(roomId, narration)
+      this.store.addNarrationScene(roomId, narration, undefined, worldChangeId)
       this.emit(roomId)
-      await this.digestAfterSpeech(roomId, narration, 'world_change')
+      await this.digestAfterSpeech(roomId, narration, 'world_change', worldChangeId)
     } else {
       this.emit(roomId)
     }
@@ -280,7 +280,7 @@ export class RoomRuntime {
   }
 
   /** 群聊模式：已批准正文发布后，所有在场角色并行写入结构化私有记忆。 */
-  private async digestAfterSpeech(roomId: string, sceneText: string, source: 'role_reaction' | 'world_change' = 'role_reaction'): Promise<void> {
+  private async digestAfterSpeech(roomId: string, sceneText: string, source: 'role_reaction' | 'world_change' = 'role_reaction', worldChangeId?: string): Promise<void> {
     if (!this.workers.digest) return
     if (this.digestingRooms.has(roomId)) return
     this.digestingRooms.add(roomId)
@@ -292,12 +292,13 @@ export class RoomRuntime {
       if (!scene) return
       await Promise.all(present.map(async role => {
         try {
-          const digest = await this.workers.digest!(role, { id: scene.id, turnId: scene.turnId, text: sceneText, sceneTime: scene.sceneTime, sceneLocation: scene.sceneLocation, source })
+          const digest = await this.workers.digest!(role, { id: scene.id, turnId: scene.turnId, text: sceneText, sceneTime: scene.sceneTime, sceneLocation: scene.sceneLocation, source, worldChangeId })
           const entries = normalizeDigestEntries(digest.entries)
           if (entries.length) this.store.insertNpcMemories(roomId, role.id, entries.map((entry, index) => ({
             id: `digest-${scene.id}-${role.id}-${index}`,
             sceneId: scene.id,
             turnId: scene.turnId,
+            ...(worldChangeId ? { worldChangeId } : {}),
             occurredAt: scene.sceneTime ?? '未标注时间',
             occurredLocation: scene.sceneLocation,
             source,
