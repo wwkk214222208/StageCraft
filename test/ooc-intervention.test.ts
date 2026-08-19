@@ -20,7 +20,7 @@ test('private OOC intervention updates role context without creating world facts
   const room = runtime.get(roomId)
   const aria = room.roles.find(role => role.id === 'aria')!
   assert.equal(aria.selfModel, '对玩家更坦诚，但仍谨慎。')
-  assert.deepEqual(aria.memoryTimeline, { '未标注时间': ['玩家曾替她隐瞒伤势。'], '夜晚': ['她注视了我很久。'] })
+  assert.deepEqual(aria.memoryTimeline, { '过去': ['玩家曾替她隐瞒伤势。'], '夜晚': ['她注视了我很久。'] })
   assert.equal(room.scenes.length, 1, '干预不产生世界事实，只有开局 scene')
 })
 

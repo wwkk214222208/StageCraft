@@ -34,7 +34,7 @@ test('sync roles to story: 运行中角色卡写回初始剧本，重开即用�
   const reloaded = JSON.parse(readFileSync(join(root, 'demo.json'), 'utf8'))
   assert.equal(reloaded.roles.length, 4, '同步后剧本应有 4 个角色（seed 3 + 新建 1）')
   assert.equal(reloaded.roles.find(r => r.id === 'aria').selfModel, '修改后的人设。')
-  assert.deepEqual(reloaded.roles.find(r => r.id === 'aria').memoryTimeline, { '未标注时间': ['修改后记忆。'] })
+  assert.deepEqual(reloaded.roles.find(r => r.id === 'aria').memoryTimeline, { '过去': ['修改后记忆。'] })
   assert.equal(reloaded.roles.find(r => r.id === 'newbie').name, '新人')
   assert.equal(reloaded.title, 'Demo', '剧本元数据保持不变')
   assert.deepEqual(reloaded.roles.find(r => r.id === 'aria').impressions, { 旅人: '运行中更新的印象。' }, '同步后采用运行中的他人印象')

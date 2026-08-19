@@ -547,7 +547,7 @@ function syncStoryExpandedMemory(role) {
   const entry = role.initialMemories?.[expandedStoryMemoryIndex]
   if (entry) {
     entry.text = editor.querySelector('[data-story-memory-text]').value.trim()
-    entry.occurredAt = editor.querySelector('[data-story-memory-time]').value.trim() || '未标注时间'
+    entry.occurredAt = editor.querySelector('[data-story-memory-time]').value.trim() || '过去'
   }
   expandedStoryMemoryIndex = null
 }
@@ -556,8 +556,8 @@ function renderStoryInitialMemories(role) {
   if (!panel || panel === missingElement) { panel = document.createElement('section'); panel.id = 'story-initial-memories'; $('#inspector-memory-structured').append(panel) }
   const memories = role.initialMemories ?? []
   panel.innerHTML = `${memories.length ? `<div class="memory-list-rows">${memories.map((memory, index) => index === expandedStoryMemoryIndex
-    ? `<article class="memory-list-row memory-list-row-expanded" data-story-memory-row="${index}" data-story-memory-expanded="${index}"><button type="button" class="memory-delete memory-expanded-delete" data-story-memory-delete="${index}" title="删除记忆">×</button><div class="memory-expanded-table"><label>时间<input data-story-memory-time value="${escape(memory.occurredAt ?? '未标注时间')}"></label><label>记忆<textarea data-story-memory-text>${escape(memory.text ?? '')}</textarea></label></div></article>`
-    : `<article class="memory-list-row story-memory-record" draggable="true" data-story-memory-row="${index}"><span class="memory-drag-handle" title="拖动调整位置">⠿</span><button type="button" class="memory-summary" data-story-memory-expand="${index}"><time>${escape(memory.occurredAt ?? '未标注时间')}</time><span title="${escape(memory.text ?? '')}">${escape(memory.text ?? '')}</span></button><button type="button" class="memory-delete" data-story-memory-delete="${index}" title="删除记忆">×</button></article>`
+    ? `<article class="memory-list-row memory-list-row-expanded" data-story-memory-row="${index}" data-story-memory-expanded="${index}"><button type="button" class="memory-delete memory-expanded-delete" data-story-memory-delete="${index}" title="删除记忆">×</button><div class="memory-expanded-table"><label>时间<input data-story-memory-time value="${escape(memory.occurredAt ?? '过去')}"></label><label>记忆<textarea data-story-memory-text>${escape(memory.text ?? '')}</textarea></label></div></article>`
+    : `<article class="memory-list-row story-memory-record" draggable="true" data-story-memory-row="${index}"><span class="memory-drag-handle" title="拖动调整位置">⠿</span><button type="button" class="memory-summary" data-story-memory-expand="${index}"><time>${escape(memory.occurredAt ?? '过去')}</time><span title="${escape(memory.text ?? '')}">${escape(memory.text ?? '')}</span></button><button type="button" class="memory-delete" data-story-memory-delete="${index}" title="删除记忆">×</button></article>`
   ).join('')}</div>` : '<p class="hint">暂无初始记忆</p>'}<button type="button" class="small-btn" id="story-memory-add">＋ 添加初始记忆</button>`
   panel.querySelectorAll('[data-story-memory-row]').forEach(row => {
     row.addEventListener('dragstart', event => { event.dataTransfer.setData('text/plain', row.dataset.storyMemoryRow); row.classList.add('dragging') })
@@ -567,8 +567,8 @@ function renderStoryInitialMemories(role) {
     row.addEventListener('drop', event => { event.preventDefault(); row.classList.remove('drag-over'); const from = Number(event.dataTransfer.getData('text/plain')); const to = Number(row.dataset.storyMemoryRow); syncStoryExpandedMemory(role); if (from !== to && role.initialMemories?.[from]) { const [moved] = role.initialMemories.splice(from, 1); role.initialMemories.splice(to, 0, moved); renderStoryInitialMemories(role) } })
   })
 }
-function collectStoryInitialMemories() { const role = storyEditRoles[storyEditRoleIndex]; if (role) syncStoryExpandedMemory(role); return (role?.initialMemories ?? []).filter(memory => memory.text?.trim()).map(memory => ({ text: memory.text.trim(), occurredAt: memory.occurredAt?.trim() || '未标注时间' })) }
-document.addEventListener('click', event => { const target = event.target.closest?.('#story-memory-add,[data-story-memory-delete],[data-story-memory-expand]'); if (!target) return; const role = storyEditRoles[storyEditRoleIndex]; if (!role) return; syncStoryExpandedMemory(role); if (target.id === 'story-memory-add') { role.initialMemories.push({ text: '', occurredAt: '未标注时间' }); expandedStoryMemoryIndex = role.initialMemories.length - 1 } else if (target.dataset.storyMemoryExpand !== undefined) expandedStoryMemoryIndex = Number(target.dataset.storyMemoryExpand); else role.initialMemories.splice(Number(target.dataset.storyMemoryDelete), 1); renderStoryInitialMemories(role); document.querySelector('[data-story-memory-text]')?.focus() })
+function collectStoryInitialMemories() { const role = storyEditRoles[storyEditRoleIndex]; if (role) syncStoryExpandedMemory(role); return (role?.initialMemories ?? []).filter(memory => memory.text?.trim()).map(memory => ({ text: memory.text.trim(), occurredAt: memory.occurredAt?.trim() || '过去' })) }
+document.addEventListener('click', event => { const target = event.target.closest?.('#story-memory-add,[data-story-memory-delete],[data-story-memory-expand]'); if (!target) return; const role = storyEditRoles[storyEditRoleIndex]; if (!role) return; syncStoryExpandedMemory(role); if (target.id === 'story-memory-add') { role.initialMemories.push({ text: '', occurredAt: '过去' }); expandedStoryMemoryIndex = role.initialMemories.length - 1 } else if (target.dataset.storyMemoryExpand !== undefined) expandedStoryMemoryIndex = Number(target.dataset.storyMemoryExpand); else role.initialMemories.splice(Number(target.dataset.storyMemoryDelete), 1); renderStoryInitialMemories(role); document.querySelector('[data-story-memory-text]')?.focus() })
 document.addEventListener('focusout', event => { const editor = event.target.closest?.('[data-story-memory-expanded]'); if (editor) setTimeout(() => { if (!editor.contains(document.activeElement)) { const role = storyEditRoles[storyEditRoleIndex]; if (role) { syncStoryExpandedMemory(role); renderStoryInitialMemories(role) } } }) })
 $('#story-role-add').onclick = () => { storyEditRoles.push({ id: `new-role-${Date.now()}`, name: '新角色', portraitRef: '/assets/default.svg', currentState: '尚未进入具体场景，等待剧情展开。', presence: 'absent', initialMemories: [], impressions: {}, selfModel: '待补充的角色设定。' }); renderStoryRoles() }
 function openStoryRoleEditor(index) {
@@ -576,7 +576,7 @@ function openStoryRoleEditor(index) {
   if (!role) return
   storyEditRoleIndex = index
   expandedStoryMemoryIndex = null
-  role.initialMemories = storyInitialMemories(role).slice().sort((left, right) => Number((left.occurredAt ?? '未标注时间') !== '未标注时间') - Number((right.occurredAt ?? '未标注时间') !== '未标注时间'))
+  role.initialMemories = storyInitialMemories(role).slice().sort((left, right) => Number((left.occurredAt ?? '过去') !== '过去') - Number((right.occurredAt ?? '过去') !== '过去'))
   $('#role-modal-title').textContent = `${role.name} 角色设置（剧本）`
   $('#inspector-role-id').value = role.id
   $('#inspector-provider').innerHTML = '<option value="">使用默认</option>'
@@ -714,8 +714,8 @@ function parseTimelineFromEdit(text) {
     if (match) { current = match[1].trim(); ensure(current); continue }
     const trimmed = line.trim()
     if (!trimmed) continue
-    // 不符合「【时间标签】」格式的行（如没有分桶头就直接写记忆）一律归入「未标注时间」桶，避免被静默丢弃
-    ensure(current ?? '未标注时间').push(trimmed.replace(/^-\s*/, ''))
+    // 不符合「【时间标签】」格式的行（如没有分桶头就直接写记忆）一律归入「过去」桶，避免被静默丢弃
+    ensure(current ?? '过去').push(trimmed.replace(/^-\s*/, ''))
   }
   return timeline
 }
@@ -756,11 +756,11 @@ function renderStructuredMemories(role) {
   if (!list || !role) return
   const memories = role.memories ?? []
   const isNew = expandedMemoryId === '__new__'
-  const visible = isNew ? [...memories, { id: '__new__', text: '', occurredAt: room?.sceneTime ?? '未标注时间' }] : memories
+  const visible = isNew ? [...memories, { id: '__new__', text: '', occurredAt: room?.sceneTime ?? '过去' }] : memories
   const rows = visible.map(memory => {
     const expanded = memory.id === expandedMemoryId
-    if (expanded) return `<article class="memory-list-row memory-list-row-expanded" data-memory-row="${escape(memory.id)}" data-memory-expanded="${escape(memory.id)}">${isNew ? '' : `<button type="button" class="memory-delete memory-expanded-delete" data-memory-retract="${escape(memory.id)}" title="删除记忆">×</button>`}<div class="memory-expanded-table"><label>时间<input data-memory-expanded-time value="${escape(memory.occurredAt ?? '未标注时间')}"></label><label>记忆<textarea data-memory-expanded-text>${escape(memory.text)}</textarea></label></div></article>`
-    return `<article class="memory-list-row" data-memory-row="${escape(memory.id)}"><button type="button" class="memory-drag-handle" draggable="true" data-memory-drag="${escape(memory.id)}" title="拖动调整位置">⠿</button><button type="button" class="memory-summary" data-memory-expand="${escape(memory.id)}"><time>${escape(memory.occurredAt ?? '未标注时间')}</time><span title="${escape(memory.text)}">${escape(memory.text)}</span></button><button type="button" class="memory-delete" data-memory-retract="${escape(memory.id)}" title="删除记忆">×</button></article>`
+    if (expanded) return `<article class="memory-list-row memory-list-row-expanded" data-memory-row="${escape(memory.id)}" data-memory-expanded="${escape(memory.id)}">${isNew ? '' : `<button type="button" class="memory-delete memory-expanded-delete" data-memory-retract="${escape(memory.id)}" title="删除记忆">×</button>`}<div class="memory-expanded-table"><label>时间<input data-memory-expanded-time value="${escape(memory.occurredAt ?? '过去')}"></label><label>记忆<textarea data-memory-expanded-text>${escape(memory.text)}</textarea></label></div></article>`
+    return `<article class="memory-list-row" data-memory-row="${escape(memory.id)}"><button type="button" class="memory-drag-handle" draggable="true" data-memory-drag="${escape(memory.id)}" title="拖动调整位置">⠿</button><button type="button" class="memory-summary" data-memory-expand="${escape(memory.id)}"><time>${escape(memory.occurredAt ?? '过去')}</time><span title="${escape(memory.text)}">${escape(memory.text)}</span></button><button type="button" class="memory-delete" data-memory-retract="${escape(memory.id)}" title="删除记忆">×</button></article>`
   }).join('')
   list.innerHTML = `${visible.length ? `<div class="memory-list-rows">${rows}</div>` : '<p class="hint">暂无记忆</p>'}<button type="button" class="small-btn" data-memory-add="${escape(role.id)}">＋ 新增记忆</button>`
 }
@@ -769,7 +769,7 @@ function collapseExpandedMemory(save = true) {
   if (!editor) return
   const memoryId = editor.dataset.memoryExpanded
   const text = editor.querySelector('[data-memory-expanded-text]').value.trim()
-  const occurredAt = editor.querySelector('[data-memory-expanded-time]').value.trim() || '未标注时间'
+  const occurredAt = editor.querySelector('[data-memory-expanded-time]').value.trim() || '过去'
   const isNew = memoryId === '__new__'
   expandedMemoryId = null
   if (!save || !text) { renderStructuredMemories(inspectedRole); return }

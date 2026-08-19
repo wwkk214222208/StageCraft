@@ -9,6 +9,21 @@ import type { StateEvent } from './core/protocol.ts'
 import { isDomainEvent, type DomainEvent } from './core/domain-events.ts'
 import type { WorkflowInstance } from './core/protocol.ts'
 
+const normalizeMemoryTimeLabel = (value: string | undefined): string => {
+  const label = String(value ?? '').trim()
+  return !label || label === '未标注时间' ? '过去' : label
+}
+
+const normalizeMemoryTimeline = (timeline: Record<string, string[]> | undefined): Record<string, string[]> => {
+  const normalized: Record<string, string[]> = {}
+  for (const [when, entries] of Object.entries(timeline ?? {})) {
+    const label = normalizeMemoryTimeLabel(when)
+    const bucket = normalized[label] ??= []
+    for (const entry of Array.isArray(entries) ? entries : []) if (!bucket.includes(entry)) bucket.push(entry)
+  }
+  return normalized
+}
+
 export class Store {
   private readonly db: DatabaseSync
   private closed = false
@@ -192,6 +207,7 @@ export class Store {
     this.ensureWorldChangeColumn()
     this.ensureSceneWorldChangeColumns()
     this.ensureMemorySortOrder()
+    this.normalizePastMemoryLabels()
   }
 
   /** 关闭数据库连接（幂等；供宿主卸载/退出前的资源回收） */
@@ -288,7 +304,7 @@ export class Store {
     if (!columns.has('sort_order')) this.db.exec('ALTER TABLE roles ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0')
   }
 
-  /** 记忆顺序可由用户拖动维护；迁移旧数据时先放未标注时间，再保留时间顺序。 */
+  /** 记忆顺序可由用户拖动维护；迁移旧数据时先放无具体时间的旧记忆，再保留时间顺序。 */
   private ensureMemorySortOrder(): void {
     const columns = new Set(this.db.prepare('PRAGMA table_info(npc_memories)').all().map((row: any) => row.name as string))
     if (columns.has('sort_order')) return
@@ -301,6 +317,22 @@ export class Store {
       const nextGroup = `${row.room_id}:${row.role_id}`
       if (nextGroup !== group) { group = nextGroup; index = 0 }
       update.run(index++, row.id)
+    }
+  }
+
+  /** 兼容旧存档：将旧的「未标注时间」统一迁移为更自然的「过去」。 */
+  private normalizePastMemoryLabels(): void {
+    this.db.prepare("UPDATE npc_memories SET occurred_at = '过去' WHERE occurred_at = '未标注时间'").run()
+    const rows = this.db.prepare("SELECT room_id, id, memory_timeline FROM roles WHERE memory_timeline LIKE '%未标注时间%'").all() as Array<{ room_id: string; id: string; memory_timeline: string }>
+    const update = this.db.prepare('UPDATE roles SET memory_timeline = ? WHERE room_id = ? AND id = ?')
+    for (const row of rows) {
+      const timeline = JSON.parse(row.memory_timeline || '{}') as Record<string, string[]>
+      const legacy = Array.isArray(timeline['未标注时间']) ? timeline['未标注时间'] : []
+      if (!legacy.length) { delete timeline['未标注时间']; update.run(JSON.stringify(timeline), row.room_id, row.id); continue }
+      const past = Array.isArray(timeline['过去']) ? timeline['过去'] : []
+      timeline['过去'] = [...legacy, ...past.filter(item => !legacy.includes(item))]
+      delete timeline['未标注时间']
+      update.run(JSON.stringify(timeline), row.room_id, row.id)
     }
   }
 
@@ -334,7 +366,7 @@ export class Store {
     if (!sceneColumns.has('speaker')) this.db.exec('ALTER TABLE scenes ADD COLUMN speaker TEXT')
   }
 
-  /** 旧库迁移：roles.memory_timeline、drafts.scene_updates；旧 private_memory 列并入「未标注时间」桶后删列 */
+  /** 旧库迁移：roles.memory_timeline、drafts.scene_updates；旧 private_memory 列并入「过去」桶后删列 */
   private ensureMemoryTimelineColumns(): void {
     const roleColumns = new Set(this.db.prepare('PRAGMA table_info(roles)').all().map((row: any) => row.name as string))
     if (!roleColumns.has('memory_timeline')) this.db.exec("ALTER TABLE roles ADD COLUMN memory_timeline TEXT NOT NULL DEFAULT '{}'")
@@ -345,11 +377,11 @@ export class Store {
         const text = (row.private_memory ?? '').trim()
         if (!text) continue
         const timeline = JSON.parse(row.memory_timeline ?? '{}') as Record<string, string[]>
-        const bucket = timeline['未标注时间'] ?? []
+        const bucket = timeline['过去'] ?? []
         for (const event of text.split('\n').map(line => line.trim()).filter(Boolean)) {
           if (!bucket.some(existing => existing === event || existing.includes(event) || event.includes(existing))) bucket.push(event)
         }
-        timeline['未标注时间'] = bucket
+        timeline['过去'] = bucket
         update.run(JSON.stringify(timeline), row.id)
       }
       this.db.exec('ALTER TABLE roles DROP COLUMN private_memory')
@@ -427,9 +459,9 @@ export class Store {
     return this.createRoomFromPackage({
       id: 'royal-festival', title: '皇家祭典', opening: '皇家祭典主厅的乐声透过高窗流入夜色。', sceneTime: '夜晚', sceneLocation: '皇家祭典主厅', playerCharacter: { name: '玩家', persona: '谨慎而善于观察的来访者。', currentState: '刚刚进入当前场景。' },
       roles: [
-        { id: 'aria', name: 'Aria', portraitRef: '/assets/aria.svg', currentState: '位于皇家祭典主厅，在场。身着深蓝色礼服，右手仍有轻微伤势；未携带武器。', presence: 'present', memoryTimeline: { '未标注时间': ['玩家的举动值得留意。'] }, selfModel: '克制、敏锐，习惯将情绪藏在礼貌之后。' },
-        { id: 'mira', name: 'Mira', portraitRef: '/assets/mira.svg', currentState: '位于皇家祭典主厅，在场。带着一箱啤酒，神态轻松，正观察人群。', presence: 'present', memoryTimeline: { '未标注时间': ['Aria 今晚比平时紧张。'] }, selfModel: '直率、好奇，擅长用玩笑缓和紧张气氛。' },
-        { id: 'noel', name: 'Noel', portraitRef: '/assets/noel.svg', currentState: '不在祭典主厅，暂时不可见。', presence: 'absent', memoryTimeline: { '未标注时间': ['尚未参与本轮。'] }, selfModel: '谨慎、寡言，优先观察。' },
+        { id: 'aria', name: 'Aria', portraitRef: '/assets/aria.svg', currentState: '位于皇家祭典主厅，在场。身着深蓝色礼服，右手仍有轻微伤势；未携带武器。', presence: 'present', memoryTimeline: { '过去': ['玩家的举动值得留意。'] }, selfModel: '克制、敏锐，习惯将情绪藏在礼貌之后。' },
+        { id: 'mira', name: 'Mira', portraitRef: '/assets/mira.svg', currentState: '位于皇家祭典主厅，在场。带着一箱啤酒，神态轻松，正观察人群。', presence: 'present', memoryTimeline: { '过去': ['Aria 今晚比平时紧张。'] }, selfModel: '直率、好奇，擅长用玩笑缓和紧张气氛。' },
+        { id: 'noel', name: 'Noel', portraitRef: '/assets/noel.svg', currentState: '不在祭典主厅，暂时不可见。', presence: 'absent', memoryTimeline: { '过去': ['尚未参与本轮。'] }, selfModel: '谨慎、寡言，优先观察。' },
       ],
     }, 'festival-room')
   }
@@ -438,7 +470,7 @@ export class Store {
     this.withTransaction(() => {
       this.db.prepare('INSERT INTO rooms (id, title, player_name, player_persona, player_state, scene_time, scene_location, phase, lore, story_id, mode, auto_publish) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(roomId, story.title, story.playerCharacter?.name ?? '玩家', story.playerCharacter?.persona ?? '由玩家自由定义的参与者。', story.playerCharacter?.currentState ?? '刚刚进入当前场景。', story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, 'awaiting-player-input', JSON.stringify(story.lore ?? []), story.id, options.mode ?? 'director', options.autoPublish ? 1 : 0)
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      for (const role of story.roles) { insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {})); this.seedNpcMemories(roomId, role.id, role.memoryTimeline, 'import', role.initialMemories) }
+      for (const role of story.roles) { insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(normalizeMemoryTimeline(role.memoryTimeline)), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {})); this.seedNpcMemories(roomId, role.id, role.memoryTimeline, 'import', role.initialMemories) }
       if (story.opening) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(`opening-${roomId}`, roomId, 'opening', story.opening, story.sceneTime ?? null, story.sceneLocation ?? null, new Date().toISOString())
     })
     return roomId
@@ -458,7 +490,7 @@ export class Store {
       for (const table of ['turns', 'drafts', 'scenes', 'consultations', 'pending_mind_updates', 'reaction_previews', 'roles']) this.db.prepare(`DELETE FROM ${table} WHERE room_id = ?`).run(roomId)
       this.db.prepare('UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, player_portrait_ref = ?, scene_time = ?, scene_location = ?, phase = ?, revision = ?, player_contribution = ?, last_error = ?, lore = ?, story_id = ?, speech = NULL, pending_world_change = NULL, pending_narration = NULL WHERE id = ?').run(source.title, source.playerCharacter?.name ?? '玩家', source.playerCharacter?.persona ?? '由玩家自由定义的参与者。', source.playerCharacter?.currentState ?? '刚刚进入当前场景。', source.playerCharacter?.portraitRef ?? '/assets/default.svg', source.sceneTime ?? null, source.sceneLocation ?? null, source.phase, source.revision, source.playerContribution ?? null, source.lastError ?? null, JSON.stringify(source.lore ?? []), source.storyId ?? null, roomId)
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      for (const role of source.roles) insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {}))
+      for (const role of source.roles) insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(normalizeMemoryTimeline(role.memoryTimeline)), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {}))
       for (const scene of source.scenes) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(scene.id, roomId, scene.turnId, scene.text, scene.sceneTime ?? null, scene.sceneLocation ?? null, scene.createdAt, scene.speaker ?? null)
     })
   }
@@ -476,7 +508,7 @@ export class Store {
       this.db.prepare('DELETE FROM reaction_previews WHERE room_id = ?').run(roomId)
       this.db.prepare('DELETE FROM roles WHERE room_id = ?').run(roomId)
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      for (const role of story.roles) { insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {})); this.seedNpcMemories(roomId, role.id, role.memoryTimeline, 'import', role.initialMemories) }
+      for (const role of story.roles) { insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(normalizeMemoryTimeline(role.memoryTimeline)), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {})); this.seedNpcMemories(roomId, role.id, role.memoryTimeline, 'import', role.initialMemories) }
       if (story.opening) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(`opening-${roomId}-${Date.now()}`, roomId, 'opening', story.opening, story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, new Date().toISOString())
       this.db.prepare("UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, scene_time = ?, scene_location = ?, phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL, last_error = NULL, lore = ?, story_id = ?, mode = ?, auto_publish = ?, speech = NULL, pending_world_change = NULL, pending_narration = NULL WHERE id = ?").run(story.title, story.playerCharacter?.name ?? '玩家', story.playerCharacter?.persona ?? '由玩家自由定义的参与者。', story.playerCharacter?.currentState ?? '刚刚进入当前场景。', story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, JSON.stringify(story.lore ?? []), story.id, options.mode ?? 'director', options.autoPublish ? 1 : 0, roomId)
     })
@@ -491,7 +523,7 @@ export class Store {
     const now = new Date().toISOString()
     const insert = this.db.prepare(`INSERT OR IGNORE INTO npc_memories (id, room_id, role_id, scene_id, turn_id, world_change_id, occurred_at, occurred_location, source, kind, text, subjects, salience, confidence, dedupe_key, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     let sortOrder = Number((this.db.prepare('SELECT MAX(sort_order) AS value FROM npc_memories WHERE room_id = ? AND role_id = ?').get(roomId, roleId) as { value?: number | null }).value ?? -1) + 1
-    for (const entry of entries) { const text = entry.text.trim(); if (!text) continue; const dedupe = `${entry.sceneId ?? entry.turnId ?? 'manual'}:${text}`; insert.run(entry.id, roomId, roleId, entry.sceneId ?? null, entry.turnId ?? null, entry.worldChangeId ?? null, entry.occurredAt || '未标注时间', entry.occurredLocation ?? null, entry.source, 'fact', text, '[]', 3, 1, dedupe, sortOrder++, now, now) }
+    for (const entry of entries) { const text = entry.text.trim(); if (!text) continue; const dedupe = `${entry.sceneId ?? entry.turnId ?? 'manual'}:${text}`; insert.run(entry.id, roomId, roleId, entry.sceneId ?? null, entry.turnId ?? null, entry.worldChangeId ?? null, normalizeMemoryTimeLabel(entry.occurredAt), entry.occurredLocation ?? null, entry.source, 'fact', text, '[]', 3, 1, dedupe, sortOrder++, now, now) }
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
@@ -503,7 +535,7 @@ export class Store {
     const text = String(entry.text ?? '').trim()
     if (!text) throw new Error('记忆内容不能为空。')
     this.db.prepare('UPDATE npc_memories SET text = ?, occurred_at = ?, updated_at = ? WHERE room_id = ? AND id = ?')
-      .run(text, String(entry.occurredAt ?? '未标注时间').trim() || '未标注时间', new Date().toISOString(), roomId, memoryId)
+      .run(text, normalizeMemoryTimeLabel(entry.occurredAt), new Date().toISOString(), roomId, memoryId)
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
@@ -519,8 +551,8 @@ export class Store {
 
   seedNpcMemories(roomId: string, roleId: string, timeline: Record<string, string[]> | undefined, source: import('./types.ts').MemorySource = 'import', initialMemories?: import('./types.ts').InitialMemory[]): void {
     const entries = initialMemories?.length
-      ? initialMemories.map((memory, index) => ({ id: `story-${roomId}-${roleId}-${index}`, occurredAt: memory.occurredAt ?? '未标注时间', source: 'story' as const, text: String(memory.text ?? '') })).sort((left, right) => Number(left.occurredAt !== '未标注时间') - Number(right.occurredAt !== '未标注时间'))
-      : Object.entries(timeline ?? {}).flatMap(([occurredAt, items], index) => Array.isArray(items) ? items.map((text, itemIndex) => ({ id: `import-${roomId}-${roleId}-${index}-${itemIndex}`, occurredAt, source, text: String(text ?? '') })) : [])
+      ? initialMemories.map((memory, index) => ({ id: `story-${roomId}-${roleId}-${index}`, occurredAt: normalizeMemoryTimeLabel(memory.occurredAt), source: 'story' as const, text: String(memory.text ?? '') })).sort((left, right) => Number(left.occurredAt !== '过去') - Number(right.occurredAt !== '过去'))
+      : Object.entries(normalizeMemoryTimeline(timeline)).flatMap(([occurredAt, items], index) => items.map((text, itemIndex) => ({ id: `import-${roomId}-${roleId}-${index}-${itemIndex}`, occurredAt, source, text: String(text ?? '') })))
     this.insertNpcMemories(roomId, roleId, entries)
   }
 
@@ -647,7 +679,7 @@ export class Store {
     const trimmed = String(text ?? '').trim()
     if (!trimmed) return
     const turnId = randomUUID()
-    const effectiveTime = room.scene_time?.trim() || '未标注时间'
+    const effectiveTime = room.scene_time?.trim() || '过去'
     const effectiveLocation = room.scene_location?.trim() || ''
     this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)')
       .run(`scene-${Date.now()}`, roomId, turnId, trimmed, effectiveTime || null, effectiveLocation || null, new Date().toISOString(), 'player')
@@ -685,7 +717,7 @@ export class Store {
         this.approveWorldChangeRecord(worldChangeId, roomId, change)
       }
       const current = this.db.prepare('SELECT scene_time, scene_location FROM rooms WHERE id = ?').get(roomId) as { scene_time: string | null; scene_location: string | null }
-      const effectiveTime = current.scene_time?.trim() || '未标注时间'
+      const effectiveTime = current.scene_time?.trim() || '过去'
       const effectiveLocation = current.scene_location?.trim() || ''
       const sceneId = `scene-${randomUUID()}`
       this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, scene_kind, world_change_id, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -723,7 +755,7 @@ export class Store {
       const insert = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       for (const proposal of proposals) {
         if (existing.has(proposal.id)) continue
-        insert.run(roomId, proposal.id, proposal.name, proposal.portraitRef ?? '/assets/default.svg', proposal.currentState, proposal.presence ?? 'present', JSON.stringify(proposal.memoryTimeline ?? {}), JSON.stringify(proposal.goals ?? []), proposal.selfModel, '{}')
+        insert.run(roomId, proposal.id, proposal.name, proposal.portraitRef ?? '/assets/default.svg', proposal.currentState, proposal.presence ?? 'present', JSON.stringify(normalizeMemoryTimeline(proposal.memoryTimeline)), JSON.stringify(proposal.goals ?? []), proposal.selfModel, '{}')
         this.seedNpcMemories(roomId, proposal.id, proposal.memoryTimeline)
         existing.add(proposal.id)
       }
@@ -807,7 +839,7 @@ export class Store {
     if (!room) throw new Error('Room not found.')
     const trimmed = String(text ?? '').trim()
     if (!trimmed) return undefined
-    const effectiveTime = room.scene_time?.trim() || '未标注时间'
+    const effectiveTime = room.scene_time?.trim() || '过去'
     const effectiveLocation = room.scene_location?.trim() || ''
     const sceneId = `narration-${randomUUID()}`
     this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, scene_kind, world_change_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -829,7 +861,7 @@ export class Store {
       for (const item of items) {
         const text = String(item ?? '').trim()
         if (!text) continue
-        if (mergeTimelineEvent(timeline, when.trim() || '未标注时间', text, options)) changed = true
+        if (mergeTimelineEvent(timeline, when.trim() || '过去', text, options)) changed = true
       }
     }
     if (!changed) return
@@ -904,7 +936,7 @@ export class Store {
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       for (const proposal of roleProposals) {
         if (roleIds.has(proposal.id) || this.db.prepare('SELECT 1 FROM roles WHERE room_id = ? AND id = ?').get(roomId, proposal.id)) throw new Error(`Role already exists: ${proposal.id}`)
-        insertRole.run(roomId, proposal.id, proposal.name, proposal.portraitRef, proposal.currentState, proposal.presence, JSON.stringify(proposal.memoryTimeline ?? {}), JSON.stringify(proposal.goals ?? []), proposal.selfModel, '{}')
+        insertRole.run(roomId, proposal.id, proposal.name, proposal.portraitRef, proposal.currentState, proposal.presence, JSON.stringify(normalizeMemoryTimeline(proposal.memoryTimeline)), JSON.stringify(proposal.goals ?? []), proposal.selfModel, '{}')
         this.seedNpcMemories(roomId, proposal.id, proposal.memoryTimeline)
       }
       for (const [roleId, currentState] of Object.entries(stateUpdates)) {
@@ -920,7 +952,7 @@ export class Store {
         this.db.prepare(`UPDATE rooms SET ${updates.join(', ')} WHERE id = ?`).run(...params)
       }
       const roomRow = this.db.prepare('SELECT scene_time, scene_location FROM rooms WHERE id = ?').get(roomId) as { scene_time: string | null; scene_location: string | null } | undefined
-      const effectiveTime = (mergedScene.time?.trim() || roomRow?.scene_time?.trim()) || '未标注时间'
+      const effectiveTime = (mergedScene.time?.trim() || roomRow?.scene_time?.trim()) || '过去'
       const effectiveLocation = (mergedScene.location?.trim() || roomRow?.scene_location?.trim()) || ''
       const sceneId = `scene-${randomUUID()}`
       const mindUpdates = this.db.prepare('SELECT role_id, private_reaction FROM pending_mind_updates WHERE room_id = ? AND turn_id = ? ORDER BY id').all(roomId, draft.turn_id) as Array<{ role_id: string; private_reaction: string }>
@@ -958,7 +990,7 @@ export class Store {
       ? 'UPDATE roles SET self_model = ?, memory_timeline = ?, provider_id = ?, model_override = ?, impressions = ?, goals = ?, thinking_strength = ? WHERE room_id = ? AND id = ?'
       : 'UPDATE roles SET self_model = ?, provider_id = ?, model_override = ?, impressions = ?, goals = ?, thinking_strength = ? WHERE room_id = ? AND id = ?'
     const values = withTimeline
-      ? [selfModel, JSON.stringify(memoryTimeline), config.providerId || null, config.modelOverride || null, JSON.stringify(config.impressions ?? {}), JSON.stringify(config.goals ?? []), config.thinkingStrength || null, roomId, roleId]
+      ? [selfModel, JSON.stringify(normalizeMemoryTimeline(memoryTimeline)), config.providerId || null, config.modelOverride || null, JSON.stringify(config.impressions ?? {}), JSON.stringify(config.goals ?? []), config.thinkingStrength || null, roomId, roleId]
       : [selfModel, config.providerId || null, config.modelOverride || null, JSON.stringify(config.impressions ?? {}), JSON.stringify(config.goals ?? []), config.thinkingStrength || null, roomId, roleId]
     const result = this.db.prepare(sql).run(...values)
     if (Number(result.changes) !== 1) throw new Error('Role not found.')
@@ -993,7 +1025,7 @@ export class Store {
     const existing = this.db.prepare('SELECT 1 FROM roles WHERE room_id = ? AND id = ?').get(roomId, role.id)
     if (existing) throw new Error(`角色已存在：${role.id}`)
     this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(role.memoryTimeline ?? {}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {}))
+      .run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify(normalizeMemoryTimeline(role.memoryTimeline)), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {}))
     this.seedNpcMemories(roomId, role.id, role.memoryTimeline, 'import', role.initialMemories)
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }

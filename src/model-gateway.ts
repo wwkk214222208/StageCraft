@@ -536,7 +536,7 @@ function formatMemoryTimeline(role: Role): string {
   const timeline = role.memoryTimeline ?? {}
   const lines: string[] = []
   for (const [when, events] of Object.entries(timeline)) {
-    const label = when.trim() || '未标注时间'
+    const label = when.trim() || '过去'
     const items = Array.isArray(events) ? events.filter(event => typeof event === 'string' && event.trim()) : []
     if (items.length === 0) continue
     lines.push(`【${label}】`)

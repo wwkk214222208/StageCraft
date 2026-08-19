@@ -33,7 +33,7 @@ export interface Role {
   portraitRef: string
   currentState: string
   presence: 'present' | 'absent' | 'unavailable'
-  /** 按时间标签组织的剧情记忆时间线（Heptalon 风格）：时间标签 → 事件列表；初始记忆存于「未标注时间」桶 */
+  /** 按时间标签组织的剧情记忆时间线（Heptalon 风格）：时间标签 → 事件列表；初始记忆存于「过去」桶 */
   memoryTimeline: Record<string, string[]>
   /** 结构化私有记忆；新存档的 canonical 记忆来源。 */
   memories?: NpcMemory[]

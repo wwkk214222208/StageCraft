@@ -42,7 +42,7 @@ test('migrated live DB works with new code end-to-end', async () => {
   const runtime = new RoomRuntime(store)
   runtime.interveneRole('festival-room', testRole.id, '新自我模型。', { '未标注时间': ['初始记忆 v2。'], '正午': ['她笑了。'] })
   const after = store.getRoom('festival-room')!.roles.find(role => role.id === testRole.id)!
-  assert.deepEqual(after.memoryTimeline, { '未标注时间': ['初始记忆 v2。'], '正午': ['她笑了。'] })
+  assert.deepEqual(after.memoryTimeline, { '过去': ['初始记忆 v2。'], '正午': ['她笑了。'] })
 
   // 回合流程
   await runtime.submitTurn('festival-room', { text: '正午时分，我们回到主厅。', requiredRoleIds: [testRole.id] })
@@ -51,5 +51,5 @@ test('migrated live DB works with new code end-to-end', async () => {
   runtime.approve('festival-room', draft.id, draft.text, draft.stateUpdates, draft.sceneUpdates)
   const finalRoom = runtime.get('festival-room')
   const testRole2 = finalRoom.roles.find(role => role.id === testRole.id)!
-  assert.ok(Object.keys(testRole2.memoryTimeline ?? {}).includes('未标注时间'))
+  assert.ok(Object.keys(testRole2.memoryTimeline ?? {}).includes('过去'))
 })

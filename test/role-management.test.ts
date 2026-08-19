@@ -25,7 +25,7 @@ test('player can create and delete a role', () => {
   const role = room.roles.find(item => item.id === 'new-guy')
   assert.ok(role, '新角色应存在')
   assert.equal(role!.name, '新人')
-  assert.deepEqual(role!.memoryTimeline, { '未标注时间': ['刚出场。'] })
+  assert.deepEqual(role!.memoryTimeline, { '过去': ['刚出场。'] })
   assert.throws(() => runtime.createRole(roomId, { id: 'new-guy', name: '重复', portraitRef: '/x.svg', currentState: 'x', presence: 'present', selfModel: 'x', memoryTimeline: {} }), /角色已存在/)
   runtime.deleteRole(roomId, 'new-guy')
   assert.ok(!runtime.get(roomId).roles.some(item => item.id === 'new-guy'))
