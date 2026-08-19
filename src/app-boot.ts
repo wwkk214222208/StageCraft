@@ -18,11 +18,11 @@ import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
 import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
-import type { CoreEvent } from './core/protocol.ts'
 import { ModelGatewayRouterAdapter } from './core/model-router-adapter.ts'
 import { DefaultCorePluginContainer } from './core/container.ts'
 import { CoreRuntimePluginAdapter } from './core/runtime-plugin.ts'
 import type { Disposable } from './core/plugins.ts'
+import { HttpHumanCorePlugin } from './core/http-human-plugin.ts'
 
 export interface TavernOptions {
   /** 仓库根目录（默认：本文件所在目录的上一级） */
@@ -134,6 +134,8 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   const core = new CoreRuntimeSkeleton()
   const container = new DefaultCorePluginContainer(core)
   container.addCore(new CoreRuntimePluginAdapter(core))
+  const humanCore = new HttpHumanCorePlugin()
+  container.addHuman(humanCore)
   core.attachEventLog({
     append: (id, revision, event) => store.appendCoreEvent(id, revision, event),
     appendDomain: (id, revision, event) => store.appendCoreDomainEvent(id, revision, event),
@@ -154,21 +156,8 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
     try {
       if (url.pathname === '/api/room') return json(response, 200, runtime.get(url.searchParams.get('id') ?? roomId))
       
-      // 新架构：Core Runtime 协议端点（兼容层，不替换旧 API）
-      if (url.pathname === '/api/core/view' && request.method === 'GET') return json(response, 200, core.getView())
-      if (url.pathname === '/api/core/commands' && request.method === 'POST') {
-        const command = await readJson(request)
-        await core.dispatch(command as import('./core/protocol.ts').HumanCommand)
-        return json(response, 200, { ok: true, view: core.getView() })
-      }
-      if (url.pathname === '/api/core/events' && request.method === 'GET') {
-        response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
-        const unsubscribe = core.subscribe((event: CoreEvent) => {
-          response.write(`data: ${JSON.stringify(event)}\n\n`)
-        })
-        request.on('close', unsubscribe)
-        return
-      }
+      // 新架构：Core Runtime 协议端点由 HumanCoreInteractionPlugin 处理。
+      if (await humanCore.handle(request, response, url)) return
       
       if (url.pathname === '/api/archive/export' && request.method === 'GET') return json(response, 200, runtime.exportArchive(roomId))
       if (url.pathname === '/api/archive/import' && request.method === 'POST') { runtime.importArchive(roomId, await readJson(request) as { room?: import('./types.ts').RoomSnapshot }); return json(response, 200, { ok: true }) }
