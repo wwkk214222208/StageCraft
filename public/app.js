@@ -11,7 +11,7 @@ let focalRoleIds = new Set()
 let reconsideringRoleIds = new Set()
 let activeAction = null
 let skipArmed = false
-let sidebarTab = 'roles' // 左侧栏标签：roles | lore
+let sidebarTab = 'roles' // 左侧栏标签：roles | lore | memories
 const TOKEN_PREFS_KEY = 'stagecraft-token-count'
 let tokenCountEnabled = false
 try { tokenCountEnabled = localStorage.getItem(TOKEN_PREFS_KEY) === '1' } catch {}
@@ -22,6 +22,10 @@ const missingElement = new Proxy({ hidden: true, value: '', checked: false, inne
 } })
 const $ = selector => document.querySelector(selector) ?? missingElement
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
+// 记忆已迁移为左栏同级页面；保留隐藏字段仅供旧剧本兼容保存，不能再由用户编辑。
+document.querySelectorAll('[data-inspector-tab="memory"], [data-inspector-panel="memory"]').forEach(element => element.remove())
+document.querySelectorAll('#role-modal #inspector-memory').forEach(element => { const label = element.closest('label'); if (label) label.hidden = true })
+document.addEventListener('click', event => { const roleId = event.target.closest?.('[data-memory-role]')?.dataset.memoryRole; if (roleId && room) inspectedRole = room.roles.find(role => role.id === roleId) })
 
 // ── token 计数小字（可开关；只展示，不进入正文） ──
 function tokenNoteHtml(kind, usage) {
@@ -136,7 +140,8 @@ function render(next) {
     const tags = entry.roles && entry.roles.length ? entry.roles.map(id => room.roles.find(role => role.id === id)?.name ?? id).join('、') : '常开'
     return `<article class="lore-entry"${readOnly ? '' : ` data-lore="${index}"`}><div class="lore-heading"><b>${escape(entry.name)}</b><small>${escape(tags)}</small></div><p>${escape(entry.content)}</p></article>`
   }).join('')
-  $('#roles').innerHTML = `<div class="sidebar-tabs"><button data-tab="roles" class="${sidebarTab === 'roles' ? 'active' : ''}">角色</button><button data-tab="lore" class="${sidebarTab === 'lore' ? 'active' : ''}">世界书</button></div><div id="roles-list" ${sidebarTab === 'roles' ? '' : 'hidden'}>${roleCards || '<p class="hint">暂无角色</p>'}<button id="role-add" class="role-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新建人物</button></div><div id="lore-list" ${sidebarTab === 'lore' ? '' : 'hidden'}><button id="lore-add" class="lore-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新增条目</button>${loreCards || '<p class="hint">暂无世界书条目</p>'}</div>`
+  const memoryCards = room.roles.flatMap(role => (role.memories ?? []).map(memory => `<article class="memory-record"><header><b>${escape(role.name)} · ${escape(memory.kind)}</b><small>${escape(memory.occurredAt)} · 重要度 ${memory.salience}</small></header><p>${escape(memory.text)}</p><small>${escape((memory.subjects ?? []).join('、') || '无关联人物')} · ${escape(memory.source)}</small><div>${readOnly ? '' : `<button type="button" data-memory-edit="${escape(memory.id)}" data-memory-role="${escape(role.id)}">编辑</button><button type="button" data-memory-supersede="${escape(memory.id)}" data-memory-role="${escape(role.id)}">替代</button><button type="button" data-memory-retract="${escape(memory.id)}">撤回</button>`}</div></article>`)).join('')
+  $('#roles').innerHTML = `<div class="sidebar-tabs"><button data-tab="roles" class="${sidebarTab === 'roles' ? 'active' : ''}">角色</button><button data-tab="lore" class="${sidebarTab === 'lore' ? 'active' : ''}">世界书</button><button data-tab="memories" class="${sidebarTab === 'memories' ? 'active' : ''}">记忆</button></div><div id="roles-list" ${sidebarTab === 'roles' ? '' : 'hidden'}>${roleCards || '<p class="hint">暂无角色</p>'}<button id="role-add" class="role-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新建人物</button></div><div id="lore-list" ${sidebarTab === 'lore' ? '' : 'hidden'}><button id="lore-add" class="lore-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新增条目</button>${loreCards || '<p class="hint">暂无世界书条目</p>'}</div><div id="memory-list" ${sidebarTab === 'memories' ? '' : 'hidden'}>${memoryCards || '<p class="hint">暂无结构化记忆</p>'}</div>`
   $('#scenes').innerHTML = room.scenes.length ? room.scenes.map(scene => {
     const snapshot = [scene.sceneTime ? `🕐 ${escape(scene.sceneTime)}` : '', scene.sceneLocation ? `📍 ${escape(scene.sceneLocation)}` : ''].filter(Boolean).join('　')
     const meta = snapshot ? `<time class="scene-snapshot">${snapshot}</time>` : `<time>${new Date(scene.createdAt).toLocaleString()}</time>`
