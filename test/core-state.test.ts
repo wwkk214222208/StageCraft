@@ -281,11 +281,11 @@ test('repository failure leaves Core memory and event stream unchanged', () => {
 
 test('app boot uses the unified Core state repository', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-app-state-'))
-  let app: ReturnType<typeof startTavern> | undefined
+  let app: Awaited<ReturnType<typeof startTavern>> | undefined
   try {
     mkdirSync(join(root, 'data'), { recursive: true })
     writeFileSync(join(root, 'data', 'providers.json'), JSON.stringify({ providers: [] }), 'utf8')
-    app = startTavern({ root, storiesRoot, publicRoot: fileURLToPath(new URL('../public', import.meta.url)), dataDir: join(root, 'data'), saveRoot: join(root, 'save'), port: 0 })
+    app = await startTavern({ root, storiesRoot, publicRoot: fileURLToPath(new URL('../public', import.meta.url)), dataDir: join(root, 'data'), saveRoot: join(root, 'save'), port: 0 })
     assert.ok(app.store.loadCoreState(app.roomId))
   } finally {
     await app?.close()

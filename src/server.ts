@@ -4,4 +4,4 @@
  */
 import { startTavern } from './app-boot.ts'
 
-startTavern()
+await startTavern()

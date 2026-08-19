@@ -13,7 +13,7 @@ test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', asy
   const saveRoot = mkdtempSync(join(tmpdir(), 'rp-save-test-'))
   // 禁止测试继承 providers.example.json 或环境中的真实 API 配置。
   writeFileSync(join(dataDir, 'providers.json'), JSON.stringify({ providers: [] }), 'utf8')
-  const app = startTavern({ root, dataDir, saveRoot, port: 0, host: '127.0.0.1' })
+  const app = await startTavern({ root, dataDir, saveRoot, port: 0, host: '127.0.0.1' })
   try {
     // 端口 0 = 系统分配，listen 完成前 address() 为 null，轮询等待
     const address = await new Promise<{ port: number }>((resolve, reject) => {

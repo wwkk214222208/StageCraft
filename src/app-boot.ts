@@ -4,7 +4,7 @@
  *   - 独立入口 src/server.ts（npm run dev）
  *   - dsh-rp 插件壳（Cordis/dsh profile 里跑同一套应用，核心零改动）
  *
- * 本模块保持框架无关：不 import cordis/dsh，只导出纯函数。
+ * 本模块负责生产组合根：独立入口创建 Cordis Context，DSH 可传入宿主 Context。
  */
 import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -20,11 +20,11 @@ import { importStCard } from './st-card-import.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
 import { ModelGatewayRouterAdapter } from './core/model-router-adapter.ts'
 import { DefaultCorePluginContainer } from './core/container.ts'
-import { CoreRuntimePluginAdapter } from './core/runtime-plugin.ts'
-import type { Disposable } from './core/plugins.ts'
 import { HttpHumanCorePlugin } from './core/http-human-plugin.ts'
 import { StageCraftSolutionPlugin } from './core/solutions.ts'
 import { StoreCoreStateRepository } from './core/store-state-repository.ts'
+import { Context, type Fiber } from '@deepseek-ai/cordis'
+import { coreRuntimeCordisPlugin, createStageCraftService, humanCordisPlugin, llmCordisPlugin, solutionCordisPlugin, stageCraftServicePlugin, stateRepositoryCordisPlugin } from './core/cordis-plugins.ts'
 
 /** Provider replacement transaction: preflight must run before tearing down the old route. */
 export async function switchProviderSafely<T>(assertReady: () => void, disposeOld: () => Promise<void> | void, installNew: () => T): Promise<T> {
@@ -42,6 +42,8 @@ export function resolveRouteModel(request: { route?: { model?: string } }, roleM
 }
 
 export interface TavernOptions {
+  /** Optional host Cordis context. DSH supplies this; standalone mode creates one. */
+  ctx?: Context
   /** 仓库根目录（默认：本文件所在目录的上一级） */
   root?: string
   /** public/ 静态资源目录（默认 <root>/public） */
@@ -63,6 +65,8 @@ export interface TavernOptions {
 }
 
 export interface TavernApp {
+  /** Cordis host context; never disposed when supplied by an external host. */
+  readonly ctx: Context
   store: Store
   runtime: RoomRuntime
   core: CoreRuntimeSkeleton
@@ -75,7 +79,14 @@ export interface TavernApp {
   close(): Promise<void>
 }
 
-export function startTavern(options: TavernOptions = {}): TavernApp {
+export async function startTavern(options: TavernOptions = {}): Promise<TavernApp> {
+  const ctx = options.ctx ?? new Context()
+  const appFibers: Fiber[] = []
+  const trackFiber = (fiber: Fiber): Fiber => { appFibers.push(fiber); return fiber }
+  const untrackFiber = (fiber: Fiber): void => {
+    const index = appFibers.lastIndexOf(fiber)
+    if (index >= 0) appFibers.splice(index, 1)
+  }
   const root = options.root ?? fileURLToPath(new URL('..', import.meta.url))
   const publicRoot = options.publicRoot ?? join(root, 'public')
   const storiesRoot = options.storiesRoot ?? join(root, 'stories')
@@ -96,8 +107,14 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
     console.log('检测到旧数据库，已迁移到 stagecraft.sqlite。')
   }
   const store = new Store(dbPath)
-  let roomId = store.seed(loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'))
-  store.recoverInterruptedRooms()
+  let roomId: string
+  try {
+    roomId = store.seed(loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'))
+    store.recoverInterruptedRooms()
+  } catch (error) {
+    try { store.close() } catch { /* preserve the startup error */ }
+    throw error
+  }
 
   const debugListeners = new Set<(text: string) => void>()
   const debugLog = join(dataDir, 'server.log')
@@ -109,52 +126,79 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   }
 
   // 配置文件（data/providers.json）不进仓库；不存在时用 providers.example.json 生成默认
-  const providerFilePath = join(dataDir, 'providers.json')
-  if (!existsSync(providerFilePath)) {
-    const example = join(root, 'providers.example.json')
-    if (existsSync(example)) copyFileSync(example, providerFilePath)
+  let providerStore: ProviderConfigStore
+  let envRoute: ReturnType<typeof routeFromEnvironment>
+  try {
+    const providerFilePath = join(dataDir, 'providers.json')
+    if (!existsSync(providerFilePath)) {
+      const example = join(root, 'providers.example.json')
+      if (existsSync(example)) copyFileSync(example, providerFilePath)
+    }
+    providerStore = new ProviderConfigStore(providerFilePath)
+    envRoute = routeFromEnvironment()
+    if (providerStore.list().length === 0 && envRoute.apiKey) providerStore.save({ id: 'environment', name: '环境变量', baseUrl: envRoute.baseUrl, apiKey: envRoute.apiKey, models: [envRoute.model], selectedModel: envRoute.model, responseFormat: envRoute.responseFormat })
+  } catch (error) {
+    try { store.close() } catch { /* preserve the startup error */ }
+    throw error
   }
-  const providerStore = new ProviderConfigStore(providerFilePath)
-  const envRoute = routeFromEnvironment()
-  if (providerStore.list().length === 0 && envRoute.apiKey) providerStore.save({ id: 'environment', name: '环境变量', baseUrl: envRoute.baseUrl, apiKey: envRoute.apiKey, models: [envRoute.model], selectedModel: envRoute.model, responseFormat: envRoute.responseFormat })
 
   let gateway: ModelGateway | undefined
-  let llmInstallation: Disposable | undefined
+  let llmFiber: Fiber | undefined
   let providerActivation = Promise.resolve()
   function gatewayFromProvider(config: ProviderConfig, model: string): ModelGateway {
     return new ModelGateway({ name: config.name, baseUrl: config.baseUrl, apiKey: config.apiKey, model, timeoutMs: envRoute.timeoutMs, responseFormat: config.responseFormat, toolCalling: config.toolCalling !== false }, { onSummary: emitDebug, logRawFinalContent: process.env.RP_LOG_MODEL_FINAL_CONTENT === '1' })
   }
-  function installProvider(config: ProviderConfig | undefined): void {
+  async function installProvider(config: ProviderConfig | undefined): Promise<void> {
     if (!config?.apiKey) { gateway = undefined; return }
     const defaults = providerStore.defaults()
     const directorModel = defaults.directorModel ?? config.selectedModel ?? config.models[0] ?? envRoute.model
-    gateway = gatewayFromProvider(config, directorModel)
-    llmInstallation = container.addLlm(new ModelGatewayRouterAdapter(gateway, request => {
+    const nextGateway = gatewayFromProvider(config, directorModel)
+    const adapter = new ModelGatewayRouterAdapter(nextGateway, request => {
       const roleId = request.route?.role
-      if (!roleId) return gateway!
+      if (!roleId) return nextGateway
       const role = runtime.get(roomId).roles.find(item => item.id === roleId)
       const selectedProviderId = resolveRouteProviderId(request, role?.providerId, providerStore.getDefaultRole()?.id)
       const selectedProvider = selectedProviderId ? providerStore.get(selectedProviderId) : providerStore.getDefaultRole()
-      if (!selectedProvider?.apiKey) return gateway!
+      if (!selectedProvider?.apiKey) return nextGateway
       const defaultsForRole = providerStore.defaults()
       const fallbackModel = selectedProvider.id === providerStore.getDefaultRole()?.id ? defaultsForRole.defaultRoleModel : undefined
       return gatewayFromProvider(selectedProvider, resolveRouteModel(request, role?.modelOverride, fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)!)
-    }))
-    runtime.setWorkers(createRealWorkers(gateway, role => {
-      const defaults = providerStore.defaults()
-      const fallbackProvider = providerStore.getDefaultRole()
-      const selectedProvider = role.providerId ? providerStore.get(role.providerId) : fallbackProvider
-      if (!selectedProvider?.apiKey) return gateway!
-      const fallbackModel = selectedProvider.id === fallbackProvider?.id ? defaults.defaultRoleModel : undefined
-      return gatewayFromProvider(selectedProvider, role.modelOverride ?? fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)
-    }, { directorThinkingStrength: providerStore.directorThinking(), directorProviderId: config.id, directorModel, requestModel: request => core.requestModel(request), cancelModel: requestId => core.cancel(requestId) }))
+    })
+    const fiber = ctx.plugin(llmCordisPlugin(adapter))
+    await fiber
+    llmFiber = fiber
+    try {
+      runtime.setWorkers(createRealWorkers(nextGateway, role => {
+        const defaults = providerStore.defaults()
+        const fallbackProvider = providerStore.getDefaultRole()
+        const selectedProvider = role.providerId ? providerStore.get(role.providerId) : fallbackProvider
+        if (!selectedProvider?.apiKey) return nextGateway
+        const fallbackModel = selectedProvider.id === fallbackProvider?.id ? defaults.defaultRoleModel : undefined
+        return gatewayFromProvider(selectedProvider, role.modelOverride ?? fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)
+      }, { directorThinkingStrength: providerStore.directorThinking(), directorProviderId: config.id, directorModel, requestModel: request => core.requestModel(request), cancelModel: requestId => core.cancel(requestId) }))
+    } catch (error) {
+      untrackFiber(fiber)
+      llmFiber = undefined
+      await fiber.dispose()
+      throw error
+    }
+    gateway = nextGateway
+    trackFiber(fiber)
   }
   function activateProvider(config = providerStore.getDirector()): Promise<void> {
+    if (closed) return Promise.reject(new Error('Tavern app is closed.'))
     const activation = providerActivation.then(async () => {
       await switchProviderSafely(
         () => runtime.assertWorkersSwitchAllowed(),
-        async () => { await llmInstallation?.dispose(); llmInstallation = undefined },
-        () => { installProvider(config) },
+        async () => {
+          const previous = llmFiber
+          llmFiber = undefined
+          if (previous) {
+            untrackFiber(previous)
+            await previous.dispose()
+          }
+        },
+        async () => { await installProvider(config) },
       )
     })
     providerActivation = activation.catch(() => undefined)
@@ -162,19 +206,49 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   }
   const core = new CoreRuntimeSkeleton()
   const container = new DefaultCorePluginContainer(core)
-  container.addCore(new CoreRuntimePluginAdapter(core))
   const humanCore = new HttpHumanCorePlugin()
-  container.addHuman(humanCore)
   const runtime = new RoomRuntime(store, undefined, core)
-  container.addSolution(new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), management: runtime.getManagementService(), defaultRoomId: roomId }))
-  core.attachStateRepository(new StoreCoreStateRepository(store))
-  const restoredCoreState = core.restoreState(roomId)
-  const initialRoom = runtime.get(roomId)
-  // 即使是恢复后的相同 revision 也提交一次：事件 INSERT OR IGNORE 保证幂等，
-  // 同时让内存投影与 Repository 的 snapshot/event 保持一致。
-  core.projectRoom(initialRoom, restoredCoreState ? 'app-boot:restore' : 'app-boot:init')
-  // 首次启动没有旧路由可等待，保持旧行为：startTavern 返回前同步装配 gateway/workers。
-  if (providerStore.getDirector()?.apiKey) installProvider(providerStore.getDirector())
+  const stagecraft = createStageCraftService(core, roomId, container, repository => core.attachStateRepository(repository))
+  const solution = new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), management: runtime.getManagementService(), defaultRoomId: roomId })
+  async function compensateStartFailure(): Promise<void> {
+    for (const fiber of [...appFibers].reverse()) {
+      try { await fiber.dispose() } catch { /* preserve the startup error */ }
+    }
+    appFibers.length = 0
+    try { runtime.dispose() } catch { /* preserve the startup error */ }
+    try { await container.dispose() } catch { /* preserve the startup error */ }
+    try { store.close() } catch { /* preserve the startup error */ }
+  }
+  try {
+    const serviceFiber = ctx.plugin(stageCraftServicePlugin(stagecraft))
+    await serviceFiber
+    trackFiber(serviceFiber)
+    for (const plugin of [
+      coreRuntimeCordisPlugin(),
+      stateRepositoryCordisPlugin(new StoreCoreStateRepository(store)),
+      humanCordisPlugin(humanCore),
+      solutionCordisPlugin(solution),
+    ]) {
+      const fiber = ctx.plugin(plugin)
+      await fiber
+      trackFiber(fiber)
+    }
+  } catch (error) {
+    await compensateStartFailure()
+    throw error
+  }
+  try {
+    const restoredCoreState = core.restoreState(roomId)
+    const initialRoom = runtime.get(roomId)
+    // 即使是恢复后的相同 revision 也提交一次：事件 INSERT OR IGNORE 保证幂等，
+    // 同时让内存投影与 Repository 的 snapshot/event 保持一致。
+    core.projectRoom(initialRoom, restoredCoreState ? 'app-boot:restore' : 'app-boot:init')
+    // 首次启动没有旧路由可等待，保持旧行为：startTavern 返回前同步装配 gateway/workers。
+    if (providerStore.getDirector()?.apiKey) await installProvider(providerStore.getDirector())
+  } catch (error) {
+    await compensateStartFailure()
+    throw error
+  }
 
   let managementCommandSequence = 0
   async function dispatchManagement(operation: string, payload: Record<string, unknown> = {}): Promise<void> {
@@ -667,16 +741,37 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
 
   const host = options.host ?? process.env.HOST ?? '127.0.0.1'
   const port = options.port ?? Number(process.env.PORT ?? 8787)
-  server.listen(port, host, () => {
-    const address = server.address()
-    const actualPort = typeof address === 'object' && address ? address.port : port
-    console.log(`StageCraft running at http://${host}:${actualPort} (room: ${roomId})`)
-  })
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error): void => { server.off('listening', onListening); reject(error) }
+      const onListening = (): void => {
+        server.off('error', onError)
+        const address = server.address()
+        const actualPort = typeof address === 'object' && address ? address.port : port
+        console.log(`StageCraft running at http://${host}:${actualPort} (room: ${roomId})`)
+        resolve()
+      }
+      server.once('error', onError)
+      server.once('listening', onListening)
+      server.listen(port, host)
+    })
+  } catch (error) {
+    try {
+      await new Promise<void>(resolve => {
+        server.close(() => resolve())
+        if (typeof server.closeAllConnections === 'function') server.closeAllConnections()
+      })
+    } catch { /* preserve the startup error */ }
+    await compensateStartFailure()
+    throw error
+  }
 
   let closed = false
   return {
+    ctx,
     store,
     runtime,
+    core,
     roomId,
     get gateway() { return gateway },
     providerStore,
@@ -701,16 +796,29 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         firstError ??= error
       }
       try {
-        runtime.dispose()
+        const current = llmFiber
+        llmFiber = undefined
+        if (current) {
+          untrackFiber(current)
+          await current.dispose()
+        }
       } catch (error) {
         firstError ??= error
       }
       try {
-        // 插件释放必须先于 Store，避免 adapter 在关闭数据库后回写状态。
-        await container.dispose()
+        for (const fiber of [...appFibers].reverse()) {
+          try { await fiber.dispose() } catch (error) { firstError ??= error }
+        }
+        appFibers.length = 0
       } catch (error) {
         firstError ??= error
       }
+      try {
+        runtime.dispose()
+      } catch (error) {
+        firstError ??= error
+      }
+      try { await container.dispose() } catch (error) { firstError ??= error }
       try {
         store.close()
       } catch (error) {

@@ -45,7 +45,7 @@ export const Config = z.object({
  * 启动酒馆应用。
  * @param ctx - 挂载作用域的 Context（仅用到 ctx.effect 注册可逆副作用）。
  */
-export function apply(ctx: Context, config: Config = {}): void {
+export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const packageRoot = dirname(fileURLToPath(import.meta.url))
   const sourceRoot = fileURLToPath(new URL('../..', import.meta.url))
   const defaultRoot = packageRoot.endsWith('/dist') || packageRoot.endsWith('\\dist') ? packageRoot : sourceRoot
@@ -53,8 +53,8 @@ export function apply(ctx: Context, config: Config = {}): void {
   // 默认 8799：避开独立酒馆（8787）与 dsh web GUI（8898）；可用 RP_PORT 覆盖。
   const port = config.port ?? Number(process.env.RP_PORT ?? 8799)
   const host = config.host || process.env.HOST || '127.0.0.1'
-  ctx.effect(() => {
-    const app: TavernApp = startTavern({ root, port, host })
+  await ctx.effect(async () => {
+    const app: TavernApp = await startTavern({ root, port, host, ctx })
     return () => app.close()
   })
 }

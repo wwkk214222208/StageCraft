@@ -79,7 +79,7 @@ test('LLM model events are published through the core event stream and a dispose
 test('startTavern installs the initial provider synchronously and closes Store after a plugin release error', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'rp-container-provider-test-'))
   writeFileSync(join(dataDir, 'providers.json'), JSON.stringify({ providers: [{ id: 'local', name: '本地', baseUrl: 'http://model.test', apiKey: 'key', models: ['model'], selectedModel: 'model', responseFormat: 'none' }], directorProviderId: 'local', directorModel: 'model' }))
-  const app = startTavern({ root, dataDir, port: 0, host: '127.0.0.1' })
+  const app = await startTavern({ root, dataDir, port: 0, host: '127.0.0.1' })
   assert.equal(app.container.llm.length, 1)
   assert.equal(app.gateway?.usage().model, 'model')
   app.container.addHuman({ id: 'test.throwing', install: () => ({ dispose: () => { throw new Error('dispose boom') } }), dispatch: async () => {}, publish: () => {} })
@@ -91,7 +91,7 @@ test('startTavern installs the initial provider synchronously and closes Store a
 test('startTavern close releases installed container plugins before the Store', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'rp-container-test-'))
   writeFileSync(join(dataDir, 'providers.json'), JSON.stringify({ providers: [] }), 'utf8')
-  const app = startTavern({ root, dataDir, port: 0, host: '127.0.0.1' })
+  const app = await startTavern({ root, dataDir, port: 0, host: '127.0.0.1' })
   let disposed = false
   app.container.addHuman({ id: 'test.app-human', install: () => ({ dispose: () => { disposed = true } }), dispatch: async () => {}, publish: () => {} })
   await app.close()

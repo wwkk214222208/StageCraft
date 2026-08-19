@@ -8,6 +8,7 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
 import * as rp from './dist/index.js'
 
 const PORT = Number(process.env.RP_PORT ?? 18787)
@@ -27,22 +28,14 @@ async function waitForReady(url) {
   throw new Error(`服务器未在 ${url} 就绪`)
 }
 
-// ---------- ① stub ctx ----------
-const disposers = []
-const stubCtx = {
-  effect(fn) {
-    const disposer = fn()
-    if (typeof disposer === 'function') disposers.push(disposer)
-  },
-  on() {},
-  emit() {},
-}
-rp.apply(stubCtx)
+// ---------- ① local Cordis host ----------
+const stubCtx = new Context()
+const stubFiber = stubCtx.plugin({ name: 'verify.local-host', apply: ctx => rp.apply(ctx) })
+await stubFiber
 await waitForReady(`${base}/api/room`)
-console.log('[stub ctx] 插件 apply 后 /api/room 响应 OK')
-const closeApp = disposers.pop()
-await closeApp()
-console.log('[stub ctx] disposer 关闭服务器+数据库 OK')
+console.log('[local Cordis host] 插件 apply 后 /api/room 响应 OK')
+await stubFiber.dispose()
+console.log('[local Cordis host] Fiber 卸载关闭服务器+数据库 OK')
 
 // ---------- ② 真实 Cordis（DSH vendor 版） ----------
 // Cordis 4：ctx.plugin() 返回 Fiber（thenable），卸载用 fiber.dispose()，没有 start/stop。

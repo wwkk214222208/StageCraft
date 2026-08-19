@@ -64,8 +64,16 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     this.workflowStore = store
   }
 
-  attachStateRepository(repository: CoreStateRepository): void {
+  attachStateRepository(repository: CoreStateRepository): Disposable {
     this.stateRepository = repository
+    let active = true
+    return {
+      dispose: () => {
+        if (!active) return
+        active = false
+        if (this.stateRepository === repository) this.stateRepository = undefined
+      },
+    }
   }
 
   restoreState(roomId: string, eventLimit = 100): boolean {
