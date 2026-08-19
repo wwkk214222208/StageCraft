@@ -272,3 +272,6 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 .header-tagline{flex:1;text-align:center;color:#9fb2dd;font:12px/1.25 system-ui,sans-serif;letter-spacing:.3px;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;transition:opacity .45s ease;user-select:none;padding:1px 0}.header-tagline[hidden]{display:none}
 .header-tagline .obagu{margin:0;font-weight:700;color:#ff8fa3;text-shadow:0 0 9px rgba(255,120,150,.45)}
 .header-tools{flex-shrink:0}
+
+/* 可移动、可缩放的运行摘要浮窗 */
+#debug-window{position:fixed;right:12px;bottom:100px;width:min(480px,48vw);height:min(300px,36vh);min-width:260px;min-height:140px;resize:both;overflow:hidden;background:#0d1117;border:1px solid #34415b;box-shadow:0 8px 24px #0008;z-index:6}#debug-window[hidden]{display:none}#debug-window header{height:auto;padding:6px 8px;background:#202839;border:0;border-bottom:1px solid #34415b;display:flex;align-items:center;justify-content:space-between;cursor:move;user-select:none}#debug-window header strong{font:600 13px system-ui,sans-serif;color:#b7c8fe}#debug-window-close{padding:1px 7px;font-size:18px;line-height:1}#debug-window #debug-stream{position:static;display:block;width:100%;height:calc(100% - 35px);max-width:none;max-height:none;overflow:auto;background:none;color:#b7c8fe;padding:8px;border:0;white-space:pre-wrap;cursor:text}

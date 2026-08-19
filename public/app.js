@@ -47,7 +47,44 @@ document.querySelector('#inspector-story-avatar')?.closest('label')?.remove()
 const whaleMemeSetting = document.createElement('label')
 whaleMemeSetting.className = 'settings-row'
 whaleMemeSetting.innerHTML = '开启鲸鱼梗<input id="settings-whale-meme" type="checkbox">'
-document.querySelector('#settings-debug')?.closest('.settings-row')?.after(whaleMemeSetting)
+const debugSettingRow = document.querySelector('#settings-debug')?.closest('.settings-row')
+const debugSettingHint = debugSettingRow?.nextElementSibling?.matches('.hint') ? debugSettingRow.nextElementSibling : debugSettingRow
+debugSettingHint?.after(whaleMemeSetting)
+const roomModeSelect = document.querySelector('#room-mode-select')
+const directorModeOption = roomModeSelect?.querySelector('option[value="director"]')
+const chatModeOption = roomModeSelect?.querySelector('option[value="chat"]')
+if (directorModeOption) directorModeOption.textContent = '导演模式（由导演统筹角色行动与场景叙事）'
+if (chatModeOption) chatModeOption.textContent = '群聊模式（角色直接发言；导演仍可参与讨论与推进）'
+const debugStream = document.querySelector('#debug-stream')
+const debugWindow = document.createElement('section')
+debugWindow.id = 'debug-window'
+debugWindow.hidden = true
+debugWindow.innerHTML = '<header id="debug-window-handle"><strong>运行摘要</strong><button id="debug-window-close" type="button" aria-label="关闭运行摘要">×</button></header>'
+if (debugStream) {
+  debugStream.replaceWith(debugWindow)
+  debugStream.hidden = false
+  debugWindow.append(debugStream)
+}
+let debugWindowDrag
+document.querySelector('#debug-window-handle')?.addEventListener('pointerdown', event => {
+  if (event.target.closest('button')) return
+  const rect = debugWindow.getBoundingClientRect()
+  debugWindow.style.left = `${rect.left}px`
+  debugWindow.style.top = `${rect.top}px`
+  debugWindow.style.right = 'auto'
+  debugWindow.style.bottom = 'auto'
+  debugWindowDrag = { offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top }
+  event.currentTarget.setPointerCapture(event.pointerId)
+})
+document.querySelector('#debug-window-handle')?.addEventListener('pointermove', event => {
+  if (!debugWindowDrag) return
+  const x = Math.max(0, Math.min(window.innerWidth - debugWindow.offsetWidth, event.clientX - debugWindowDrag.offsetX))
+  const y = Math.max(0, Math.min(window.innerHeight - debugWindow.offsetHeight, event.clientY - debugWindowDrag.offsetY))
+  debugWindow.style.left = `${x}px`
+  debugWindow.style.top = `${y}px`
+})
+document.querySelector('#debug-window-handle')?.addEventListener('pointerup', () => { debugWindowDrag = null })
+document.querySelector('#debug-window-handle')?.addEventListener('pointercancel', () => { debugWindowDrag = null })
 document.querySelector('#role-modal .inspector-portrait-panel .hint')?.remove()
 modelPanel?.querySelector(':scope > .hint')?.remove()
 document.querySelectorAll('#role-modal #inspector-memory, #new-role-memory').forEach(element => element.closest('label')?.remove())
@@ -273,10 +310,11 @@ $('#player-avatar-url').onclick = async () => {
   } catch { /* api() 已 alert */ }
 }
 $('#story-settings').onclick = () => { refreshArchiveList(); const storySelect = $('#story-select'); if (room?.storyId && [...storySelect.options].some(option => option.value === room.storyId)) storySelect.value = room.storyId; const modeLabel = room?.mode === 'chat' ? '群聊' : '导演'; $('#archive-name').value = room?.title?.trim() ? `${room.title.trim()}-${modeLabel}` : (room?.storyId ?? ''); $('#room-mode-select').value = room?.mode ?? 'director'; $('#room-auto-publish').checked = !!room?.autoPublish; $('#story-modal').showModal() }
-$('#app-settings').onclick = () => { $('#settings-auto-publish').checked = !!room?.autoPublish; $('#settings-token-count').checked = tokenCountEnabled; $('#settings-debug').checked = !$('#debug-stream').hidden; $('#settings-whale-meme').checked = whaleMemeEnabled; $('#settings-modal').showModal() }
+$('#app-settings').onclick = () => { $('#settings-auto-publish').checked = !!room?.autoPublish; $('#settings-token-count').checked = tokenCountEnabled; $('#settings-debug').checked = !debugWindow.hidden; $('#settings-whale-meme').checked = whaleMemeEnabled; $('#settings-modal').showModal() }
 $('#settings-auto-publish').onchange = () => api('/api/room-config', { autoPublish: $('#settings-auto-publish').checked })
 $('#settings-token-count').onchange = () => { tokenCountEnabled = $('#settings-token-count').checked; try { localStorage.setItem(TOKEN_PREFS_KEY, tokenCountEnabled ? '1' : '0') } catch {} render(room) }
-$('#settings-debug').onchange = () => { const stream = $('#debug-stream'); stream.hidden = !$('#settings-debug').checked }
+$('#settings-debug').onchange = () => { debugWindow.hidden = !$('#settings-debug').checked }
+$('#debug-window-close').onclick = () => { debugWindow.hidden = true; $('#settings-debug').checked = false }
 $('#settings-whale-meme').onchange = () => { whaleMemeEnabled = $('#settings-whale-meme').checked; try { localStorage.setItem(WHALE_MEME_PREFS_KEY, whaleMemeEnabled ? '1' : '0') } catch {}; applyWhaleMeme() }
 
 // ── ST 角色卡导入（坯子） ──
