@@ -53,8 +53,8 @@ export class Store {
         model_api_key TEXT,
         PRIMARY KEY (room_id, id)
       ) STRICT;
-      CREATE TABLE IF NOT EXISTS npc_memories (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, role_id TEXT NOT NULL, scene_id TEXT, turn_id TEXT, world_change_id TEXT, occurred_at TEXT NOT NULL, occurred_location TEXT, source TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, subjects TEXT NOT NULL DEFAULT '[]', visibility TEXT NOT NULL DEFAULT 'private', salience INTEGER NOT NULL DEFAULT 3, confidence REAL NOT NULL DEFAULT 1.0, status TEXT NOT NULL DEFAULT 'active', supersedes TEXT NOT NULL DEFAULT '[]', superseded_by TEXT, dedupe_key TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (room_id, role_id, dedupe_key)) STRICT;
-      CREATE INDEX IF NOT EXISTS npc_memories_role_active ON npc_memories(room_id, role_id, status, occurred_at);
+      CREATE TABLE IF NOT EXISTS npc_memories (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, role_id TEXT NOT NULL, scene_id TEXT, turn_id TEXT, world_change_id TEXT, occurred_at TEXT NOT NULL, occurred_location TEXT, source TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, subjects TEXT NOT NULL DEFAULT '[]', visibility TEXT NOT NULL DEFAULT 'private', salience INTEGER NOT NULL DEFAULT 3, confidence REAL NOT NULL DEFAULT 1.0, status TEXT NOT NULL DEFAULT 'active', supersedes TEXT NOT NULL DEFAULT '[]', superseded_by TEXT, dedupe_key TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (room_id, role_id, dedupe_key)) STRICT;
+      CREATE INDEX IF NOT EXISTS npc_memories_role_active ON npc_memories(room_id, role_id, status, sort_order);
       CREATE INDEX IF NOT EXISTS npc_memories_world_change ON npc_memories(room_id, world_change_id);
       CREATE TABLE IF NOT EXISTS reaction_previews (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,6 +191,7 @@ export class Store {
     this.ensureUsageColumns()
     this.ensureWorldChangeColumn()
     this.ensureSceneWorldChangeColumns()
+    this.ensureMemorySortOrder()
   }
 
   /** 关闭数据库连接（幂等；供宿主卸载/退出前的资源回收） */
@@ -285,6 +286,22 @@ export class Store {
   private ensureRoleSortOrder(): void {
     const columns = new Set(this.db.prepare('PRAGMA table_info(roles)').all().map((row: any) => row.name as string))
     if (!columns.has('sort_order')) this.db.exec('ALTER TABLE roles ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0')
+  }
+
+  /** 记忆顺序可由用户拖动维护；迁移旧数据时先放未标注时间，再保留时间顺序。 */
+  private ensureMemorySortOrder(): void {
+    const columns = new Set(this.db.prepare('PRAGMA table_info(npc_memories)').all().map((row: any) => row.name as string))
+    if (columns.has('sort_order')) return
+    this.db.exec('ALTER TABLE npc_memories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0')
+    const rows = this.db.prepare("SELECT id, room_id, role_id FROM npc_memories ORDER BY room_id, role_id, CASE WHEN occurred_at = '未标注时间' THEN 0 ELSE 1 END, occurred_at, created_at").all() as Array<{ id: string; room_id: string; role_id: string }>
+    const update = this.db.prepare('UPDATE npc_memories SET sort_order = ? WHERE id = ?')
+    let group = ''
+    let index = 0
+    for (const row of rows) {
+      const nextGroup = `${row.room_id}:${row.role_id}`
+      if (nextGroup !== group) { group = nextGroup; index = 0 }
+      update.run(index++, row.id)
+    }
   }
 
   /** 旧库迁移：drafts.role_proposals（导演提议新建人物） */
@@ -466,14 +483,15 @@ export class Store {
   }
 
   listNpcMemories(roomId: string, roleId: string, includeInactive = false): import('./types.ts').NpcMemory[] {
-    const rows = this.db.prepare(`SELECT * FROM npc_memories WHERE room_id = ? AND role_id = ?${includeInactive ? '' : " AND status = 'active'"} ORDER BY occurred_at, created_at`).all(roomId, roleId) as any[]
+    const rows = this.db.prepare(`SELECT * FROM npc_memories WHERE room_id = ? AND role_id = ?${includeInactive ? '' : " AND status = 'active'"} ORDER BY sort_order, created_at`).all(roomId, roleId) as any[]
     return rows.map(rowToNpcMemory)
   }
 
   insertNpcMemories(roomId: string, roleId: string, entries: Array<{ id: string; sceneId?: string; turnId?: string; worldChangeId?: string; occurredAt: string; occurredLocation?: string; source: import('./types.ts').MemorySource; text: string }>): void {
     const now = new Date().toISOString()
-    const insert = this.db.prepare(`INSERT OR IGNORE INTO npc_memories (id, room_id, role_id, scene_id, turn_id, world_change_id, occurred_at, occurred_location, source, kind, text, subjects, salience, confidence, dedupe_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    for (const entry of entries) { const text = entry.text.trim(); if (!text) continue; const dedupe = `${entry.sceneId ?? entry.turnId ?? 'manual'}:${text}`; insert.run(entry.id, roomId, roleId, entry.sceneId ?? null, entry.turnId ?? null, entry.worldChangeId ?? null, entry.occurredAt || '未标注时间', entry.occurredLocation ?? null, entry.source, 'fact', text, '[]', 3, 1, dedupe, now, now) }
+    const insert = this.db.prepare(`INSERT OR IGNORE INTO npc_memories (id, room_id, role_id, scene_id, turn_id, world_change_id, occurred_at, occurred_location, source, kind, text, subjects, salience, confidence, dedupe_key, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    let sortOrder = Number((this.db.prepare('SELECT MAX(sort_order) AS value FROM npc_memories WHERE room_id = ? AND role_id = ?').get(roomId, roleId) as { value?: number | null }).value ?? -1) + 1
+    for (const entry of entries) { const text = entry.text.trim(); if (!text) continue; const dedupe = `${entry.sceneId ?? entry.turnId ?? 'manual'}:${text}`; insert.run(entry.id, roomId, roleId, entry.sceneId ?? null, entry.turnId ?? null, entry.worldChangeId ?? null, entry.occurredAt || '未标注时间', entry.occurredLocation ?? null, entry.source, 'fact', text, '[]', 3, 1, dedupe, sortOrder++, now, now) }
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
@@ -489,9 +507,19 @@ export class Store {
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
+  /** 调整同一角色所有有效记忆的顺序（memoryIds 必须是完整列表）。 */
+  reorderNpcMemories(roomId: string, roleId: string, memoryIds: string[]): void {
+    const known = new Set(this.db.prepare("SELECT id FROM npc_memories WHERE room_id = ? AND role_id = ? AND status = 'active'").all(roomId, roleId).map((row: any) => row.id as string))
+    if (memoryIds.length !== known.size || new Set(memoryIds).size !== known.size || memoryIds.some(id => !known.has(id))) throw new Error('记忆顺序列表与现有记忆不一致。')
+    const update = this.db.prepare('UPDATE npc_memories SET sort_order = ?, updated_at = ? WHERE room_id = ? AND id = ?')
+    const now = new Date().toISOString()
+    this.withTransaction(() => memoryIds.forEach((memoryId, index) => update.run(index, now, roomId, memoryId)))
+    this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
+  }
+
   seedNpcMemories(roomId: string, roleId: string, timeline: Record<string, string[]> | undefined, source: import('./types.ts').MemorySource = 'import', initialMemories?: import('./types.ts').InitialMemory[]): void {
     const entries = initialMemories?.length
-      ? initialMemories.map((memory, index) => ({ id: `story-${roomId}-${roleId}-${index}`, occurredAt: memory.occurredAt ?? '未标注时间', source: 'story' as const, text: String(memory.text ?? '') }))
+      ? initialMemories.map((memory, index) => ({ id: `story-${roomId}-${roleId}-${index}`, occurredAt: memory.occurredAt ?? '未标注时间', source: 'story' as const, text: String(memory.text ?? '') })).sort((left, right) => Number(left.occurredAt !== '未标注时间') - Number(right.occurredAt !== '未标注时间'))
       : Object.entries(timeline ?? {}).flatMap(([occurredAt, items], index) => Array.isArray(items) ? items.map((text, itemIndex) => ({ id: `import-${roomId}-${roleId}-${index}-${itemIndex}`, occurredAt, source, text: String(text ?? '') })) : [])
     this.insertNpcMemories(roomId, roleId, entries)
   }

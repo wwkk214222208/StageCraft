@@ -365,6 +365,13 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       if (url.pathname === '/api/roles/memories/update' && request.method === 'POST') {
         const body = await readJson(request); runtime.updateNpcMemory(roomId, String(body.memoryId), body.entry ?? {}); return json(response, 200, { ok: true })
       }
+      if (url.pathname === '/api/roles/memories/reorder' && request.method === 'POST') {
+        const body = await readJson(request)
+        const memoryIds = Array.isArray(body.memoryIds) ? body.memoryIds.map(String) : []
+        if (!memoryIds.length) throw new Error('缺少记忆顺序列表。')
+        runtime.reorderNpcMemories(roomId, String(body.roleId ?? ''), memoryIds)
+        return json(response, 200, { ok: true })
+      }
       if (url.pathname === '/api/roles/memories/supersede' && request.method === 'POST') {
         const body = await readJson(request); runtime.supersedeNpcMemory(roomId, String(body.memoryId), body.entry ?? {}); return json(response, 200, { ok: true })
       }

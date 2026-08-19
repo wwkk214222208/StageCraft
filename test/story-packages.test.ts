@@ -87,12 +87,13 @@ test('structured initial memories seed canonical story records instead of legacy
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.createRoomFromPackage({
     id: 'structured-memory-story', title: '结构化记忆剧本', opening: '', playerCharacter: { name: '玩家', persona: '', currentState: '' },
-    roles: [{ id: 'keeper', name: '守秘人', portraitRef: '/assets/default.svg', currentState: '守在门前。', presence: 'present', selfModel: '谨慎。', memoryTimeline: { '旧时间': ['不应作为初始记录写入。'] }, initialMemories: [{ text: '答应保护银钥匙。', occurredAt: '开场前' }] }],
+    roles: [{ id: 'keeper', name: '守秘人', portraitRef: '/assets/default.svg', currentState: '守在门前。', presence: 'present', selfModel: '谨慎。', memoryTimeline: { '旧时间': ['不应作为初始记录写入。'] }, initialMemories: [{ text: '答应保护银钥匙。', occurredAt: '开场前' }, { text: '没有时间标签的初始记忆。', occurredAt: '未标注时间' }] }],
   }, 'structured-memory-room')
   const memory = store.getRoom(roomId)!.roles[0].memories![0]
-  assert.equal(memory.text, '答应保护银钥匙。')
+  assert.equal(memory.text, '没有时间标签的初始记忆。')
+  assert.equal(store.getRoom(roomId)!.roles[0].memories![1].text, '答应保护银钥匙。')
   assert.equal(memory.source, 'story')
-  assert.equal(memory.occurredAt, '开场前')
+  assert.equal(memory.occurredAt, '未标注时间')
 })
 
 test('restarting a room seeds the opening as the first history scene', () => {

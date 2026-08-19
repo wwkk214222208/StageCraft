@@ -49,6 +49,20 @@ test('结构化 digest 以场景、类型和文本去重', () => {
   assert.equal(store.listNpcMemories(roomId, 'aria').filter(memory => memory.text === entry.text).length, 1)
 })
 
+test('结构化记忆的拖动顺序会持久化，并影响后续读取顺序', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-structured-order-'))
+  const store = new Store(join(root, 'app.sqlite'))
+  const roomId = store.seed()
+  store.insertNpcMemories(roomId, 'aria', [
+    { id: 'memory-first', occurredAt: '第一日清晨', source: 'manual', text: '先发生的事。' },
+    { id: 'memory-last', occurredAt: '第一日夜晚', source: 'manual', text: '后发生的事。' },
+  ])
+  const before = store.listNpcMemories(roomId, 'aria').map(memory => memory.id)
+  const reordered = [...before].reverse()
+  store.reorderNpcMemories(roomId, 'aria', reordered)
+  assert.deepEqual(store.listNpcMemories(roomId, 'aria').map(memory => memory.id), reordered)
+})
+
 test('真实 digest Worker 请求 entries schema，不接受旧 events 协议', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-digest-schema-'))
   const store = new Store(join(root, 'app.sqlite'))
