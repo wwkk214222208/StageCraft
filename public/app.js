@@ -11,7 +11,7 @@ let focalRoleIds = new Set()
 let reconsideringRoleIds = new Set()
 let activeAction = null
 let skipArmed = false
-let sidebarTab = 'roles' // 左侧栏标签：roles | lore | memories
+let sidebarTab = 'roles' // 左侧栏标签：roles | lore
 const TOKEN_PREFS_KEY = 'stagecraft-token-count'
 let tokenCountEnabled = false
 try { tokenCountEnabled = localStorage.getItem(TOKEN_PREFS_KEY) === '1' } catch {}
@@ -22,9 +22,18 @@ const missingElement = new Proxy({ hidden: true, value: '', checked: false, inne
 } })
 const $ = selector => document.querySelector(selector) ?? missingElement
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
-// 记忆已迁移为左栏同级页面；保留隐藏字段仅供旧剧本兼容保存，不能再由用户编辑。
-document.querySelectorAll('[data-inspector-tab="memory"], [data-inspector-panel="memory"]').forEach(element => element.remove())
-document.querySelectorAll('#role-modal #inspector-memory, #new-role-memory').forEach(element => { const label = element.closest('label'); if (label) label.hidden = true })
+// 角色设置固定为「人设 / 记忆 / 模型」；移除旧的文本时间线编辑器与关系独立页。
+document.querySelector('[data-inspector-tab="basic"]').textContent = '人设'
+document.querySelector('[data-inspector-tab="model"]').textContent = '模型'
+const relationsTab = document.querySelector('[data-inspector-tab="relations"]')
+const relationsPanel = document.querySelector('[data-inspector-panel="relations"]')
+const basicPanels = document.querySelectorAll('[data-inspector-panel="basic"]')
+if (relationsPanel && basicPanels[1]) { basicPanels[1].append(...relationsPanel.childNodes); relationsPanel.remove() }
+relationsTab?.remove()
+const modelPanel = document.querySelector('[data-inspector-panel="model"]')
+const modelSettings = document.querySelector('.inspector-fields > .inspector-row')
+if (modelPanel && modelSettings) modelPanel.prepend(modelSettings)
+document.querySelectorAll('#role-modal #inspector-memory, #new-role-memory').forEach(element => element.closest('label')?.remove())
 document.addEventListener('click', event => { const roleId = event.target.closest?.('[data-memory-role]')?.dataset.memoryRole; if (roleId && room) inspectedRole = room.roles.find(role => role.id === roleId) })
 
 // ── token 计数小字（可开关；只展示，不进入正文） ──
@@ -140,8 +149,7 @@ function render(next) {
     const tags = entry.roles && entry.roles.length ? entry.roles.map(id => room.roles.find(role => role.id === id)?.name ?? id).join('、') : '常开'
     return `<article class="lore-entry"${readOnly ? '' : ` data-lore="${index}"`}><div class="lore-heading"><b>${escape(entry.name)}</b><small>${escape(tags)}</small></div><p>${escape(entry.content)}</p></article>`
   }).join('')
-  const memoryCards = room.roles.flatMap(role => (role.memories ?? []).map(memory => `<article class="memory-record"><header><b>${escape(role.name)} · ${escape(memory.kind)}</b><small>${escape(memory.occurredAt)} · 重要度 ${memory.salience}</small></header><p>${escape(memory.text)}</p><small>${escape((memory.subjects ?? []).join('、') || '无关联人物')} · ${escape(memory.source)}</small><div>${readOnly ? '' : `<button type="button" data-memory-edit="${escape(memory.id)}" data-memory-role="${escape(role.id)}">编辑</button><button type="button" data-memory-supersede="${escape(memory.id)}" data-memory-role="${escape(role.id)}">替代</button><button type="button" data-memory-retract="${escape(memory.id)}">撤回</button>`}</div></article>`)).join('')
-  $('#roles').innerHTML = `<div class="sidebar-tabs"><button data-tab="roles" class="${sidebarTab === 'roles' ? 'active' : ''}">角色</button><button data-tab="lore" class="${sidebarTab === 'lore' ? 'active' : ''}">世界书</button><button data-tab="memories" class="${sidebarTab === 'memories' ? 'active' : ''}">记忆</button></div><div id="roles-list" ${sidebarTab === 'roles' ? '' : 'hidden'}>${roleCards || '<p class="hint">暂无角色</p>'}<button id="role-add" class="role-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新建人物</button></div><div id="lore-list" ${sidebarTab === 'lore' ? '' : 'hidden'}><button id="lore-add" class="lore-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新增条目</button>${loreCards || '<p class="hint">暂无世界书条目</p>'}</div><div id="memory-list" ${sidebarTab === 'memories' ? '' : 'hidden'}>${memoryCards || '<p class="hint">暂无结构化记忆</p>'}</div>`
+  $('#roles').innerHTML = `<div class="sidebar-tabs"><button data-tab="roles" class="${sidebarTab === 'roles' ? 'active' : ''}">角色</button><button data-tab="lore" class="${sidebarTab === 'lore' ? 'active' : ''}">世界书</button></div><div id="roles-list" ${sidebarTab === 'roles' ? '' : 'hidden'}>${roleCards || '<p class="hint">暂无角色</p>'}<button id="role-add" class="role-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新建人物</button></div><div id="lore-list" ${sidebarTab === 'lore' ? '' : 'hidden'}><button id="lore-add" class="lore-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新增条目</button>${loreCards || '<p class="hint">暂无世界书条目</p>'}</div>`
   $('#scenes').innerHTML = room.scenes.length ? room.scenes.map(scene => {
     const snapshot = [scene.sceneTime ? `🕐 ${escape(scene.sceneTime)}` : '', scene.sceneLocation ? `📍 ${escape(scene.sceneLocation)}` : ''].filter(Boolean).join('　')
     const meta = snapshot ? `<time class="scene-snapshot">${snapshot}</time>` : `<time>${new Date(scene.createdAt).toLocaleString()}</time>`
@@ -465,7 +473,7 @@ function renderStoryRoles() {
 const storyInitialMemories = role => role.initialMemories ?? Object.entries(role.memoryTimeline ?? {}).flatMap(([occurredAt, items]) => (items ?? []).map(text => ({ kind: 'fact', text, subjects: [], occurredAt, salience: 3, confidence: 1 })))
 function renderStoryInitialMemories(role) {
   let panel = $('#story-initial-memories')
-  if (!panel || panel === missingElement) { panel = document.createElement('section'); panel.id = 'story-initial-memories'; $('#inspector-story-fields').append(panel) }
+  if (!panel || panel === missingElement) { panel = document.createElement('section'); panel.id = 'story-initial-memories'; $('#inspector-memory-structured').append(panel) }
   const memories = storyInitialMemories(role)
   panel.innerHTML = `<h4 class="field-title">初始记忆 <small>（开局时写入角色私有记忆）</small></h4><div class="story-memory-list">${memories.map((memory, index) => `<article class="memory-record"><div class="inspector-row"><label>类型<select data-story-memory="kind" data-index="${index}">${['fact','observation','interaction','promise','relationship','belief','emotion','goal_update'].map(kind => `<option value="${kind}" ${memory.kind === kind ? 'selected' : ''}>${kind}</option>`).join('')}</select></label><label>时间<input data-story-memory="occurredAt" data-index="${index}" value="${escape(memory.occurredAt ?? '未标注时间')}"></label><label>重要度<input type="number" min="1" max="5" data-story-memory="salience" data-index="${index}" value="${memory.salience ?? 3}"></label></div><label>内容<textarea data-story-memory="text" data-index="${index}">${escape(memory.text ?? '')}</textarea></label><label>关联人物（逗号分隔）<input data-story-memory="subjects" data-index="${index}" value="${escape((memory.subjects ?? []).join(', '))}"></label><button type="button" class="danger" data-story-memory-delete="${index}">删除此条</button></article>`).join('')}</div><button type="button" class="small-btn" id="story-memory-add">＋ 添加初始记忆</button>`
 }
@@ -491,6 +499,7 @@ function openStoryRoleEditor(index) {
   $('#inspector-story-state').value = role.currentState ?? ''
   $('#inspector-avatar-preview').src = role.portraitRef ?? '/assets/default.svg'
   $('#inspector-avatar-preview').onerror = function () { this.onerror = null; this.src = '/assets/default.svg' }
+  setInspectorTab('basic')
   positionInspectorModals()
 }
 function renderStoryLore() {
@@ -654,6 +663,7 @@ function renderStructuredMemories(role) { const list = $('#inspector-memory-stru
 document.addEventListener('click', event => { const target = event.target.closest('[data-memory-retract],[data-memory-add],[data-memory-edit],[data-memory-supersede]'); if (!target) return; const roleId = target.dataset.memoryAdd; const memoryId = target.dataset.memoryRetract || target.dataset.memoryEdit || target.dataset.memorySupersede; const role = room?.roles.find(item => item.id === (roleId || inspectedRole?.id)); const current = role?.memories?.find(item => item.id === memoryId); if (roleId) { const text = prompt('记忆内容'); if (!text?.trim()) return; return api('/api/roles/memories', { roleId, entries: [{ text, kind: 'fact', subjects: [], salience: 3, confidence: 1 }] }).then(refreshRoom) } if (target.dataset.memoryRetract) return api('/api/roles/memories/retract', { memoryId }).then(refreshRoom); if (!current) return; const text = prompt(target.dataset.memorySupersede ? '替代后的记忆内容' : '记忆内容', current.text); if (!text?.trim()) return; const entry = { text, kind: current.kind, subjects: current.subjects ?? [], occurredAt: current.occurredAt, occurredLocation: current.occurredLocation, salience: current.salience, confidence: current.confidence }; return api(target.dataset.memorySupersede ? '/api/roles/memories/supersede' : '/api/roles/memories/update', { memoryId, entry }).then(refreshRoom) })
 function openInspector(roleId) { inspectedRole = room.roles.find(role => role.id === roleId); if (!inspectedRole) return; storyEditRoleIndex = null; $('#inspector-story-fields').hidden = true; $('#story-initial-memories')?.remove(); $('#role-modal-title').textContent = `${inspectedRole.name} 角色设置`; $('#inspector-role-id').value = roleId; $('#inspector-provider').innerHTML = `<option value="">使用默认</option>${providers.map(provider => `<option value="${escape(provider.id)}">${escape(provider.name)}</option>`).join('')}`; $('#inspector-provider').value = inspectedRole.providerId ?? ''; updateInspectorModels(); $('#inspector-model').value = inspectedRole.modelOverride ?? ''; $('#inspector-thinking').value = inspectedRole.thinkingStrength ?? 'standard'; $('#inspector-self-model').value = inspectedRole.selfModel; $('#inspector-goals').value = (inspectedRole.goals ?? []).join('\n'); renderStructuredMemories(inspectedRole); renderImpressionsList(); $('#inspector-avatar-preview').src = inspectedRole.portraitRef; $('#inspector-avatar-preview').onerror = function () { this.onerror = null; this.src = '/assets/default.svg' }; // 沉浸模式：角色面板只读
   setInspectorReadOnly(!!room?.autoPublish && storyEditRoleIndex === null);
+  setInspectorTab('basic')
   positionInspectorModals() }
 $('#inspector-save').onclick = event => {
   event.preventDefault()
