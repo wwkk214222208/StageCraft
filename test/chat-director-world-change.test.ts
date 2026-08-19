@@ -9,6 +9,7 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import type { WorkerSet } from '../src/workers.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 test('chat.director world change enters approval and returns to suggestion', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-director-world-'))
@@ -20,6 +21,7 @@ test('chat.director world change enters approval and returns to suggestion', asy
     store.restartRoom(roomId, story, { mode: 'chat' })
     const workers: WorkerSet = { decide: async () => ({ roleId: 'aria', participation: 'excluded', status: 'abstained' }), draft: async () => ({ text: '' }), directorChat: async () => ({ reply: '可以。', worldChange: { location: '北塔' }, narration: '风雪改变了方向。' }) }
     const core = new CoreRuntimeSkeleton()
+    installStageCraftSolution(core)
     const runtime = new RoomRuntime(store, workers, core)
     core.attachLegacyRuntime(runtime, roomId)
     core.attachWorkflowStore({ save: (id, instance) => store!.saveWorkflowInstance(id, instance), list: id => store!.listWorkflowInstances(id) })

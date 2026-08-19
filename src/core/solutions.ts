@@ -1,5 +1,6 @@
 import type { Role, RoomMode, RoomPhase } from '../types.ts'
 import type { InteractionRequest, WorkflowDefinition, WorkflowInstance } from './protocol.ts'
+import type { CoreSolutionPlugin, CoreSolutionProjectionProvider, CoreSolutionHost, Disposable } from './plugins.ts'
 
 type WorkflowRoom = { id: string; mode: RoomMode; phase: RoomPhase; revision: number; roles?: Role[]; draft?: unknown; speech?: unknown; pendingWorldChange?: unknown }
 
@@ -79,10 +80,13 @@ export function workflowInstancesFromRoom(room: WorkflowRoom): WorkflowInstance[
     return [instance(room, directorTurnWorkflow, directorStep, directorStep === 'awaiting-player-input' || directorStep === 'awaiting-approval' || directorStep === 'consulting-director' || directorStep === 'collecting-decisions' ? 'waiting' : 'running')]
   }
   const speechStep = chatSpeechPhaseToStep[room.phase] ?? room.phase
-  const speechActive = Boolean(room.speech) && ['role-speaking', 'awaiting-approval', 'world-change-approval'].includes(speechStep)
-  const workflows = [instance(room, chatSpeechWorkflow, speechStep, speechStep === 'awaiting-player-input' || speechStep === 'awaiting-approval' || speechStep === 'world-change-approval' ? 'waiting' : 'running')]
-  // 导演咨询与发言共存：非活跃时仅注册为可启动的等待实例，不能重复生成玩家输入控件。
-  workflows.push(instance(room, chatDirectorWorkflow, room.phase === 'world-change-approval' && !speechActive ? 'awaiting-world-change-approval' : 'awaiting-suggestion', 'waiting', { dormant: speechActive }))
+  // speak() 先切换到 role-speaking、稍后才写入 speech；该阶段必须立即让导演休眠。
+  const speechActive = speechStep === 'role-speaking' || (Boolean(room.speech) && ['awaiting-approval', 'world-change-approval'].includes(speechStep))
+  // idle 时两条 workflow 都可待命；只有角色台词正在生成/审批时才让导演 workflow 休眠。
+  // 无角色台词的 world-change-approval 属于导演流程，此时 speech workflow 休眠。
+  const directorWorldChange = room.phase === 'world-change-approval' && !speechActive
+  const workflows = [instance(room, chatSpeechWorkflow, speechStep, speechStep === 'awaiting-player-input' || speechStep === 'awaiting-approval' || speechStep === 'world-change-approval' ? 'waiting' : 'running', { dormant: directorWorldChange })]
+  workflows.push(instance(room, chatDirectorWorkflow, directorWorldChange ? 'awaiting-world-change-approval' : 'awaiting-suggestion', 'waiting', { dormant: speechActive }))
   return workflows
 }
 
@@ -107,6 +111,56 @@ export function interactionFromRoom(room: WorkflowRoom): InteractionRequest | un
   if (room.phase === 'awaiting-approval') return approvalInteraction(room.id, 'speech-approval', '批准角色台词', '确认或编辑角色刚生成的台词。')
   if (room.phase === 'world-change-approval') return approvalInteraction(room.id, 'world-change-approval', '批准世界变更', '确认角色或导演提出的时间、地点或角色状态变化。')
   return undefined
+}
+
+/** 默认 StageCraft 玩法方案：把既有三条固定 Workflow 和房间兼容投影装配进 Core。 */
+export class StageCraftSolutionPlugin implements CoreSolutionPlugin {
+  readonly id = 'stagecraft.solution'
+
+  install(host: CoreSolutionHost): Disposable {
+    const registrations = [
+      host.registerWorkflow(chatSpeechWorkflow),
+      host.registerWorkflow(chatDirectorWorkflow),
+      host.registerWorkflow(directorTurnWorkflow),
+      host.registerProjection(stagecraftProjection),
+    ]
+    return {
+      dispose: async () => {
+        for (const registration of registrations.reverse()) await registration.dispose()
+      },
+    }
+  }
+}
+
+const stagecraftProjection: CoreSolutionProjectionProvider = {
+  id: 'stagecraft.room-projection',
+  project(room) {
+    const workflows = workflowInstancesFromRoom(room)
+    const interactions: InteractionRequest[] = []
+    const interaction = interactionFromRoom(room)
+    if (interaction) interactions.push(interaction)
+    if (room.mode === 'chat' && workflows.some(item => item.definitionId === chatDirectorWorkflow.id && item.step === 'awaiting-suggestion' && item.locals.dormant !== true)) {
+      interactions.push(directorSuggestionInteraction(room.id))
+    }
+    return { workflows, interactions }
+  },
+  interactionBelongsToWorkflow(interaction, workflow) {
+    const isSpeech = workflow.definitionId === chatSpeechWorkflow.id && workflow.locals.dormant !== true
+    const isActiveSpeech = isSpeech
+    const isDirectorChat = workflow.definitionId === chatDirectorWorkflow.id && workflow.locals.dormant !== true
+    const isDirectorTurn = workflow.definitionId === directorTurnWorkflow.id
+    if (interaction.id.endsWith(':role-select')) return isSpeech && workflow.step === 'awaiting-player-input'
+    if (interaction.id.endsWith(':director-suggestion')) return isDirectorChat && workflow.step === 'awaiting-suggestion'
+    if (interaction.id.endsWith(':player-input')) return isDirectorTurn && workflow.step === 'awaiting-player-input'
+    if (interaction.id.endsWith(':decision-approval')) return isDirectorTurn && workflow.step === 'collecting-decisions'
+    if (interaction.id.endsWith(':draft-approval')) return isDirectorTurn && workflow.step === 'awaiting-approval'
+    if (interaction.id.endsWith(':director-consult')) return isDirectorTurn && workflow.step === 'consulting-director'
+    if (interaction.id.endsWith(':speech-approval')) return isActiveSpeech && workflow.step === 'awaiting-approval'
+    if (interaction.id.endsWith(':world-change-approval')) {
+      return (isActiveSpeech && workflow.step === 'world-change-approval') || (isDirectorChat && workflow.step === 'awaiting-world-change-approval')
+    }
+    return false
+  },
 }
 
 function textInteraction(roomId: string, suffix: string, title: string, description: string, submitLabel: string): InteractionRequest {

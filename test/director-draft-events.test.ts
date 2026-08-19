@@ -9,6 +9,7 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import type { WorkerSet } from '../src/workers.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 test('director draft approval emits domain events and returns to player input', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-draft-events-'))
@@ -20,6 +21,7 @@ test('director draft approval emits domain events and returns to player input', 
     store.restartRoom(roomId, story, { mode: 'director' })
     const workers: WorkerSet = { decide: async (role, participation) => ({ roleId: role.id, participation, status: 'completed' }), draft: async (turnId) => ({ id: 'draft-1', turnId, text: '场景', stateUpdates: {}, settingProposals: [], intentHandling: [], openQuestions: [], createdAt: new Date().toISOString() }) }
     const core = new CoreRuntimeSkeleton()
+    installStageCraftSolution(core)
     const runtime = new RoomRuntime(store, workers, core)
     core.attachLegacyRuntime(runtime, roomId)
     core.attachEventLog({ append: (id, revision, event) => store!.appendCoreEvent(id, revision, event), appendDomain: (id, revision, event) => store!.appendCoreDomainEvent(id, revision, event), list: (id, limit) => store!.listCoreEvents(id, limit), listDomain: (id, limit) => store!.listCoreDomainEvents(id, limit) })

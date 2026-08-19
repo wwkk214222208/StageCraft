@@ -8,6 +8,7 @@ import { Store } from '../src/store.ts'
 import { RoomRuntime } from '../src/room-runtime.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 function chatCore(root: string) {
   const store = new Store(join(root, 'state.sqlite'))
@@ -15,6 +16,7 @@ function chatCore(root: string) {
   const roomId = store.seed(story)
   store.restartRoom(roomId, story, { mode: 'chat' })
   const core = new CoreRuntimeSkeleton()
+  installStageCraftSolution(core)
   const runtime = new RoomRuntime(store, undefined, core)
   core.attachLegacyRuntime(runtime, roomId)
   core.attachWorkflowStore({ save: (id, instance) => store.saveWorkflowInstance(id, instance), list: id => store.listWorkflowInstances(id) })

@@ -2,9 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { chatSpeechWorkflow } from '../src/core/solutions.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 test('Core model request lifecycle persists pending request IDs', async () => {
   const core = new CoreRuntimeSkeleton()
+  installStageCraftSolution(core)
   const instance = { id: 'workflow:room-1:chat-speech', definitionId: chatSpeechWorkflow.id, definitionVersion: chatSpeechWorkflow.version, step: 'role-speaking', status: 'running' as const, locals: { roomId: 'room-1' }, pendingInteractionIds: [], pendingModelRequestIds: [], retryCount: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
   const store = new Map([[instance.id, instance]])
   core.attachWorkflowStore({ save: (_roomId, value) => store.set(value.id, value), list: () => [...store.values()] })

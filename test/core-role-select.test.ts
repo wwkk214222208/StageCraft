@@ -8,6 +8,7 @@ import { Store } from '../src/store.ts'
 import { RoomRuntime } from '../src/room-runtime.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 test('chat role-select InteractionRequest drives legacy speak and Core workflow transition', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-role-select-'))
@@ -18,6 +19,7 @@ test('chat role-select InteractionRequest drives legacy speak and Core workflow 
     const roomId = store.seed(story)
     store.restartRoom(roomId, story, { mode: 'chat' })
     const core = new CoreRuntimeSkeleton()
+    installStageCraftSolution(core)
     const runtime = new RoomRuntime(store, undefined, core)
     core.attachLegacyRuntime(runtime, roomId)
     core.attachWorkflowStore({ save: (id, instance) => store!.saveWorkflowInstance(id, instance), list: id => store!.listWorkflowInstances(id) })

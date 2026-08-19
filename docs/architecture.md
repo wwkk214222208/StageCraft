@@ -9,7 +9,7 @@ State → Human Interaction / Workflow Action → Core → LLM Route
      → Model Result → State Event → Reducer / Local Rules → New State
 ```
 
-## 三类插件边界
+## 插件边界
 
 ### 人-核心交互插件
 
@@ -17,7 +17,11 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 
 ### 核心运行时插件
 
-负责状态、固定 Workflow、Reducer、本地规则、审批、事件历史、取消、恢复和 Action 调度。它是状态的唯一权威，不依赖 HTTP、DOM、Cordis 或具体模型供应商。
+负责状态、Reducer、本地规则、审批、事件历史、取消、恢复和 Action 调度；Workflow Registry/Executor 由 Core 提供，但具体玩法由方案插件注册。它是状态的唯一权威，不依赖 HTTP、DOM、Cordis 或具体模型供应商。
+
+### 玩法方案插件
+
+通过 `CoreSolutionHost` 注册固定、版本化的 Workflow Definition 与只读房间投影（WorkflowInstance、InteractionRequest）。方案插件不访问 Store/RoomRuntime，也不能动态修改 Definition；安装和卸载是可撤销的，默认 `StageCraftSolutionPlugin` 提供当前三条 StageCraft 流程。
 
 ### 核心-LLM 路由插件
 

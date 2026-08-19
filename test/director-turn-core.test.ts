@@ -9,6 +9,7 @@ import { RoomRuntime } from '../src/room-runtime.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import type { WorkerSet } from '../src/workers.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 test('director turn player input and decision approval use Core interactions', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-director-turn-'))
@@ -21,6 +22,7 @@ test('director turn player input and decision approval use Core interactions', a
     store.restartRoom(roomId, story, { mode: 'director' })
     const workers: WorkerSet = { decide: async (role, participation) => ({ roleId: role.id, participation, status: 'completed', brief: '观察局势。' }), draft: async (turnId) => ({ id: `draft-${turnId}`, turnId, text: '草稿场景', stateUpdates: {}, settingProposals: [], intentHandling: [], openQuestions: [], roleProposals: [], sceneUpdates: {}, createdAt: new Date().toISOString() }) }
     const core = new CoreRuntimeSkeleton()
+    installStageCraftSolution(core)
     const runtime = new RoomRuntime(store, workers, core)
     core.attachLegacyRuntime(runtime, roomId)
     core.attachWorkflowStore({ save: (id, instance) => store!.saveWorkflowInstance(id, instance), list: id => store!.listWorkflowInstances(id) })

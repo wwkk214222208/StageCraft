@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { Store } from '../src/store.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 test('WorkflowInstance persists and restores from SQLite', () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-workflow-store-'))
@@ -17,6 +18,7 @@ test('WorkflowInstance persists and restores from SQLite', () => {
     const room = store.getRoom(roomId)
     const workflowStore = { save: (id: string, instance: import('../src/core/protocol.ts').WorkflowInstance) => store!.saveWorkflowInstance(id, instance), list: (id: string) => store!.listWorkflowInstances(id) }
     const core = new CoreRuntimeSkeleton()
+    installStageCraftSolution(core)
     core.attachWorkflowStore(workflowStore)
     core.projectRoom(room)
     const saved = store.listWorkflowInstances(roomId)
@@ -24,6 +26,7 @@ test('WorkflowInstance persists and restores from SQLite', () => {
     assert.equal(saved[0].definitionId, 'stagecraft.director.turn')
 
     const restored = new CoreRuntimeSkeleton()
+    installStageCraftSolution(restored)
     restored.attachWorkflowStore(workflowStore)
     restored.restoreWorkflowInstances(roomId)
     assert.equal(restored.getView().workflows[0].id, saved[0].id)

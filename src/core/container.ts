@@ -1,8 +1,18 @@
 import type { CoreEventListener, CoreRuntimePort } from './protocol.ts'
-import type { CoreLlmRouterPlugin, CorePluginContainer, CoreRuntimeBindingPort, CoreRuntimePlugin, Disposable, HumanCoreInteractionPlugin } from './plugins.ts'
+import type { CoreLlmRouterPlugin, CorePluginContainer, CoreRuntimeBindingPort, CoreRuntimePlugin, CoreSolutionPlugin, Disposable, HumanCoreInteractionPlugin } from './plugins.ts'
 
-type Plugin = CoreRuntimePlugin | HumanCoreInteractionPlugin | CoreLlmRouterPlugin
-type InstalledPlugin = { id: string; plugin: Plugin; installed: Disposable; kind: 'core' | 'human' | 'llm'; active: boolean }
+type Plugin = CoreRuntimePlugin | HumanCoreInteractionPlugin | CoreLlmRouterPlugin | CoreSolutionPlugin
+type InstalledPlugin = { id: string; plugin: Plugin; installed: Disposable; kind: 'core' | 'human' | 'llm' | 'solution'; active: boolean }
+
+/** 安装阶段的补偿释放不能改变原始错误，也不能制造同步 throw/unhandled rejection。 */
+function quietDispose(disposable: Disposable | undefined): void {
+  if (!disposable) return
+  try {
+    void Promise.resolve(disposable.dispose()).catch(() => {})
+  } catch {
+    // dispose 的同步错误同样只作为安装失败的补偿错误吞并。
+  }
+}
 
 /** 无框架插件装配容器：检查 ID，且按安装逆序释放所有资源。 */
 export class DefaultCorePluginContainer implements CorePluginContainer {
@@ -10,6 +20,7 @@ export class DefaultCorePluginContainer implements CorePluginContainer {
   readonly corePlugins: CoreRuntimePlugin[] = []
   readonly human: HumanCoreInteractionPlugin[] = []
   readonly llm: CoreLlmRouterPlugin[] = []
+  readonly solutions: CoreSolutionPlugin[] = []
   private readonly installed: InstalledPlugin[] = []
   private readonly byId = new Map<string, InstalledPlugin>()
   private readonly subscriptions = new Set<() => void>()
@@ -35,10 +46,49 @@ export class DefaultCorePluginContainer implements CorePluginContainer {
     // 由 Core 统一完成 install 与当前路由绑定，容器不再重复 install。
     this.ensureCanInstall(plugin)
     const installed = this.bindingCore.bindLlmRouter(plugin)
+    let registrationAttempted = false
     try {
-      return this.registerInstalled(plugin, 'llm', installed, () => this.llm.push(plugin))
+      return this.registerInstalled(plugin, 'llm', installed, () => {
+        registrationAttempted = true
+        this.llm.push(plugin)
+      })
     } catch (error) {
-      void installed.dispose()
+      if (!registrationAttempted) quietDispose(installed)
+      throw error
+    }
+  }
+
+  addSolution(plugin: CoreSolutionPlugin): Disposable {
+    this.ensureCanInstall(plugin)
+    const binding = this.bindingCore.createSolutionBinding()
+    let installed: Disposable | undefined
+    let registrations: Disposable | undefined
+    let registrationAttempted = false
+    try {
+      installed = plugin.install(binding.host)
+      registrations = binding.commit()
+      const combined: Disposable = {
+        dispose: async () => {
+          let firstError: unknown
+          try { await installed?.dispose() } catch (error) { firstError = error }
+          try { await registrations.dispose() } catch (error) { firstError ??= error }
+          if (firstError) throw firstError
+        },
+      }
+      return this.registerInstalled(plugin, 'solution', combined, () => {
+        registrationAttempted = true
+        this.solutions.push(plugin)
+      })
+    } catch (error) {
+      // commit 后 binding 已 settled，rollback 不会撤销已注册的 definition/provider；
+      // 此时必须释放 commit 返回的 registration，避免 registerInstalled 失败时泄漏。
+      if (!registrationAttempted) {
+        if (registrations) quietDispose(registrations)
+        else {
+          try { binding.rollback() } catch { /* 补偿释放不得覆盖安装错误。 */ }
+        }
+        quietDispose(installed)
+      }
       throw error
     }
   }
@@ -96,7 +146,7 @@ export class DefaultCorePluginContainer implements CorePluginContainer {
       this.byId.delete(entry.id)
       this.installed.pop()
       entry.active = false
-      void installed.dispose()
+      quietDispose(installed)
       throw error
     }
     return { dispose: () => this.remove(entry) }
@@ -108,7 +158,7 @@ export class DefaultCorePluginContainer implements CorePluginContainer {
     this.byId.delete(entry.id)
     const index = this.installed.indexOf(entry)
     if (index >= 0) this.installed.splice(index, 1)
-    const list = entry.kind === 'core' ? this.corePlugins : entry.kind === 'human' ? this.human : this.llm
+    const list = entry.kind === 'core' ? this.corePlugins : entry.kind === 'human' ? this.human : entry.kind === 'llm' ? this.llm : this.solutions
     const pluginIndex = list.indexOf(entry.plugin as never)
     if (pluginIndex >= 0) list.splice(pluginIndex, 1)
     await entry.installed.dispose()

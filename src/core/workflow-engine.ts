@@ -1,9 +1,23 @@
 import type { CoreAction, StateEvent, WorkflowDefinition, WorkflowInstance } from './protocol.ts'
 
+/** 校验固定、版本化 Workflow 的结构，供直接注册与方案事务注册共用。 */
+export function validateWorkflowDefinition(definition: WorkflowDefinition): void {
+  if (!definition.id || !definition.version || !definition.initialStep) throw new Error('Invalid workflow definition.')
+  if (!definition.steps || !definition.steps[definition.initialStep]) throw new Error(`Workflow initial step is missing: ${definition.initialStep}`)
+  for (const [key, step] of Object.entries(definition.steps)) {
+    if (key !== step.id) throw new Error(`Workflow step id does not match key: ${key}`)
+  }
+  for (const transition of definition.transitions) {
+    if (!definition.steps[transition.from]) throw new Error(`Workflow transition source step is missing: ${transition.from}`)
+    if (!definition.steps[transition.to]) throw new Error(`Workflow transition target step is missing: ${transition.to}`)
+  }
+}
+
 export class WorkflowRegistry {
   private readonly definitions = new Map<string, WorkflowDefinition>()
 
   register(definition: WorkflowDefinition): void {
+    validateWorkflowDefinition(definition)
     if (this.definitions.has(definition.id)) throw new Error(`Workflow already registered: ${definition.id}`)
     this.definitions.set(definition.id, definition)
   }
@@ -16,6 +30,10 @@ export class WorkflowRegistry {
 
   list(): WorkflowDefinition[] {
     return [...this.definitions.values()]
+  }
+
+  unregister(id: string): void {
+    this.definitions.delete(id)
   }
 }
 

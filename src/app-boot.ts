@@ -23,6 +23,7 @@ import { DefaultCorePluginContainer } from './core/container.ts'
 import { CoreRuntimePluginAdapter } from './core/runtime-plugin.ts'
 import type { Disposable } from './core/plugins.ts'
 import { HttpHumanCorePlugin } from './core/http-human-plugin.ts'
+import { StageCraftSolutionPlugin } from './core/solutions.ts'
 
 export interface TavernOptions {
   /** 仓库根目录（默认：本文件所在目录的上一级） */
@@ -136,6 +137,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   container.addCore(new CoreRuntimePluginAdapter(core))
   const humanCore = new HttpHumanCorePlugin()
   container.addHuman(humanCore)
+  container.addSolution(new StageCraftSolutionPlugin())
   core.attachEventLog({
     append: (id, revision, event) => store.appendCoreEvent(id, revision, event),
     appendDomain: (id, revision, event) => store.appendCoreDomainEvent(id, revision, event),

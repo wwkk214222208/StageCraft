@@ -8,6 +8,7 @@ import { Store } from '../src/store.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { chatDirectorWorkflow, chatSpeechWorkflow, directorTurnWorkflow, workflowInstancesFromRoom } from '../src/core/solutions.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 test('chat.speech is registered and projected from legacy room phase', () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-workflow-'))
@@ -17,6 +18,7 @@ test('chat.speech is registered and projected from legacy room phase', () => {
     const roomId = store.seed(loadStoryPackage(fileURLToPath(new URL('../stories', import.meta.url)), 'eldoria'))
     const room = store.getRoom(roomId)
     const core = new CoreRuntimeSkeleton()
+    installStageCraftSolution(core)
     core.projectRoom(room)
     const view = core.getView()
     assert.equal(chatSpeechWorkflow.id, 'stagecraft.chat.speech')

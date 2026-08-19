@@ -5,7 +5,11 @@ import type {
   HumanCommand,
   ModelRequest,
   ModelResult,
+  InteractionRequest,
+  WorkflowDefinition,
+  WorkflowInstance,
 } from './protocol.ts'
+import type { RoomSnapshot } from '../types.ts'
 
 /** 可逆资源句柄：HTTP、Cordis、SSE 等 adapter 安装后都必须能释放。 */
 export interface Disposable {
@@ -36,6 +40,36 @@ export interface CoreLlmRouterHost {
 /** 仅供插件容器使用的核心绑定端口，不暴露给普通交互 adapter。 */
 export interface CoreRuntimeBindingPort {
   bindLlmRouter(plugin: CoreLlmRouterPlugin): Disposable
+  createSolutionBinding(): CoreSolutionBinding
+}
+
+/** 方案插件向 Core 注册固定 Workflow 与只读状态投影的最小 Host。 */
+export interface CoreSolutionHost {
+  registerWorkflow(definition: WorkflowDefinition): Disposable
+  registerProjection(provider: CoreSolutionProjectionProvider): Disposable
+}
+
+export interface CoreSolutionProjection {
+  workflows: WorkflowInstance[]
+  interactions: InteractionRequest[]
+}
+
+export interface CoreSolutionProjectionProvider {
+  readonly id: string
+  project(room: RoomSnapshot): CoreSolutionProjection
+  interactionBelongsToWorkflow?(interaction: InteractionRequest, workflow: WorkflowInstance): boolean
+}
+
+export interface CoreSolutionBinding {
+  host: CoreSolutionHost
+  commit(): Disposable
+  rollback(): void
+}
+
+/** 固定、版本化的玩法方案；不支持动态 patch。 */
+export interface CoreSolutionPlugin {
+  readonly id: string
+  install(host: CoreSolutionHost): Disposable
 }
 
 /** 核心运行时插件：持有状态与 workflow，向外提供统一 Core Port。 */
@@ -51,9 +85,11 @@ export interface CorePluginContainer {
   corePlugins?: CoreRuntimePlugin[]
   human?: HumanCoreInteractionPlugin[]
   llm?: CoreLlmRouterPlugin[]
+  solutions?: CoreSolutionPlugin[]
   addCore(plugin: CoreRuntimePlugin): Disposable
   addHuman(plugin: HumanCoreInteractionPlugin): Disposable
   addLlm(plugin: CoreLlmRouterPlugin): Disposable
+  addSolution(plugin: CoreSolutionPlugin): Disposable
   subscribe(listener: CoreEventListener): Disposable
   dispose(): void | Promise<void>
 }

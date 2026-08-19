@@ -2,13 +2,11 @@ import type { RoomSnapshot } from '../types.ts'
 import { defaultStateCategories, projectRoomSnapshot, roomSnapshotEvent, type StateCategoryDefinition } from './state.ts'
 import type { RoomRuntime } from '../room-runtime.ts'
 import { dispatchLegacyCommand } from './command-adapter.ts'
-import { chatDirectorWorkflow, chatSpeechWorkflow, directorTurnWorkflow, interactionFromRoom, workflowInstancesFromRoom } from './solutions.ts'
 import type { CoreEventLog } from './event-log.ts'
 import type { DomainEvent } from './domain-events.ts'
-import { WorkflowExecutor, WorkflowRegistry } from './workflow-engine.ts'
-import { directorSuggestionInteraction } from './solutions.ts'
+import { validateWorkflowDefinition, WorkflowExecutor, WorkflowRegistry } from './workflow-engine.ts'
 import type { WorkflowInstanceStore } from './workflow-store.ts'
-import type { CoreLlmRouterPlugin, Disposable } from './plugins.ts'
+import type { CoreLlmRouterPlugin, CoreRuntimeBindingPort, CoreSolutionBinding, CoreSolutionProjection, CoreSolutionProjectionProvider, Disposable } from './plugins.ts'
 import {
   CORE_PROTOCOL_VERSION,
   type CoreEvent,
@@ -28,7 +26,7 @@ import {
  * 它暂时不替换 RoomRuntime：旧业务仍由 RoomRuntime/Store 执行；该类先提供
  * 稳定的 Core Command/Event/View 边界，后续 workflow facade 再逐步迁移到这里。
  */
-export class CoreRuntimeSkeleton implements CoreRuntimePort {
+export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingPort {
   private revision = 0
   private state: Record<string, unknown> = {}
   private readonly workflows = new Map<string, WorkflowInstance>()
@@ -38,11 +36,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   private readonly listeners = new Set<CoreEventListener>()
   private readonly workflowRegistry = new WorkflowRegistry()
   private readonly workflowExecutor: WorkflowExecutor
-  private readonly definitions = new Map<string, WorkflowDefinition>([
-    [chatSpeechWorkflow.id, chatSpeechWorkflow],
-    [chatDirectorWorkflow.id, chatDirectorWorkflow],
-    [directorTurnWorkflow.id, directorTurnWorkflow],
-  ])
+  private readonly definitions = new Map<string, WorkflowDefinition>()
+  private readonly projectionProviders = new Map<string, CoreSolutionProjectionProvider>()
+  private readonly interactionOwners = new Map<string, string>()
   private readonly categories = new Map<string, StateCategoryDefinition>(defaultStateCategories.map(category => [category.id, category]))
   private legacyRuntime?: { runtime: RoomRuntime; defaultRoomId: string }
   private llmRouter?: CoreLlmRouterPlugin
@@ -51,7 +47,6 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   private workflowStore?: WorkflowInstanceStore
 
   constructor() {
-    for (const definition of this.definitions.values()) this.workflowRegistry.register(definition)
     this.workflowExecutor = new WorkflowExecutor(this.workflowRegistry)
   }
 
@@ -66,18 +61,22 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   restoreWorkflowInstances(roomId: string): void {
     if (!this.workflowStore) return
     this.workflows.clear()
-    for (const instance of this.workflowStore.list(roomId)) this.workflows.set(instance.id, instance)
+    // 方案可能在存档写入后被卸载；未知 Definition 不能阻止 Core 启动。
+    for (const instance of this.workflowStore.list(roomId)) {
+      if (this.definitions.has(instance.definitionId)) this.workflows.set(instance.id, instance)
+    }
     this.actions.length = 0
     for (const instance of this.workflows.values()) this.actions.push(...this.workflowExecutor.plan(instance))
   }
 
   restoreInteractionRequests(room: RoomSnapshot): void {
-    const interaction = interactionFromRoom(room)
     this.interactions.clear()
-    if (interaction) this.interactions.set(interaction.id, interaction)
-    if (room.mode === 'chat') {
-      const director = this.workflows.get(`workflow:${room.id}:chat-director`)
-      if (director?.step === 'awaiting-suggestion') this.interactions.set(`interaction:${room.id}:director-suggestion`, directorSuggestionInteraction(room.id))
+    this.interactionOwners.clear()
+    for (const [owner, projection] of this.projectSolution(room)) {
+      for (const interaction of projection.interactions) {
+        this.interactions.set(interaction.id, interaction)
+        this.interactionOwners.set(interaction.id, owner)
+      }
     }
   }
 
@@ -96,7 +95,8 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   projectRoom(room: RoomSnapshot, causedBy = 'legacy-room-runtime'): void {
     this.state = projectRoomSnapshot(room).categories
     this.revision = room.revision
-    const projected = workflowInstancesFromRoom(room)
+    const solutionProjection = this.projectSolution(room)
+    const projected = solutionProjection.flatMap(([, projection]) => projection.workflows)
     const workflows = projected.map(fresh => {
       const existing = this.workflows.get(fresh.id)
       if (!existing) return fresh
@@ -110,22 +110,28 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     }
     this.actions.length = 0
     for (const workflow of workflows) this.actions.push(...this.workflowExecutor.plan(workflow))
-    const interaction = interactionFromRoom(room)
-    const restoredInteractions = new Map([...this.interactions].filter(([id]) => id.startsWith(`interaction:${room.id}:`)))
+    const restoredInteractions = [...this.interactions]
+      .filter(([id]) => id.startsWith(`interaction:${room.id}:`))
+      .map(([id, interaction]) => [id, interaction, this.interactionOwners.get(id)] as const)
+      .filter((entry): entry is readonly [string, typeof entry[1], string] => Boolean(entry[2] && this.projectionProviders.has(entry[2])))
     this.interactions.clear()
-    for (const [id, pending] of restoredInteractions) this.interactions.set(id, pending)
-    if (room.mode === 'chat') {
-      const director = workflows.find(item => item.definitionId === chatDirectorWorkflow.id)
-      if (director?.step === 'awaiting-suggestion') this.interactions.set(`interaction:${room.id}:director-suggestion`, directorSuggestionInteraction(room.id))
+    this.interactionOwners.clear()
+    for (const [id, pending, owner] of restoredInteractions) {
+      this.interactions.set(id, pending)
+      this.interactionOwners.set(id, owner)
     }
-    if (interaction) {
-      this.interactions.set(interaction.id, interaction)
-      const workflow = workflows.find(item => this.interactionBelongsToWorkflow(interaction, item))
-      if (workflow) {
-        const pending = { ...workflow, pendingInteractionIds: [interaction.id], updatedAt: new Date().toISOString() }
-        this.workflows.set(pending.id, pending)
-        this.workflowStore?.save(room.id, pending)
+    for (const [owner, projection] of solutionProjection) {
+      for (const pending of projection.interactions) {
+        this.interactions.set(pending.id, pending)
+        this.interactionOwners.set(pending.id, owner)
       }
+    }
+    for (const interaction of this.interactions.values()) {
+      const workflow = workflows.find(item => this.interactionBelongsToWorkflow(interaction, item))
+      if (!workflow) continue
+      const pending = { ...workflow, pendingInteractionIds: [interaction.id], updatedAt: new Date().toISOString() }
+      this.workflows.set(pending.id, pending)
+      this.workflowStore?.save(room.id, pending)
     }
     const event = roomSnapshotEvent(room, causedBy)
     this.eventLog?.append(room.id, room.revision, event)
@@ -133,15 +139,85 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     while (this.recentEvents.length > 100) this.recentEvents.shift()
     this.emit({ type: 'state.changed', revision: this.revision, transition: { revision: this.revision, events: [event], changes: [] } })
     for (const workflow of workflows) this.emit({ type: 'workflow.changed', revision: this.revision, workflow })
-    if (interaction) this.emit({ type: 'interaction.created', revision: this.revision, interaction })
+    for (const interaction of this.interactions.values()) {
+      if (interaction.id.startsWith(`interaction:${room.id}:`)) this.emit({ type: 'interaction.created', revision: this.revision, interaction })
+    }
   }
 
   registerWorkflow(definition: WorkflowDefinition): void {
-    if (!definition.id || !definition.version || !definition.initialStep) throw new Error('Invalid workflow definition.')
-    if (!definition.steps[definition.initialStep]) throw new Error(`Workflow initial step is missing: ${definition.initialStep}`)
+    this.validateWorkflow(definition)
     if (this.definitions.has(definition.id)) throw new Error(`Workflow already registered: ${definition.id}`)
     this.definitions.set(definition.id, definition)
     this.workflowRegistry.register(definition)
+  }
+
+  createSolutionBinding(): CoreSolutionBinding {
+    const workflows = new Map<string, WorkflowDefinition>()
+    const projections = new Map<string, CoreSolutionProjectionProvider>()
+    let settled = false
+    const host = {
+      registerWorkflow: (definition: WorkflowDefinition): Disposable => {
+        if (settled) throw new Error('Solution binding is already settled.')
+        this.validateWorkflow(definition)
+        if (workflows.has(definition.id) || this.definitions.has(definition.id)) throw new Error(`Workflow already registered: ${definition.id}`)
+        workflows.set(definition.id, definition)
+        let active = true
+        return { dispose: () => { if (active) { active = false; if (!settled) workflows.delete(definition.id) } } }
+      },
+      registerProjection: (provider: CoreSolutionProjectionProvider): Disposable => {
+        if (settled) throw new Error('Solution binding is already settled.')
+        if (!provider.id.trim()) throw new Error('Solution projection id is required.')
+        if (projections.has(provider.id) || this.projectionProviders.has(provider.id)) throw new Error(`Solution projection already registered: ${provider.id}`)
+        projections.set(provider.id, provider)
+        let active = true
+        return { dispose: () => { if (active) { active = false; if (!settled) projections.delete(provider.id) } } }
+      },
+    }
+    return {
+      host,
+      commit: () => {
+        if (settled) throw new Error('Solution binding is already settled.')
+        for (const definition of workflows.values()) {
+          if (this.definitions.has(definition.id)) throw new Error(`Workflow already registered: ${definition.id}`)
+        }
+        for (const provider of projections.values()) {
+          if (this.projectionProviders.has(provider.id)) throw new Error(`Solution projection already registered: ${provider.id}`)
+        }
+        for (const definition of workflows.values()) {
+          this.definitions.set(definition.id, definition)
+          this.workflowRegistry.register(definition)
+        }
+        for (const provider of projections.values()) this.projectionProviders.set(provider.id, provider)
+        settled = true
+        return {
+          dispose: () => {
+            if (!settled) return
+            settled = false
+            const definitionIds = new Set(workflows.keys())
+            const projectionIds = new Set(projections.keys())
+            for (const [id, workflow] of this.workflows) if (definitionIds.has(workflow.definitionId)) this.workflows.delete(id)
+            for (const [id, owner] of this.interactionOwners) if (projectionIds.has(owner)) { this.interactions.delete(id); this.interactionOwners.delete(id) }
+            for (const id of definitionIds) { this.definitions.delete(id); this.workflowRegistry.unregister(id) }
+            for (const id of projectionIds) this.projectionProviders.delete(id)
+            this.replanActions()
+          },
+        }
+      },
+      rollback: () => {
+        if (settled) return
+        settled = true
+        workflows.clear()
+        projections.clear()
+      },
+    }
+  }
+
+  private validateWorkflow(definition: WorkflowDefinition): void {
+    validateWorkflowDefinition(definition)
+  }
+
+  private projectSolution(room: RoomSnapshot): Array<[string, CoreSolutionProjection]> {
+    return [...this.projectionProviders.values()].map(provider => [provider.id, provider.project(room)] as [string, CoreSolutionProjection])
   }
 
   attachLegacyRuntime(runtime: RoomRuntime, defaultRoomId: string): void {
@@ -183,10 +259,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
   }
 
   private interactionBelongsToWorkflow(interaction: import('./protocol.ts').InteractionRequest, workflow: WorkflowInstance): boolean {
-    if (interaction.id.includes('speech')) return workflow.definitionId === chatSpeechWorkflow.id
-    if (interaction.id.includes('world-change')) return workflow.definitionId === chatSpeechWorkflow.id || workflow.definitionId === chatDirectorWorkflow.id
-    if (interaction.id.includes('draft') || interaction.id.includes('director-consult')) return workflow.definitionId === directorTurnWorkflow.id
-    return workflow.step === 'awaiting-player-input'
+    const owner = this.interactionOwners.get(interaction.id)
+    const provider = owner ? this.projectionProviders.get(owner) : undefined
+    return provider?.interactionBelongsToWorkflow?.(interaction, workflow) ?? false
   }
 
   private commandMatchesInteraction(command: HumanCommand, interaction: import('./protocol.ts').InteractionRequest): boolean {

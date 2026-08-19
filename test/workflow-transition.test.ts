@@ -8,6 +8,7 @@ import { Store } from '../src/store.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import { domainEvent } from '../src/core/domain-events.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 test('DomainEvent advances and persists matching fixed WorkflowInstance', () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-transition-'))
@@ -19,6 +20,7 @@ test('DomainEvent advances and persists matching fixed WorkflowInstance', () => 
     store.restartRoom(roomId, story, { mode: 'chat' })
     const room = store.getRoom(roomId)
     const core = new CoreRuntimeSkeleton()
+    installStageCraftSolution(core)
     core.attachWorkflowStore({ save: (id, instance) => store!.saveWorkflowInstance(id, instance), list: id => store!.listWorkflowInstances(id) })
     core.projectRoom({ ...room, phase: 'role-speaking' })
     const before = core.getView().workflows.find(item => item.definitionId === 'stagecraft.chat.speech')!

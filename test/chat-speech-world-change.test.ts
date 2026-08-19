@@ -10,6 +10,7 @@ import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
 import type { WorkerSet } from '../src/workers.ts'
 import type { WorldChangeRequest } from '../src/types.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 function setup(root: string, worldChange: WorldChangeRequest) {
   const store = new Store(join(root, 'state.sqlite'))
@@ -23,6 +24,7 @@ function setup(root: string, worldChange: WorldChangeRequest) {
     speak: async () => ({ text: '我指向远方。', worldChange }),
   }
   const core = new CoreRuntimeSkeleton()
+  installStageCraftSolution(core)
   const runtime = new RoomRuntime(store, workers, core)
   core.attachLegacyRuntime(runtime, roomId)
   core.attachWorkflowStore({ save: (id, instance) => store.saveWorkflowInstance(id, instance), list: id => store.listWorkflowInstances(id) })
