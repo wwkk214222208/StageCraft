@@ -530,7 +530,7 @@ function formatMemoryTimeline(role: Role): string {
     return memories
       .sort((a, b) => b.salience - a.salience || b.occurredAt.localeCompare(a.occurredAt) || b.createdAt.localeCompare(a.createdAt))
       .slice(0, 30)
-      .map(memory => `【${memory.occurredAt}${memory.occurredLocation ? ` · ${memory.occurredLocation}` : ''}｜${memory.kind}｜重要度 ${memory.salience}】\n- ${memory.text}`)
+      .map(memory => `【${memory.occurredAt}】${memory.occurredLocation ? ` ${memory.occurredLocation}` : ''}（${memory.kind}；重要度 ${memory.salience}）\n- ${memory.text}`)
       .join('\n')
   }
   const timeline = role.memoryTimeline ?? {}
