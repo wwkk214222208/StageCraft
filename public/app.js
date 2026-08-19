@@ -55,6 +55,16 @@ const directorModeOption = roomModeSelect?.querySelector('option[value="director
 const chatModeOption = roomModeSelect?.querySelector('option[value="chat"]')
 if (directorModeOption) directorModeOption.textContent = '导演模式（由导演统筹角色行动与场景叙事）'
 if (chatModeOption) chatModeOption.textContent = '群聊模式（角色直接发言；导演仍可参与讨论与推进）'
+const thinkingSettingRow = document.querySelector('#show-thinking')?.closest('.settings-row')
+thinkingSettingRow?.nextElementSibling?.matches('.hint') && thinkingSettingRow.nextElementSibling.remove()
+const tokenSettingRow = document.querySelector('#settings-token-count')?.closest('.settings-row')
+tokenSettingRow?.nextElementSibling?.matches('.hint') && tokenSettingRow.nextElementSibling.remove()
+const stImportOpen = document.querySelector('#st-import-open')
+if (stImportOpen) stImportOpen.textContent = '导入 ST 角色卡（实验功能：仅纯文字卡）…'
+const stImportInput = document.querySelector('#st-import-file')
+if (stImportInput) stImportInput.accept = '.json,application/json'
+const stImportHint = document.querySelector('#st-import-modal .hint')
+if (stImportHint) stImportHint.textContent = '实验功能：目前仅支持纯文字的 SillyTavern .json 角色卡。导入为当前房间的新角色，角色书条目成为世界书（全量注入）。'
 const debugStream = document.querySelector('#debug-stream')
 const debugWindow = document.createElement('section')
 debugWindow.id = 'debug-window'
@@ -325,13 +335,15 @@ $('#st-import-file').onchange = async event => {
   const file = event.target.files[0]
   if (!file) return
   const preview = $('#st-import-preview')
+  if (!/\.json$/i.test(file.name)) {
+    stImportFile = null
+    $('#st-import-run').disabled = true
+    preview.innerHTML = '<p class="error">实验功能目前仅支持纯文字的 .json ST 角色卡。</p>'
+    return
+  }
   preview.innerHTML = '<p class="hint">读取中…</p>'
   try {
-    if (/\.png$/i.test(file.name)) {
-      stImportFile = { content: await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file) }), filename: file.name }
-    } else {
-      stImportFile = { content: await file.text(), filename: file.name }
-    }
+    stImportFile = { content: await file.text(), filename: file.name }
     preview.innerHTML = `<p>已读取 <b>${escape(file.name)}</b>（${file.size} 字节）——点击「导入为角色」执行解析。</p>`
     $('#st-import-run').disabled = false
   } catch (error) {
