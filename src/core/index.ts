@@ -1,6 +1,7 @@
 export * from './protocol.ts'
 export * from './plugins.ts'
 export * from './runtime.ts'
+export * from './runtime-plugin.ts'
 export * from './container.ts'
 export * from './state.ts'
 export * from './command-adapter.ts'

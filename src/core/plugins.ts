@@ -33,6 +33,11 @@ export interface CoreLlmRouterHost {
   publishModelEvent(event: CoreEvent): void
 }
 
+/** 仅供插件容器使用的核心绑定端口，不暴露给普通交互 adapter。 */
+export interface CoreRuntimeBindingPort {
+  bindLlmRouter(plugin: CoreLlmRouterPlugin): Disposable
+}
+
 /** 核心运行时插件：持有状态与 workflow，向外提供统一 Core Port。 */
 export interface CoreRuntimePlugin {
   readonly id: 'stagecraft.core' | string
@@ -43,9 +48,12 @@ export interface CoreRuntimePlugin {
 /** 宿主用于装配三类插件的最小容器；不绑定 Cordis 或 HTTP。 */
 export interface CorePluginContainer {
   core: CoreRuntimePort
+  corePlugins?: CoreRuntimePlugin[]
   human?: HumanCoreInteractionPlugin[]
   llm?: CoreLlmRouterPlugin[]
+  addCore(plugin: CoreRuntimePlugin): Disposable
   addHuman(plugin: HumanCoreInteractionPlugin): Disposable
   addLlm(plugin: CoreLlmRouterPlugin): Disposable
   subscribe(listener: CoreEventListener): Disposable
+  dispose(): void | Promise<void>
 }

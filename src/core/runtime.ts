@@ -197,13 +197,47 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort {
     return false
   }
 
-  attachLlmRouter(router: CoreLlmRouterPlugin): void {
-    this.llmRouterDisposable?.dispose()
-    this.llmRouter = router
-    this.llmRouterDisposable = router.install({
-      submitModelResult: result => this.submitModelResult(result),
-      publishModelEvent: event => this.emit(event),
+  bindLlmRouter(router: CoreLlmRouterPlugin): Disposable {
+    const previous = this.llmRouterDisposable
+    if (previous) {
+      try {
+        void Promise.resolve(previous.dispose()).catch(() => {})
+      } catch {
+        // 兼容 attach/bind 的同步边界：旧插件释放失败不能产生未处理拒绝。
+      }
+    }
+    this.llmRouter = undefined
+    this.llmRouterDisposable = undefined
+    let active = true
+    const installed = router.install({
+      submitModelResult: async result => {
+        if (!active) throw new Error('LLM router host is disposed.')
+        return this.submitModelResult(result)
+      },
+      publishModelEvent: event => {
+        if (active) this.emit(event)
+      },
     })
+    const binding: Disposable = {
+      dispose: async () => {
+        if (!active) return
+        active = false
+        // 身份检查很重要：旧绑定的释放不能清掉后来替换的新路由。
+        if (this.llmRouter === router && this.llmRouterDisposable === binding) {
+          this.llmRouter = undefined
+          this.llmRouterDisposable = undefined
+        }
+        // 先撤销 host，再等待插件资源释放，迟到结果不能回写 Core。
+        await installed.dispose()
+      },
+    }
+    this.llmRouter = router
+    this.llmRouterDisposable = binding
+    return binding
+  }
+
+  attachLlmRouter(router: CoreLlmRouterPlugin): void {
+    void this.bindLlmRouter(router)
   }
 
   async requestModel(request: import('./protocol.ts').ModelRequest): Promise<void> {

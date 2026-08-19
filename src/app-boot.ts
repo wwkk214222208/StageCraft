@@ -20,6 +20,9 @@ import { importStCard } from './st-card-import.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
 import type { CoreEvent } from './core/protocol.ts'
 import { ModelGatewayRouterAdapter } from './core/model-router-adapter.ts'
+import { DefaultCorePluginContainer } from './core/container.ts'
+import { CoreRuntimePluginAdapter } from './core/runtime-plugin.ts'
+import type { Disposable } from './core/plugins.ts'
 
 export interface TavernOptions {
   /** 仓库根目录（默认：本文件所在目录的上一级） */
@@ -46,6 +49,7 @@ export interface TavernApp {
   store: Store
   runtime: RoomRuntime
   core: CoreRuntimeSkeleton
+  container: DefaultCorePluginContainer
   roomId: string
   gateway: ModelGateway | undefined
   providerStore: ProviderConfigStore
@@ -98,14 +102,16 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   if (providerStore.list().length === 0 && envRoute.apiKey) providerStore.save({ id: 'environment', name: '环境变量', baseUrl: envRoute.baseUrl, apiKey: envRoute.apiKey, models: [envRoute.model], selectedModel: envRoute.model, responseFormat: envRoute.responseFormat })
 
   let gateway: ModelGateway | undefined
+  let llmInstallation: Disposable | undefined
+  let providerActivation = Promise.resolve()
   function gatewayFromProvider(config: ProviderConfig, model: string): ModelGateway {
     return new ModelGateway({ name: config.name, baseUrl: config.baseUrl, apiKey: config.apiKey, model, timeoutMs: envRoute.timeoutMs, responseFormat: config.responseFormat, toolCalling: config.toolCalling !== false }, { onSummary: emitDebug, logRawFinalContent: process.env.RP_LOG_MODEL_FINAL_CONTENT === '1' })
   }
-  function activateProvider(config = providerStore.getDirector()): void {
+  function installProvider(config: ProviderConfig | undefined): void {
     if (!config?.apiKey) { gateway = undefined; return }
     const defaults = providerStore.defaults()
     gateway = gatewayFromProvider(config, defaults.directorModel ?? config.selectedModel ?? config.models[0] ?? envRoute.model)
-    core.attachLlmRouter(new ModelGatewayRouterAdapter(gateway))
+    llmInstallation = container.addLlm(new ModelGatewayRouterAdapter(gateway))
     runtime.setWorkers(createRealWorkers(gateway, role => {
       const defaults = providerStore.defaults()
       const fallbackProvider = providerStore.getDefaultRole()
@@ -115,7 +121,19 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       return gatewayFromProvider(selectedProvider, role.modelOverride ?? fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)
     }, { directorThinkingStrength: providerStore.directorThinking() }))
   }
+  function activateProvider(config = providerStore.getDirector()): Promise<void> {
+    const activation = providerActivation.then(async () => {
+      // Provider 切换时先释放旧 adapter，避免旧 gateway 继续接收请求或持有连接。
+      await llmInstallation?.dispose()
+      llmInstallation = undefined
+      installProvider(config)
+    })
+    providerActivation = activation.catch(() => undefined)
+    return activation
+  }
   const core = new CoreRuntimeSkeleton()
+  const container = new DefaultCorePluginContainer(core)
+  container.addCore(new CoreRuntimePluginAdapter(core))
   core.attachEventLog({
     append: (id, revision, event) => store.appendCoreEvent(id, revision, event),
     appendDomain: (id, revision, event) => store.appendCoreDomainEvent(id, revision, event),
@@ -128,7 +146,8 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   core.restoreEventHistory(roomId)
   core.restoreWorkflowInstances(roomId)
   core.projectRoom(runtime.get(roomId), 'app-boot:init')
-  if (providerStore.getDirector()?.apiKey) activateProvider()
+  // 首次启动没有旧路由可等待，保持旧行为：startTavern 返回前同步装配 gateway/workers。
+  if (providerStore.getDirector()?.apiKey) installProvider(providerStore.getDirector())
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
@@ -201,7 +220,7 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
         const body = await readJson(request)
         const config: ProviderConfig = { id: String(body.id), name: String(body.name), baseUrl: String(body.baseUrl).replace(/\/$/, ''), apiKey: String(body.apiKey ?? ''), models: Array.isArray(body.models) ? body.models.map(String) : [], selectedModel: body.selectedModel ? String(body.selectedModel) : undefined, responseFormat: body.responseFormat === 'json_schema' ? 'json_schema' : body.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: body.toolCalling !== false }
         providerStore.save(config)
-        activateProvider(config)
+        await activateProvider(config)
         return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults(), active: gateway?.usage() ?? { route: '模拟', model: '模拟' } })
       }
       if (url.pathname === '/api/providers/discover' && request.method === 'POST') {
@@ -211,20 +230,20 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
       if (url.pathname === '/api/providers/default-role' && request.method === 'POST') {
         const body = await readJson(request)
         providerStore.setDefaultRole(String(body.id), body.model ? String(body.model) : undefined)
-        activateProvider()
+        await activateProvider()
         return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults() })
       }
       if (url.pathname === '/api/providers/director' && request.method === 'POST') {
         const body = await readJson(request)
         providerStore.setDirector(String(body.id), body.model ? String(body.model) : undefined)
-        activateProvider()
+        await activateProvider()
         return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults() })
       }
       if (url.pathname === '/api/providers/director-thinking' && request.method === 'POST') {
         const body = await readJson(request)
         const thinking = String(body.thinking ?? '') as import('./types.ts').ThinkingStrength
         providerStore.setDirectorThinking(thinking)
-        activateProvider()
+        await activateProvider()
         return json(response, 200, { ok: true, defaults: providerStore.defaults() })
       }
       if (url.pathname === '/api/usage') return json(response, 200, gateway?.usage(true) ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake' })
@@ -632,22 +651,45 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
     console.log(`StageCraft running at http://${host}:${actualPort} (room: ${roomId})`)
   })
 
+  let closed = false
   return {
     store,
     runtime,
     roomId,
-    gateway,
+    get gateway() { return gateway },
     providerStore,
+    container,
     server,
-    close(): Promise<void> {
-      return new Promise(resolve => {
-        server.close(() => {
-          store.close()
-          resolve()
+    async close(): Promise<void> {
+      if (closed) return
+      closed = true
+      let firstError: unknown
+      try {
+        await new Promise<void>((resolve, reject) => {
+          server.close(error => error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve())
+          // 立即断开 SSE 等长连接，否则 close 回调会一直等待
+          if (typeof server.closeAllConnections === 'function') server.closeAllConnections()
         })
-        // 立即断开 SSE 等长连接，否则 close 回调会一直等待
-        if (typeof server.closeAllConnections === 'function') server.closeAllConnections()
-      })
+      } catch (error) {
+        firstError = error
+      }
+      try {
+        await providerActivation
+      } catch (error) {
+        firstError ??= error
+      }
+      try {
+        // 插件释放必须先于 Store，避免 adapter 在关闭数据库后回写状态。
+        await container.dispose()
+      } catch (error) {
+        firstError ??= error
+      }
+      try {
+        store.close()
+      } catch (error) {
+        firstError ??= error
+      }
+      if (firstError) throw firstError
     },
   }
 }
