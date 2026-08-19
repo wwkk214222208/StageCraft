@@ -1,6 +1,7 @@
 import type { Role, RoomMode, RoomPhase } from '../types.ts'
 import type { InteractionRequest, WorkflowDefinition, WorkflowInstance } from './protocol.ts'
-import type { CoreSolutionPlugin, CoreSolutionProjectionProvider, CoreSolutionHost, Disposable } from './plugins.ts'
+import type { CoreSolutionPlugin, CoreSolutionProjectionProvider, CoreSolutionHost, CoreStateProjectionProvider, Disposable } from './plugins.ts'
+import { defaultStateCategories, projectRoomSnapshot } from './state.ts'
 
 type WorkflowRoom = { id: string; mode: RoomMode; phase: RoomPhase; revision: number; roles?: Role[]; draft?: unknown; speech?: unknown; pendingWorldChange?: unknown }
 
@@ -119,6 +120,8 @@ export class StageCraftSolutionPlugin implements CoreSolutionPlugin {
 
   install(host: CoreSolutionHost): Disposable {
     const registrations = [
+      ...defaultStateCategories.map(category => host.registerStateCategory(category)),
+      host.registerStateProjection(stagecraftStateProjection),
       host.registerWorkflow(chatSpeechWorkflow),
       host.registerWorkflow(chatDirectorWorkflow),
       host.registerWorkflow(directorTurnWorkflow),
@@ -130,6 +133,13 @@ export class StageCraftSolutionPlugin implements CoreSolutionPlugin {
       },
     }
   }
+}
+
+const stagecraftStateProjection: CoreStateProjectionProvider = {
+  id: 'stagecraft.state-projection',
+  project(room) {
+    return projectRoomSnapshot(room).categories
+  },
 }
 
 const stagecraftProjection: CoreSolutionProjectionProvider = {

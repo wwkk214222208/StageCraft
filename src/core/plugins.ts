@@ -10,6 +10,8 @@ import type {
   WorkflowInstance,
 } from './protocol.ts'
 import type { RoomSnapshot } from '../types.ts'
+import type { StateCategoryDefinition } from './state.ts'
+import type { CoreStateCommit, CoreStateRestore, CoreStateRepository } from './state-repository.ts'
 
 /** 可逆资源句柄：HTTP、Cordis、SSE 等 adapter 安装后都必须能释放。 */
 export interface Disposable {
@@ -43,10 +45,14 @@ export interface CoreRuntimeBindingPort {
   createSolutionBinding(): CoreSolutionBinding
 }
 
+export type { CoreStateCommit, CoreStateRestore, CoreStateRepository }
+
 /** 方案插件向 Core 注册固定 Workflow 与只读状态投影的最小 Host。 */
 export interface CoreSolutionHost {
   registerWorkflow(definition: WorkflowDefinition): Disposable
   registerProjection(provider: CoreSolutionProjectionProvider): Disposable
+  registerStateCategory(category: StateCategoryDefinition): Disposable
+  registerStateProjection(provider: CoreStateProjectionProvider): Disposable
 }
 
 export interface CoreSolutionProjection {
@@ -58,6 +64,12 @@ export interface CoreSolutionProjectionProvider {
   readonly id: string
   project(room: RoomSnapshot): CoreSolutionProjection
   interactionBelongsToWorkflow?(interaction: InteractionRequest, workflow: WorkflowInstance): boolean
+}
+
+/** 方案对 Core State 的只读投影；返回值只能包含该方案已注册的类别。 */
+export interface CoreStateProjectionProvider {
+  readonly id: string
+  project(room: RoomSnapshot): Record<string, unknown>
 }
 
 export interface CoreSolutionBinding {

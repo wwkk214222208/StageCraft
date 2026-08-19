@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { CoreEvent } from '../src/core/protocol.ts'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 test('RoomRuntime state changes emit Core Events through projectRoom', () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-integration-'))
@@ -19,6 +20,7 @@ test('RoomRuntime state changes emit Core Events through projectRoom', () => {
     const roomId = store.seed(loadStoryPackage(storiesPath, 'eldoria'))
     
     const core = new CoreRuntimeSkeleton()
+    installStageCraftSolution(core)
     const runtime = new RoomRuntime(store, undefined, core)
     
     const events: CoreEvent[] = []

@@ -1,12 +1,13 @@
 import type { RoomSnapshot } from '../types.ts'
-import { defaultStateCategories, projectRoomSnapshot, roomSnapshotEvent, type StateCategoryDefinition } from './state.ts'
+import { roomSnapshotEvent, type StateCategoryDefinition } from './state.ts'
 import type { RoomRuntime } from '../room-runtime.ts'
 import { dispatchLegacyCommand } from './command-adapter.ts'
 import type { CoreEventLog } from './event-log.ts'
 import type { DomainEvent } from './domain-events.ts'
 import { validateWorkflowDefinition, WorkflowExecutor, WorkflowRegistry } from './workflow-engine.ts'
 import type { WorkflowInstanceStore } from './workflow-store.ts'
-import type { CoreLlmRouterPlugin, CoreRuntimeBindingPort, CoreSolutionBinding, CoreSolutionProjection, CoreSolutionProjectionProvider, Disposable } from './plugins.ts'
+import type { CoreLlmRouterPlugin, CoreRuntimeBindingPort, CoreSolutionBinding, CoreSolutionProjection, CoreSolutionProjectionProvider, CoreStateProjectionProvider, Disposable } from './plugins.ts'
+import type { CoreStateRepository } from './state-repository.ts'
 import {
   CORE_PROTOCOL_VERSION,
   type CoreEvent,
@@ -38,13 +39,19 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   private readonly workflowExecutor: WorkflowExecutor
   private readonly definitions = new Map<string, WorkflowDefinition>()
   private readonly projectionProviders = new Map<string, CoreSolutionProjectionProvider>()
+  private readonly stateProjectionProviders = new Map<string, CoreStateProjectionProvider>()
+  private readonly stateProjectionOwners = new Map<string, string>()
   private readonly interactionOwners = new Map<string, string>()
-  private readonly categories = new Map<string, StateCategoryDefinition>(defaultStateCategories.map(category => [category.id, category]))
+  private readonly categories = new Map<string, StateCategoryDefinition>()
+  private readonly categoryOwners = new Map<string, string>()
   private legacyRuntime?: { runtime: RoomRuntime; defaultRoomId: string }
   private llmRouter?: CoreLlmRouterPlugin
   private llmRouterDisposable?: Disposable
   private eventLog?: CoreEventLog
   private workflowStore?: WorkflowInstanceStore
+  private stateRepository?: CoreStateRepository
+  private lastRoom?: RoomSnapshot
+  private solutionBindingCounter = 0
 
   constructor() {
     this.workflowExecutor = new WorkflowExecutor(this.workflowRegistry)
@@ -58,12 +65,32 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     this.workflowStore = store
   }
 
+  attachStateRepository(repository: CoreStateRepository): void {
+    this.stateRepository = repository
+  }
+
+  restoreState(roomId: string, eventLimit = 100): boolean {
+    const restored = this.stateRepository?.restore(roomId, eventLimit)
+    if (!restored) return false
+    const workflows = restored.workflows.filter(instance => this.isRestorableWorkflowInstance(instance))
+    const actions = workflows.flatMap(instance => this.workflowExecutor.plan(instance))
+    this.state = this.filterState(restored.state)
+    this.revision = restored.revision
+    this.workflows.clear()
+    for (const instance of workflows) this.workflows.set(instance.id, instance)
+    this.actions.length = 0
+    this.actions.push(...actions)
+    this.recentEvents.length = 0
+    this.recentEvents.push(...restored.events.slice(-100))
+    return true
+  }
+
   restoreWorkflowInstances(roomId: string): void {
     if (!this.workflowStore) return
     this.workflows.clear()
     // 方案可能在存档写入后被卸载；未知 Definition 不能阻止 Core 启动。
     for (const instance of this.workflowStore.list(roomId)) {
-      if (this.definitions.has(instance.definitionId)) this.workflows.set(instance.id, instance)
+      if (this.isRestorableWorkflowInstance(instance)) this.workflows.set(instance.id, instance)
     }
     this.actions.length = 0
     for (const instance of this.workflows.values()) this.actions.push(...this.workflowExecutor.plan(instance))
@@ -90,11 +117,21 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     if (!category.id.trim()) throw new Error('State category id is required.')
     if (this.categories.has(category.id)) throw new Error(`State category already registered: ${category.id}`)
     this.categories.set(category.id, category)
+    this.categoryOwners.set(category.id, 'legacy')
   }
 
-  projectRoom(room: RoomSnapshot, causedBy = 'legacy-room-runtime'): void {
-    this.state = projectRoomSnapshot(room).categories
-    this.revision = room.revision
+  /** 以事务式 reducer 计算多个 StateEvent；任一 reducer 失败时不替换当前 state。 */
+  applyStateEvents(events: StateEvent[]): void {
+    if (events.length === 0) return
+    const next = this.reduceState(this.state, events)
+    const workflows = [...this.workflows.values()]
+    const actions = workflows.flatMap(workflow => this.workflowExecutor.plan(workflow))
+    this.commitStateCandidate(next, events, workflows, actions, this.roomIdFromEvents(events))
+  }
+
+  projectRoom(room: RoomSnapshot, causedBy = 'legacy-room-runtime', options: { persist?: boolean } = {}): void {
+    const persist = options.persist !== false
+    const candidateState = this.projectState(room)
     const solutionProjection = this.projectSolution(room)
     const projected = solutionProjection.flatMap(([, projection]) => projection.workflows)
     const workflows = projected.map(fresh => {
@@ -103,42 +140,59 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
       if (existing.definitionId !== fresh.definitionId || existing.definitionVersion !== fresh.definitionVersion) return fresh
       return { ...fresh, step: existing.step, status: existing.status, locals: existing.locals, pendingInteractionIds: existing.pendingInteractionIds, pendingModelRequestIds: existing.pendingModelRequestIds, retryCount: existing.retryCount, createdAt: existing.createdAt, updatedAt: existing.updatedAt }
     })
-    this.workflows.clear()
-    for (const workflow of workflows) {
-      this.workflows.set(workflow.id, workflow)
-      this.workflowStore?.save(room.id, workflow)
-    }
-    this.actions.length = 0
-    for (const workflow of workflows) this.actions.push(...this.workflowExecutor.plan(workflow))
-    const restoredInteractions = [...this.interactions]
-      .filter(([id]) => id.startsWith(`interaction:${room.id}:`))
-      .map(([id, interaction]) => [id, interaction, this.interactionOwners.get(id)] as const)
-      .filter((entry): entry is readonly [string, typeof entry[1], string] => Boolean(entry[2] && this.projectionProviders.has(entry[2])))
-    this.interactions.clear()
-    this.interactionOwners.clear()
-    for (const [id, pending, owner] of restoredInteractions) {
-      this.interactions.set(id, pending)
-      this.interactionOwners.set(id, owner)
+    const candidateInteractions = new Map<string, import('./protocol.ts').InteractionRequest>()
+    const candidateOwners = new Map<string, string>()
+    for (const [id, interaction] of this.interactions) {
+      const owner = this.interactionOwners.get(id)
+      if (id.startsWith(`interaction:${room.id}:`) && owner && this.projectionProviders.has(owner)) {
+        candidateInteractions.set(id, interaction)
+        candidateOwners.set(id, owner)
+      }
     }
     for (const [owner, projection] of solutionProjection) {
       for (const pending of projection.interactions) {
-        this.interactions.set(pending.id, pending)
-        this.interactionOwners.set(pending.id, owner)
+        candidateInteractions.set(pending.id, pending)
+        candidateOwners.set(pending.id, owner)
       }
     }
-    for (const interaction of this.interactions.values()) {
-      const workflow = workflows.find(item => this.interactionBelongsToWorkflow(interaction, item))
+    const candidateWorkflows = new Map(workflows.map(workflow => [workflow.id, workflow]))
+    for (const interaction of candidateInteractions.values()) {
+      const owner = candidateOwners.get(interaction.id)
+      const provider = owner ? this.projectionProviders.get(owner) : undefined
+      const workflow = workflows.find(item => provider?.interactionBelongsToWorkflow?.(interaction, item) ?? false)
       if (!workflow) continue
-      const pending = { ...workflow, pendingInteractionIds: [interaction.id], updatedAt: new Date().toISOString() }
-      this.workflows.set(pending.id, pending)
-      this.workflowStore?.save(room.id, pending)
+      candidateWorkflows.set(workflow.id, { ...workflow, pendingInteractionIds: [interaction.id], updatedAt: new Date().toISOString() })
     }
-    const event = roomSnapshotEvent(room, causedBy)
-    this.eventLog?.append(room.id, room.revision, event)
-    this.recentEvents.push(event)
-    while (this.recentEvents.length > 100) this.recentEvents.shift()
+    const finalWorkflows = [...candidateWorkflows.values()]
+    const candidateActions = finalWorkflows.flatMap(workflow => this.workflowExecutor.plan(workflow))
+    const event = roomSnapshotEvent(room, causedBy, candidateState)
+    const candidateRecentEvents = this.withRecentEvents([event])
+
+    // Repository commit is deliberately before any in-memory replacement or event emission.
+    if (persist && this.stateRepository) {
+      this.stateRepository.commit({ roomId: room.id, revision: room.revision, state: candidateState, events: [event], workflows: finalWorkflows })
+    } else if (persist) {
+      this.eventLog?.append(room.id, room.revision, event)
+      for (const workflow of finalWorkflows) this.workflowStore?.save(room.id, workflow)
+    }
+
+    this.lastRoom = room
+    this.state = candidateState
+    this.revision = room.revision
+    this.workflows.clear()
+    for (const workflow of finalWorkflows) this.workflows.set(workflow.id, workflow)
+    this.actions.length = 0
+    this.actions.push(...candidateActions)
+    this.interactions.clear()
+    this.interactionOwners.clear()
+    for (const [id, interaction] of candidateInteractions) {
+      this.interactions.set(id, interaction)
+      this.interactionOwners.set(id, candidateOwners.get(id)!)
+    }
+    this.recentEvents.length = 0
+    this.recentEvents.push(...candidateRecentEvents)
     this.emit({ type: 'state.changed', revision: this.revision, transition: { revision: this.revision, events: [event], changes: [] } })
-    for (const workflow of workflows) this.emit({ type: 'workflow.changed', revision: this.revision, workflow })
+    for (const workflow of finalWorkflows) this.emit({ type: 'workflow.changed', revision: this.revision, workflow })
     for (const interaction of this.interactions.values()) {
       if (interaction.id.startsWith(`interaction:${room.id}:`)) this.emit({ type: 'interaction.created', revision: this.revision, interaction })
     }
@@ -154,6 +208,9 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   createSolutionBinding(): CoreSolutionBinding {
     const workflows = new Map<string, WorkflowDefinition>()
     const projections = new Map<string, CoreSolutionProjectionProvider>()
+    const categories = new Map<string, StateCategoryDefinition>()
+    const stateProjections = new Map<string, CoreStateProjectionProvider>()
+    const bindingOwner = `solution-binding:${++this.solutionBindingCounter}`
     let settled = false
     const host = {
       registerWorkflow: (definition: WorkflowDefinition): Disposable => {
@@ -172,6 +229,22 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         let active = true
         return { dispose: () => { if (active) { active = false; if (!settled) projections.delete(provider.id) } } }
       },
+      registerStateCategory: (category: StateCategoryDefinition): Disposable => {
+        if (settled) throw new Error('Solution binding is already settled.')
+        if (!category.id.trim()) throw new Error('State category id is required.')
+        if (categories.has(category.id) || this.categories.has(category.id)) throw new Error(`State category already registered: ${category.id}`)
+        categories.set(category.id, category)
+        let active = true
+        return { dispose: () => { if (active) { active = false; if (!settled) categories.delete(category.id) } } }
+      },
+      registerStateProjection: (provider: CoreStateProjectionProvider): Disposable => {
+        if (settled) throw new Error('Solution binding is already settled.')
+        if (!provider.id.trim()) throw new Error('State projection id is required.')
+        if (stateProjections.has(provider.id) || this.stateProjectionProviders.has(provider.id)) throw new Error(`State projection already registered: ${provider.id}`)
+        stateProjections.set(provider.id, provider)
+        let active = true
+        return { dispose: () => { if (active) { active = false; if (!settled) stateProjections.delete(provider.id) } } }
+      },
     }
     return {
       host,
@@ -183,11 +256,25 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         for (const provider of projections.values()) {
           if (this.projectionProviders.has(provider.id)) throw new Error(`Solution projection already registered: ${provider.id}`)
         }
+        for (const category of categories.values()) {
+          if (this.categories.has(category.id)) throw new Error(`State category already registered: ${category.id}`)
+        }
+        for (const provider of stateProjections.values()) {
+          if (this.stateProjectionProviders.has(provider.id)) throw new Error(`State projection already registered: ${provider.id}`)
+        }
         for (const definition of workflows.values()) {
           this.definitions.set(definition.id, definition)
           this.workflowRegistry.register(definition)
         }
         for (const provider of projections.values()) this.projectionProviders.set(provider.id, provider)
+        for (const [id, category] of categories) {
+          this.categories.set(id, category)
+          this.categoryOwners.set(id, bindingOwner)
+        }
+        for (const [id, provider] of stateProjections) {
+          this.stateProjectionProviders.set(id, provider)
+          this.stateProjectionOwners.set(id, bindingOwner)
+        }
         settled = true
         return {
           dispose: () => {
@@ -199,6 +286,17 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
             for (const [id, owner] of this.interactionOwners) if (projectionIds.has(owner)) { this.interactions.delete(id); this.interactionOwners.delete(id) }
             for (const id of definitionIds) { this.definitions.delete(id); this.workflowRegistry.unregister(id) }
             for (const id of projectionIds) this.projectionProviders.delete(id)
+            const stateProjectionIds = new Set(stateProjections.keys())
+            const categoryIds = new Set(categories.keys())
+            for (const id of stateProjectionIds) {
+              this.stateProjectionProviders.delete(id)
+              this.stateProjectionOwners.delete(id)
+            }
+            for (const id of categoryIds) {
+              this.categories.delete(id)
+              this.categoryOwners.delete(id)
+              delete this.state[id]
+            }
             this.replanActions()
           },
         }
@@ -208,6 +306,8 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         settled = true
         workflows.clear()
         projections.clear()
+        categories.clear()
+        stateProjections.clear()
       },
     }
   }
@@ -218,6 +318,79 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
 
   private projectSolution(room: RoomSnapshot): Array<[string, CoreSolutionProjection]> {
     return [...this.projectionProviders.values()].map(provider => [provider.id, provider.project(room)] as [string, CoreSolutionProjection])
+  }
+
+  private projectState(room: RoomSnapshot): Record<string, unknown> {
+    const projected: Record<string, unknown> = {}
+    for (const [providerId, provider] of this.stateProjectionProviders) {
+      const owner = this.stateProjectionOwners.get(providerId)
+      const values = provider.project(room)
+      for (const [categoryId, value] of Object.entries(values)) {
+        const category = this.categories.get(categoryId)
+        if (this.categoryOwners.get(categoryId) !== owner || category?.enabled === false) continue
+        projected[categoryId] = value
+      }
+    }
+    return projected
+  }
+
+  private filterState(state: Record<string, unknown>): Record<string, unknown> {
+    const filtered: Record<string, unknown> = {}
+    for (const [id, value] of Object.entries(state)) if (this.categories.get(id)?.enabled !== false && this.categories.has(id)) filtered[id] = value
+    return filtered
+  }
+
+  private reduceState(state: Record<string, unknown>, events: StateEvent[]): Record<string, unknown> {
+    const next = structuredClone(state)
+    for (const event of events) {
+      for (const [id, category] of this.categories) {
+        if (category.enabled === false || !category.reducer) continue
+        next[id] = category.reducer(next[id], event)
+      }
+    }
+    return this.filterState(next)
+  }
+
+  private roomIdFromEvents(events: StateEvent[]): string | undefined {
+    for (const event of events) {
+      const payload = event.payload as { roomId?: unknown }
+      if (payload?.roomId) return String(payload.roomId)
+    }
+    return this.lastRoom?.id
+  }
+
+  /** 提交 reducer 结果；Repository 成功前不改变任何 Core 内存或事件流。 */
+  private commitStateCandidate(state: Record<string, unknown>, events: StateEvent[], workflows: WorkflowInstance[], actions: import('./protocol.ts').CoreAction[], roomId?: string, domainEvent = false): void {
+    if (events.length === 0) return
+    const recentEvents = this.withRecentEvents(events)
+    if (roomId && this.stateRepository) {
+      this.stateRepository.commit({ roomId, revision: this.revision, state, events, workflows })
+    } else if (roomId) {
+      for (const event of events) {
+        if (domainEvent) this.eventLog?.appendDomain(roomId, this.revision, event as DomainEvent)
+        else this.eventLog?.append(roomId, this.revision, event)
+      }
+      for (const workflow of workflows) this.workflowStore?.save(roomId, workflow)
+    }
+    this.state = state
+    this.workflows.clear()
+    for (const workflow of workflows) this.workflows.set(workflow.id, workflow)
+    this.actions.length = 0
+    this.actions.push(...actions)
+    this.recentEvents.length = 0
+    this.recentEvents.push(...recentEvents)
+    this.emit({ type: 'state.changed', revision: this.revision, transition: { revision: this.revision, events, changes: [] } })
+  }
+
+  private withRecentEvents(events: StateEvent[]): StateEvent[] {
+    const merged = [...this.recentEvents]
+    for (const event of events) if (!merged.some(existing => existing.id === event.id)) merged.push(event)
+    return merged.slice(-100)
+  }
+
+  private isRestorableWorkflowInstance(instance: WorkflowInstance): boolean {
+    const definition = this.definitions.get(instance.definitionId)
+    return Boolean(definition && instance.definitionVersion === definition.version && definition.steps[instance.step])
   }
 
   attachLegacyRuntime(runtime: RoomRuntime, defaultRoomId: string): void {
@@ -333,21 +506,21 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   emitDomainEvent(event: DomainEvent): void {
     const payload = event.payload as { roomId?: unknown }
     const roomId = payload.roomId ? String(payload.roomId) : undefined
-    if (roomId) this.eventLog?.appendDomain(roomId, this.revision, event)
+    const nextState = this.reduceState(this.state, [event])
+    const previousWorkflows = [...this.workflows.values()]
+    const nextWorkflows = previousWorkflows.map(instance => {
+      if (roomId && instance.locals.roomId !== roomId) return instance
+      return this.workflowExecutor.transition(instance, event)
+    })
+    const changed = nextWorkflows.some((instance, index) => instance !== previousWorkflows[index])
+    const actions = nextWorkflows.flatMap(workflow => this.workflowExecutor.plan(workflow))
+    this.commitStateCandidate(nextState, [event], nextWorkflows, actions, roomId, true)
     this.emit({ type: 'domain.event', revision: this.revision, event })
-
-    // 领域事件只推进声明了对应 transition 的固定 workflow；旧 RoomRuntime 仍是状态写入权威。
-    let changed = false
-    for (const [id, instance] of this.workflows) {
-      if (roomId && instance.locals.roomId !== roomId) continue
-      const next = this.workflowExecutor.transition(instance, event)
-      if (next === instance) continue
-      this.workflows.set(id, next)
-      if (roomId) this.workflowStore?.save(roomId, next)
-      this.emit({ type: 'workflow.changed', revision: this.revision, workflow: next })
-      changed = true
+    if (changed) {
+      nextWorkflows.forEach((workflow, index) => {
+        if (workflow !== previousWorkflows[index]) this.emit({ type: 'workflow.changed', revision: this.revision, workflow })
+      })
     }
-    if (changed) this.replanActions()
   }
 
   async submitModelResult(result: ModelResult): Promise<void> {
@@ -400,17 +573,6 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
 
   async cancel(requestId?: string): Promise<void> {
     if (requestId && this.llmRouter) await this.llmRouter.cancel(requestId)
-  }
-
-  protected appendStateEvents(events: StateEvent[]): void {
-    this.revision += 1
-    this.recentEvents.push(...events)
-    while (this.recentEvents.length > 100) this.recentEvents.shift()
-    this.emit({
-      type: 'state.changed',
-      revision: this.revision,
-      transition: { revision: this.revision, events, changes: [] },
-    })
   }
 
   private emit(event: CoreEvent): void {

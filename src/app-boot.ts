@@ -24,6 +24,7 @@ import { CoreRuntimePluginAdapter } from './core/runtime-plugin.ts'
 import type { Disposable } from './core/plugins.ts'
 import { HttpHumanCorePlugin } from './core/http-human-plugin.ts'
 import { StageCraftSolutionPlugin } from './core/solutions.ts'
+import { StoreCoreStateRepository } from './core/store-state-repository.ts'
 
 export interface TavernOptions {
   /** 仓库根目录（默认：本文件所在目录的上一级） */
@@ -138,18 +139,14 @@ export function startTavern(options: TavernOptions = {}): TavernApp {
   const humanCore = new HttpHumanCorePlugin()
   container.addHuman(humanCore)
   container.addSolution(new StageCraftSolutionPlugin())
-  core.attachEventLog({
-    append: (id, revision, event) => store.appendCoreEvent(id, revision, event),
-    appendDomain: (id, revision, event) => store.appendCoreDomainEvent(id, revision, event),
-    list: (id, limit) => store.listCoreEvents(id, limit),
-    listDomain: (id, limit) => store.listCoreDomainEvents(id, limit),
-  })
-  core.attachWorkflowStore({ save: (id, instance) => store.saveWorkflowInstance(id, instance), list: id => store.listWorkflowInstances(id) })
   const runtime = new RoomRuntime(store, undefined, core)
   core.attachLegacyRuntime(runtime, roomId)
-  core.restoreEventHistory(roomId)
-  core.restoreWorkflowInstances(roomId)
-  core.projectRoom(runtime.get(roomId), 'app-boot:init')
+  core.attachStateRepository(new StoreCoreStateRepository(store))
+  const restoredCoreState = core.restoreState(roomId)
+  const initialRoom = runtime.get(roomId)
+  // 即使是恢复后的相同 revision 也提交一次：事件 INSERT OR IGNORE 保证幂等，
+  // 同时让内存投影与 Repository 的 snapshot/event 保持一致。
+  core.projectRoom(initialRoom, restoredCoreState ? 'app-boot:restore' : 'app-boot:init')
   // 首次启动没有旧路由可等待，保持旧行为：startTavern 返回前同步装配 gateway/workers。
   if (providerStore.getDirector()?.apiKey) installProvider(providerStore.getDirector())
 

@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { installStageCraftSolution } from './core-solution-test-utils.ts'
 
 test('core runtime exposes versioned Core View and event subscription', async () => {
   const core = new CoreRuntimeSkeleton()
@@ -37,6 +38,7 @@ test('core runtime projects legacy RoomSnapshot into extensible state categories
     const room = store.getRoom(roomId)
     store.close()
     const core = new CoreRuntimeSkeleton()
+    installStageCraftSolution(core)
     core.projectRoom(room)
     const view = core.getView()
     const state = view.state as { room: { id: string }; world: { time?: string }; narrative: { scenes: unknown[] }; workflow: { phase: string } }

@@ -8,6 +8,7 @@ import { normalizeStateUpdateKeys } from './model-gateway.ts'
 import type { StateEvent } from './core/protocol.ts'
 import { isDomainEvent, type DomainEvent } from './core/domain-events.ts'
 import type { WorkflowInstance } from './core/protocol.ts'
+import type { CoreStateCommit, CoreStateRestore } from './core/state-repository.ts'
 
 const normalizeMemoryTimeLabel = (value: string | undefined): string => {
   const label = String(value ?? '').trim()
@@ -173,6 +174,12 @@ export class Store {
         UNIQUE(room_id, event_id)
       ) STRICT;
       CREATE INDEX IF NOT EXISTS core_events_room_sequence ON core_events(room_id, sequence DESC);
+      CREATE TABLE IF NOT EXISTS core_state_snapshots (
+        room_id TEXT PRIMARY KEY,
+        revision INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS workflow_instances (
         id TEXT PRIMARY KEY,
         room_id TEXT NOT NULL,
@@ -217,6 +224,27 @@ export class Store {
     this.db.close()
   }
 
+  /** Core 状态、投影事件和 WorkflowInstance 的统一事务提交。 */
+  saveCoreStateTransaction(snapshot: CoreStateCommit): void {
+    this.withTransaction(() => {
+      this.db.prepare(`INSERT INTO core_state_snapshots (room_id, revision, state, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(room_id) DO UPDATE SET revision = excluded.revision, state = excluded.state, updated_at = excluded.updated_at`)
+        .run(snapshot.roomId, snapshot.revision, JSON.stringify(snapshot.state), new Date().toISOString())
+      const insertEvent = this.db.prepare('INSERT OR IGNORE INTO core_events (room_id, revision, event_id, event_type, event_source, caused_by, workflow_id, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      for (const event of snapshot.events) {
+        insertEvent.run(snapshot.roomId, snapshot.revision, event.id, event.type, event.source, event.causedBy ?? null, event.workflowId ?? null, JSON.stringify(event.payload), event.createdAt)
+      }
+      this.db.prepare('DELETE FROM workflow_instances WHERE room_id = ?').run(snapshot.roomId)
+      for (const instance of snapshot.workflows) this.saveWorkflowInstance(snapshot.roomId, instance)
+    })
+  }
+
+  loadCoreState(roomId: string, eventLimit = 100): CoreStateRestore | undefined {
+    const row = this.db.prepare('SELECT revision, state FROM core_state_snapshots WHERE room_id = ?').get(roomId) as { revision: number; state: string } | undefined
+    if (!row) return undefined
+    return { roomId, revision: Number(row.revision), state: JSON.parse(row.state), events: this.listCoreEvents(roomId, eventLimit), workflows: this.listWorkflowInstances(roomId) }
+  }
+
   saveWorkflowInstance(roomId: string, instance: WorkflowInstance): void {
     this.db.prepare(`INSERT INTO workflow_instances (id, room_id, definition_id, definition_version, step, status, locals, pending_interactions, pending_model_requests, retry_count, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -238,7 +266,8 @@ export class Store {
   }
 
   listCoreEvents(roomId: string, limit = 100): StateEvent[] {
-    const rows = this.db.prepare('SELECT event_id, event_type, event_source, caused_by, workflow_id, payload, created_at FROM core_events WHERE room_id = ? ORDER BY sequence ASC LIMIT ?').all(roomId, Math.max(1, limit)) as Array<{ event_id: string; event_type: string; event_source: StateEvent['source']; caused_by: string | null; workflow_id: string | null; payload: string; created_at: string }>
+    const rows = this.db.prepare('SELECT event_id, event_type, event_source, caused_by, workflow_id, payload, created_at FROM core_events WHERE room_id = ? ORDER BY sequence DESC LIMIT ?').all(roomId, Math.max(1, limit)) as Array<{ event_id: string; event_type: string; event_source: StateEvent['source']; caused_by: string | null; workflow_id: string | null; payload: string; created_at: string }>
+    rows.reverse()
     return rows.map(row => ({ id: row.event_id, type: row.event_type, source: row.event_source, payload: JSON.parse(row.payload), ...(row.caused_by ? { causedBy: row.caused_by } : {}), ...(row.workflow_id ? { workflowId: row.workflow_id } : {}), createdAt: row.created_at }))
   }
 
