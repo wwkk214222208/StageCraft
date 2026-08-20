@@ -206,7 +206,7 @@
 
 /* ── DeepSeek Harness 品牌（装模作样层）：鲸鱼 + 标题 + 主色 ── */
 .brand{display:flex;align-items:center;gap:9px;min-width:0}
-.brand-logo{width:25px;height:auto;color:#5686fe;flex-shrink:0}
+.brand-logo{width:32px;height:32px;object-fit:contain;border-radius:6px;flex-shrink:0}
 header strong{font:600 18px system-ui,sans-serif;color:#e4edfd;letter-spacing:.2px;white-space:nowrap}
 #room-title{margin-left:10px;color:#8fa1c9;font-size:13px}
 

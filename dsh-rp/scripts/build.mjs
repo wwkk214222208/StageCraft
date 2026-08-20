@@ -37,7 +37,7 @@ const publicFiles = [
   'index.html',
 ]
 for (const file of publicFiles) cpSync(join(sourcePublic, file), join(publicRoot, file))
-for (const file of ['default.svg', 'rowan.svg', 'seraphina.png', 'vex.svg']) {
+for (const file of ['default.svg', 'rowan.svg', 'seraphina.png', 'vex.svg', 'stagecraft-logo.png']) {
   cpSync(join(sourcePublic, 'assets', file), join(publicRoot, 'assets', file))
 }
 
