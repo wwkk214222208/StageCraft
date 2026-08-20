@@ -21,7 +21,7 @@ function record(id, area, status, detail, durationMs = 0) {
 function command(id, area, executable, commandArgs, options = {}) {
   const started = performance.now()
   try {
-    execFileSync(executable, commandArgs, { cwd: root, stdio: 'ignore', windowsHide: true, ...options })
+    execFileSync(executable, commandArgs, { cwd: root, stdio: 'ignore', windowsHide: true, shell: process.platform === 'win32' && executable.endsWith('.bat'), ...options })
     record(id, area, 'pass', `${executable} ${commandArgs.join(' ')}`, performance.now() - started)
     return true
   } catch (error) {
@@ -39,10 +39,8 @@ const node = process.execPath
 const npm = process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : 'npm'
 const npmArgs = process.platform === 'win32' ? ['/d', '/s', '/c', 'npm test'] : ['test']
 const gradle = process.platform === 'win32' ? join(root, 'android', 'gradlew.bat') : join(root, 'android', 'gradlew')
-const gradleExecutable = process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : gradle
-const gradleArgs = process.platform === 'win32'
-  ? ['/d', '/s', '/c', `"${gradle}" testDebugUnitTest assembleDebug lintDebug --offline --no-daemon`]
-  : ['testDebugUnitTest', 'assembleDebug', 'lintDebug', '--offline', '--no-daemon']
+const gradleExecutable = gradle
+const gradleArgs = ['testDebugUnitTest', 'assembleDebug', 'lintDebug', '--offline', '--no-daemon']
 
 for (const target of ['win32', 'linux', 'darwin']) {
   if (process.platform === target) record(`platform.${target}`, 'platform', 'pass', `runner executing on ${target}`)
