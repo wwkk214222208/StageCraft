@@ -1,6 +1,7 @@
 import type { ThinkingStrength, TokenUsage } from '../types.ts'
 import type { DomainEvent } from './domain-events.ts'
 import type { ViewContribution } from './extensions.ts'
+import type { UiRenderResult } from './ui.ts'
 
 /** 核心协议版本；外部 adapter 以此版本协商，不直接依赖内部 RoomRuntime。 */
 export const CORE_PROTOCOL_VERSION = '1.0'
@@ -194,6 +195,8 @@ export interface CoreView {
   recentEvents: StateEvent[]
   /** Optional generic extension output; absent for legacy consumers. */
   viewContributions?: ViewContribution[]
+  /** Declarative UI extension projection; contains no executable functions. */
+  ui?: UiRenderResult
 }
 
 export type CoreEvent =
@@ -206,6 +209,7 @@ export type CoreEvent =
   | { type: 'model.thinking.delta'; revision: number; requestId: string; text: string }
   | { type: 'model.completed'; revision: number; result: ModelResult }
   | { type: 'error'; revision: number; message: string; requestId?: string }
+  | { type: 'ui.manifest.changed'; revision: number; manifestId: string; operation: 'registered' | 'unregistered'; sequence: number }
 
 export type CoreEventListener = (event: CoreEvent) => void
 

@@ -14,6 +14,7 @@ import type { StateCategoryDefinition } from './state.ts'
 import type { CoreStateCommit, CoreStateRestore, CoreStateRepository } from './state-repository.ts'
 import type { StateModuleManifest, StateReducer, StateSchemaDefinition, StateTransactionRequest, StateTransactionResult } from './state-transaction.ts'
 import type { EffectHandlerDefinition, PromptContributorDefinition, ProposalTypeDefinition, RecordCollectionDefinition, ViewContributorDefinition } from './extensions.ts'
+import type { UiActionHandler, UiManifest, UiRenderResult } from './ui.ts'
 
 /** 可逆资源句柄：HTTP、Cordis、SSE 等 adapter 安装后都必须能释放。 */
 export interface Disposable {
@@ -59,6 +60,10 @@ export interface CoreRuntimeBindingPort {
   composePrompt(input: unknown): import('./extensions.ts').PromptFragment[]
   registerViewContributor(definition: ViewContributorDefinition): Disposable
   composeView(input: unknown): import('./extensions.ts').ViewContribution[]
+  registerUiManifest(manifest: UiManifest, handlers?: UiActionHandler[]): Disposable
+  listUiManifests(): UiManifest[]
+  renderUi(): UiRenderResult
+  invokeUiAction(actionId: string, input: unknown, owner: string): Promise<unknown>
 }
 
 export type { CoreStateCommit, CoreStateRestore, CoreStateRepository }

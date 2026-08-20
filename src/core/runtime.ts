@@ -10,6 +10,7 @@ import { systemClock, systemIds, type Clock, type IdFactory, type PortableRuntim
 import { jsonDeepEqual } from './json-values.ts'
 import { applyStatePatches, type StateModuleManifest, type StateReducer, type StateReducerEvent, type StateSchemaDefinition, type StateTransactionRequest, type StateTransactionResult } from './state-transaction.ts'
 import type { CoreExtensionPort, EffectHandlerDefinition, PromptContributorDefinition, Proposal, ProposalOperationRequest, ProposalTypeDefinition, RecordCollectionDefinition, RecordOperationRequest, RecordOperationResult, ViewContribution, ViewContributorDefinition, PromptFragment } from './extensions.ts'
+import { UiExtensionRegistry, type UiActionHandler, type UiManifest, type UiRendererHost, type UiRenderResult } from './ui.ts'
 import {
   CORE_PROTOCOL_VERSION,
   type CoreEvent,
@@ -111,6 +112,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   private readonly promptContributorOwners = new Map<string, object | string>()
   private readonly viewContributors = new Map<string, ViewContributorDefinition>()
   private readonly viewContributorOwners = new Map<string, object | string>()
+  private readonly uiRegistry: UiExtensionRegistry
   private stateTransactionActive = false
   private llmRouter?: CoreLlmRouterPlugin
   private llmRouterDisposable?: Disposable
@@ -129,6 +131,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     this.clock = ports.clock ?? systemClock
     this.ids = ports.ids ?? systemIds
     this.workflowExecutor = new WorkflowExecutor(this.workflowRegistry)
+    this.uiRegistry = new UiExtensionRegistry(() => this.getView(), event => this.emit(event))
   }
 
   attachEventLog(eventLog: CoreEventLog): void {
@@ -1150,6 +1153,12 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     for (const instance of this.workflows.values()) this.actions.push(...this.workflowExecutor.plan(instance))
   }
 
+  registerUiManifest(manifest: UiManifest, handlers?: UiActionHandler[]): Disposable { return this.uiRegistry.register(manifest, handlers) }
+  listUiManifests(): UiManifest[] { return this.uiRegistry.list() }
+  renderUi(view = this.getView()): UiRenderResult { return this.uiRegistry.render(view) }
+  invokeUiAction(actionId: string, input: unknown, owner: string): Promise<unknown> { return this.uiRegistry.invoke(actionId, input, owner) }
+  subscribeUi(listener: (event: CoreEvent) => void): Disposable { const unsubscribe = this.uiRegistry.subscribe(listener); return { dispose: unsubscribe } }
+
   getView(): CoreView {
     return {
       protocolVersion: CORE_PROTOCOL_VERSION,
@@ -1161,6 +1170,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
       availableCommands: this.availableCommands(),
       recentEvents: structuredClone(this.recentEvents),
       viewContributions: this.composeView({ roomId: this.lastRoom?.id, revision: this.revision, state: structuredClone(this.state) }),
+      ui: this.uiRegistry.render({ protocolVersion: CORE_PROTOCOL_VERSION, revision: this.revision, state: structuredClone(this.state), workflows: [...this.workflows.values()], interactions: [...this.interactions.values()], actions: structuredClone(this.actions), availableCommands: this.availableCommands(), recentEvents: structuredClone(this.recentEvents) }),
     }
   }
 

@@ -1,4 +1,5 @@
 import type { StatePatch, StateTransactionResult } from './state-transaction.ts'
+import type { UiActionHandler, UiManifest, UiRenderResult } from './ui.ts'
 
 export interface RecordCollectionDefinition {
   id: string
@@ -99,6 +100,10 @@ export interface CoreExtensionPort {
   composePrompt(input: unknown): PromptFragment[]
   registerViewContributor(definition: ViewContributorDefinition): Disposable
   composeView(input: unknown): ViewContribution[]
+  registerUiManifest(manifest: UiManifest, handlers?: UiActionHandler[]): Disposable
+  listUiManifests(): UiManifest[]
+  renderUi(): UiRenderResult
+  invokeUiAction(actionId: string, input: unknown, owner: string): Promise<unknown>
 }
 
 export interface Disposable {

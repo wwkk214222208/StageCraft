@@ -4,6 +4,7 @@ import type { CoreLlmRouterPlugin, CoreRuntimeBindingPort, CoreRuntimePlugin, Co
 import type { CoreStateRepository } from './state-repository.ts'
 import type { StateModuleManifest, StateReducer, StateSchemaDefinition, StateTransactionRequest, StateTransactionResult } from './state-transaction.ts'
 import type { CoreExtensionPort } from './extensions.ts'
+import type { UiActionHandler, UiManifest, UiRenderResult } from './ui.ts'
 import type { DefaultCorePluginContainer } from './container.ts'
 import { CoreRuntimePluginAdapter } from './runtime-plugin.ts'
 
@@ -53,6 +54,10 @@ export function createStageCraftService(core: CoreRuntimePort & CoreRuntimeBindi
       composePrompt: input => core.composePrompt(input),
       registerViewContributor: definition => core.registerViewContributor(definition),
       composeView: input => core.composeView(input),
+      registerUiManifest: (manifest: UiManifest, handlers?: UiActionHandler[]) => core.registerUiManifest(manifest, handlers),
+      listUiManifests: () => core.listUiManifests(),
+      renderUi: (): UiRenderResult => core.renderUi(),
+      invokeUiAction: (actionId: string, input: unknown, owner: string) => core.invokeUiAction(actionId, input, owner),
     },
     install: {
       core: plugin => container.addCore(plugin),
