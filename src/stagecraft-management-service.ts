@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto'
 import type { LoreEntry, RoomSnapshot, Role, RoomMode, ThinkingStrength } from './types.ts'
 import type { StoryPackage } from './story-packages.ts'
-import type { Store } from './store.ts'
+import type { StageCraftRepository } from './stagecraft-repository.ts'
+import { systemIds, type IdFactory } from './core/platform.ts'
 
 export interface StageCraftManagementNotifications {
   get(roomId: string): RoomSnapshot
@@ -21,7 +21,7 @@ export interface StageCraftManagementPort {
   reorderNpcMemories(roomId: string, roleId: string, memoryIds: string[]): void
   supersedeNpcMemory(roomId: string, memoryId: string, entry: { text: string; occurredAt: string }): void
   saveLore(roomId: string, lore: LoreEntry[]): void
-  createRole(roomId: string, role: Parameters<Store['createRole']>[1]): void
+  createRole(roomId: string, role: Parameters<StageCraftRepository['createRole']>[1]): void
   deleteRole(roomId: string, roleId: string): void
   setRolePresence(roomId: string, roleId: string, presence: Role['presence']): void
   setRoleThinking(roomId: string, roleId: string, thinkingStrength: ThinkingStrength): void
@@ -34,12 +34,14 @@ export interface StageCraftManagementPort {
 
 /** Store-backed management boundary. It is intentionally independent of RoomRuntime. */
 export class StageCraftManagementService implements StageCraftManagementPort {
-  private readonly store: Store
+  private readonly store: StageCraftRepository
+  private readonly ids: IdFactory
   private readonly notifications: StageCraftManagementNotifications
   private readonly beforeRestart?: (roomId: string) => void
 
-  constructor(store: Store, notifications: StageCraftManagementNotifications, options: { beforeRestart?: (roomId: string) => void } = {}) {
+  constructor(store: StageCraftRepository, notifications: StageCraftManagementNotifications, options: { beforeRestart?: (roomId: string) => void; ids?: IdFactory } = {}) {
     this.store = store
+    this.ids = options.ids ?? systemIds
     this.notifications = notifications
     this.beforeRestart = options.beforeRestart
   }
@@ -73,17 +75,17 @@ export class StageCraftManagementService implements StageCraftManagementPort {
   storeNpcMemories(roomId: string, roleId: string, entries: Array<{ id?: string; text?: string; occurredAt?: string }>): void {
     this.idle(roomId, '管理 NPC 记忆需要在空闲时进行。')
     const occurredAt = this.room(roomId).sceneTime ?? '过去'
-    this.store.insertNpcMemories(roomId, roleId, entries.map((entry, index) => ({ id: entry.id ?? `manual-${Date.now()}-${index}-${randomUUID()}`, text: String(entry.text ?? ''), occurredAt: entry.occurredAt ?? occurredAt, source: 'manual' as const })))
+    this.store.insertNpcMemories(roomId, roleId, entries.map(entry => ({ id: entry.id ?? this.ids.create('manual'), text: String(entry.text ?? ''), occurredAt: entry.occurredAt ?? occurredAt, source: 'manual' as const })))
     this.changed(roomId)
   }
 
   retractNpcMemory(roomId: string, memoryId: string): void { this.store.retractNpcMemory(roomId, memoryId); this.changed(roomId) }
   updateNpcMemory(roomId: string, memoryId: string, entry: { text?: string; occurredAt?: string }): void { this.idle(roomId, '管理 NPC 记忆需要在空闲时进行。'); this.store.updateNpcMemory(roomId, memoryId, entry); this.changed(roomId) }
   reorderNpcMemories(roomId: string, roleId: string, memoryIds: string[]): void { this.idle(roomId, '调整记忆顺序需要在空闲时进行。'); this.store.reorderNpcMemories(roomId, roleId, memoryIds); this.changed(roomId) }
-  supersedeNpcMemory(roomId: string, memoryId: string, entry: { text: string; occurredAt: string }): void { this.idle(roomId, '管理 NPC 记忆需要在空闲时进行。'); this.store.supersedeNpcMemory(roomId, memoryId, { ...entry, id: `manual-${randomUUID()}` }); this.changed(roomId) }
+  supersedeNpcMemory(roomId: string, memoryId: string, entry: { text: string; occurredAt: string }): void { this.idle(roomId, '管理 NPC 记忆需要在空闲时进行。'); this.store.supersedeNpcMemory(roomId, memoryId, { ...entry, id: this.ids.create('manual') }); this.changed(roomId) }
   saveLore(roomId: string, lore: LoreEntry[]): void { this.store.saveLore(roomId, lore); this.changed(roomId) }
 
-  createRole(roomId: string, role: Parameters<Store['createRole']>[1]): void { this.idle(roomId, '新建角色需要在空闲时进行。'); this.store.createRole(roomId, role); this.changed(roomId) }
+  createRole(roomId: string, role: Parameters<StageCraftRepository['createRole']>[1]): void { this.idle(roomId, '新建角色需要在空闲时进行。'); this.store.createRole(roomId, role); this.changed(roomId) }
   deleteRole(roomId: string, roleId: string): void { this.idle(roomId, '删除角色需要在空闲时进行。'); this.store.deleteRole(roomId, roleId); this.changed(roomId) }
   setRolePresence(roomId: string, roleId: string, presence: Role['presence']): void { this.store.setRolePresence(roomId, roleId, presence); this.changed(roomId) }
   setRoleThinking(roomId: string, roleId: string, thinkingStrength: ThinkingStrength): void { this.idle(roomId, '调整角色思维链需要在空闲时进行。'); this.store.setRoleThinking(roomId, roleId, thinkingStrength); this.changed(roomId) }

@@ -27,6 +27,12 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 
 负责 `ModelRequest` 与 `ModelResult`，包括 provider 路由、SSE、thinking 参数、usage、超时、request-scoped 取消和错误归一化。Core 以 requestId 等待匹配结果并隔离取消的迟到结果；它不决定房间阶段，也不直接修改状态。
 
+## 平台端口
+
+Core 通过小型平台端口使用时间、UUID、仓储、资源、秘密、文件选择、生命周期和模型传输能力。默认桌面组合根继续使用 Node/SQLite/HTTP 适配器；浏览器与 Android 可以提供自己的实现，不需要复制 Core、Workflow、审批或状态事务逻辑。Core 源码不得直接依赖 Node 文件系统、Android API、DOM 或平台密钥存储。
+
+当前正式接入 Core 的端口是 `Clock`、`IdFactory` 与 `CoreStateRepository`；`AssetRepository`、`SecretStore`、`FilePicker`、`PlatformLifecycle` 和 `ModelTransport` 已定义稳定边界，供后续 Human Plugin、Android 本地运行和 UI Extension 阶段逐项接入。Node 文件资源适配器放在 Core 之外，并限制所有路径不能逃逸资源根目录。
+
 ## Workflow 边界
 
 第一版 Workflow Definition 是固定的，由代码或方案包提供；Workflow Instance 是可持久化的运行状态。当前不允许 LLM 或 Author Pack 直接修改 Definition。

@@ -11,6 +11,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Store } from './store.ts'
+import { NodeSqliteRepository } from './platform/node-sqlite-repository.ts'
 import { RoomRuntime } from './room-runtime.ts'
 import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } from './model-gateway.ts'
 import { listStoryPackages, loadStoryPackage, saveStoryPackage, type StoryPackage } from './story-packages.ts'
@@ -115,7 +116,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     }
     console.log('检测到旧数据库，已迁移到 stagecraft.sqlite。')
   }
-  const store = new Store(dbPath)
+  const store = new NodeSqliteRepository(dbPath)
   let roomId: string
   try {
     roomId = store.seed(loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'))

@@ -1,11 +1,11 @@
-import { randomUUID } from 'node:crypto'
 import type { Decision, Draft, RoomSnapshot, SubmitTurnInput } from './types.ts'
-import { Store } from './store.ts'
 import { fakeWorkers } from './workers.ts'
 import type { WorkerSet } from './workers.ts'
 import type { CoreRuntimePort } from './core/protocol.ts'
 import { domainEvent } from './core/domain-events.ts'
 import type { StageCraftDirectorPort } from './core/solutions.ts'
+import type { StageCraftRepository } from './stagecraft-repository.ts'
+import { systemIds, type IdFactory } from './core/platform.ts'
 
 export interface StageCraftDirectorNotifications {
   get(roomId: string): RoomSnapshot
@@ -15,7 +15,8 @@ export interface StageCraftDirectorNotifications {
 
 /** Store-backed 导演领域服务；RoomRuntime 仅保留兼容 facade。 */
 export class StageCraftDirectorService implements StageCraftDirectorPort {
-  private readonly store: Store
+  private readonly store: StageCraftRepository
+  private readonly ids: IdFactory
   private workers: WorkerSet
   private core?: CoreRuntimePort
   private unsubscribeCore?: () => void
@@ -29,8 +30,9 @@ export class StageCraftDirectorService implements StageCraftDirectorPort {
   private readonly coreRequestContexts = new Map<string, { roomId: string; actor: 'role' | 'director'; roleId?: string; turnId: string }>()
   private disposed = false
 
-  constructor(store: Store, workers: WorkerSet = fakeWorkers, core: CoreRuntimePort | undefined, notifications: StageCraftDirectorNotifications) {
+  constructor(store: StageCraftRepository, workers: WorkerSet = fakeWorkers, core: CoreRuntimePort | undefined, notifications: StageCraftDirectorNotifications, ports: { ids?: IdFactory } = {}) {
     this.store = store
+    this.ids = ports.ids ?? systemIds
     this.workers = workers
     this.notifications = notifications
     if (core) this.setCoreRuntime(core)
@@ -122,7 +124,7 @@ export class StageCraftDirectorService implements StageCraftDirectorPort {
     const decisions: Decision[] = room.roles.map(role => role.presence !== 'present'
       ? { roleId: role.id, participation: 'excluded', status: 'abstained' }
       : { roleId: role.id, participation: required.has(role.id) ? 'required' : 'optional', status: 'pending' })
-    const turnId = randomUUID()
+    const turnId = this.ids.create()
     this.turnIds.set(roomId, turnId)
     this.cancelledTurns.delete(turnId)
     this.store.createTurn(roomId, turnId, input.text, decisions)

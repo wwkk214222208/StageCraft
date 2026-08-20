@@ -1,6 +1,4 @@
 import type { RoomSnapshot } from '../types.ts'
-import { randomUUID } from 'node:crypto'
-import { isDeepStrictEqual } from 'node:util'
 import { roomSnapshotEvent, type StateCategoryDefinition } from './state.ts'
 import type { CoreEventLog } from './event-log.ts'
 import type { DomainEvent } from './domain-events.ts'
@@ -8,6 +6,8 @@ import { validateWorkflowDefinition, WorkflowExecutor, WorkflowRegistry } from '
 import type { WorkflowInstanceStore } from './workflow-store.ts'
 import type { CoreCommandHandler, CoreLlmRouterPlugin, CoreRuntimeBindingPort, CoreSolutionBinding, CoreSolutionProjection, CoreSolutionProjectionProvider, CoreStateProjectionProvider, Disposable } from './plugins.ts'
 import type { CoreStateRepository } from './state-repository.ts'
+import { systemClock, systemIds, type Clock, type IdFactory, type PortableRuntimePorts } from './platform.ts'
+import { jsonDeepEqual } from './json-values.ts'
 import { applyStatePatches, type StateModuleManifest, type StateReducer, type StateReducerEvent, type StateSchemaDefinition, type StateTransactionRequest, type StateTransactionResult } from './state-transaction.ts'
 import type { CoreExtensionPort, EffectHandlerDefinition, PromptContributorDefinition, Proposal, ProposalOperationRequest, ProposalTypeDefinition, RecordCollectionDefinition, RecordOperationRequest, RecordOperationResult, ViewContribution, ViewContributorDefinition, PromptFragment } from './extensions.ts'
 import {
@@ -122,8 +122,12 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   private solutionBindingCounter = 0
   private readonly modelWaiters = new Map<string, { resolve: (result: ModelResult) => void; reject: (error: unknown) => void; bindingId: number }>()
   private readonly cancelledModelRequests = new Map<string, number>()
+  private readonly clock: Clock
+  private readonly ids: IdFactory
 
-  constructor() {
+  constructor(ports: PortableRuntimePorts = {}) {
+    this.clock = ports.clock ?? systemClock
+    this.ids = ports.ids ?? systemIds
     this.workflowExecutor = new WorkflowExecutor(this.workflowRegistry)
   }
 
@@ -340,8 +344,8 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
       const validation = type.validate(copy(request.input))
       assertJsonSafe(request.input, 'Proposal input')
       if (Array.isArray(validation) && validation.length) throw new Error(`Proposal validation failed: ${validation.join('; ')}`)
-      const now = new Date().toISOString()
-      const proposal: Proposal = { id: request.id ?? randomUUID(), typeId: type.id, moduleId: type.moduleId, status: 'pending', input: copy(request.input), createdAt: now, updatedAt: now }
+      const now = this.clock.now()
+      const proposal: Proposal = { id: request.id ?? this.ids.create(), typeId: type.id, moduleId: type.moduleId, status: 'pending', input: copy(request.input), createdAt: now, updatedAt: now }
       const path = absolutePath(type)
       const current = readPointer(this.state, path)
       if (find(this.state, proposal.id) || (Array.isArray(current) && current.some(value => (value as Proposal)?.id === proposal.id))) throw new Error(`Proposal already exists: ${proposal.id}`)
@@ -363,7 +367,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
       const validation = type.validate(copy(request.input))
       assertJsonSafe(request.input, 'Proposal input')
       if (Array.isArray(validation) && validation.length) throw new Error(`Proposal validation failed: ${validation.join('; ')}`)
-      const edited = { ...proposal, input: copy(request.input), updatedAt: new Date().toISOString() }
+      const edited = { ...proposal, input: copy(request.input), updatedAt: this.clock.now() }
       const roomId = request.roomId ?? this.lastRoom?.id
       if (!roomId) throw new Error('Proposal mutation roomId is required.')
       const transaction = this.transactState({ roomId, moduleId: type.moduleId, baseRevision: request.baseRevision, patches: [{ op: 'replace', path: `${found.path}/${found.index}`, value: edited }] })
@@ -371,7 +375,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     }
     if (request.operation === 'reject') {
       if (proposal.status !== 'pending') throw new Error('Only pending proposals can be rejected.')
-      const rejected = { ...proposal, status: 'rejected' as const, updatedAt: new Date().toISOString() }
+      const rejected = { ...proposal, status: 'rejected' as const, updatedAt: this.clock.now() }
       const roomId = request.roomId ?? this.lastRoom?.id
       if (!roomId) throw new Error('Proposal mutation roomId is required.')
       const transaction = this.transactState({ roomId, moduleId: proposal.moduleId, baseRevision: request.baseRevision, patches: [{ op: 'replace', path: `${found.path}/${found.index}`, value: rejected }] })
@@ -385,7 +389,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     assertJsonSafe(transaction, 'Proposal transaction')
     const roomId = request.roomId ?? this.lastRoom?.id
     if (!roomId) throw new Error('Proposal mutation roomId is required.')
-    const approved = { ...proposal, status: 'approved' as const, updatedAt: new Date().toISOString() }
+    const approved = { ...proposal, status: 'approved' as const, updatedAt: this.clock.now() }
     const guard = { op: 'test', path: `${found.path}/${found.index}`, value: proposal } as StatePatch
     const patches = [guard, ...transaction.patches, { op: 'test', path: `${found.path}/${found.index}`, value: proposal } as StatePatch, { op: 'replace', path: `${found.path}/${found.index}`, value: approved } as StatePatch]
     const result = this.transactState({ roomId, moduleId: proposal.moduleId, baseRevision: request.baseRevision, patches, events: transaction.events })
@@ -537,8 +541,8 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     trace.changes = changes
     if (!request.patches?.length && !request.events?.length) return { roomId, revision: this.revision, before: structuredClone(before), after: structuredClone(candidate), changes: structuredClone(changes), assertions: structuredClone(request.assertions ?? []), trace: structuredClone(trace) }
     const nextRevision = this.revision + 1
-    const events: StateEvent[] = trace.events.map(event => ({ id: event.id, type: event.type, source: 'plugin', payload: event.payload, createdAt: new Date().toISOString() }))
-    if (events.length === 0) events.push({ id: request.traceId ?? `state.transaction:${nextRevision}`, type: 'state.transaction', source: request.system ? 'system' : 'plugin', payload: { patches: request.patches ?? [] }, createdAt: new Date().toISOString() })
+    const events: StateEvent[] = trace.events.map(event => ({ id: event.id, type: event.type, source: 'plugin', payload: event.payload, createdAt: this.clock.now() }))
+    if (events.length === 0) events.push({ id: request.traceId ?? `state.transaction:${nextRevision}`, type: 'state.transaction', source: request.system ? 'system' : 'plugin', payload: { patches: request.patches ?? [] }, createdAt: this.clock.now() })
     const workflows = [...this.workflows.values()]
     const recent = this.withRecentEvents(events)
     this.stateRepository?.commit({ roomId, revision: nextRevision, state: structuredClone(candidate), events: structuredClone(events), workflows: structuredClone(workflows) })
@@ -583,13 +587,13 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
       const provider = owner ? this.projectionProviders.get(owner) : undefined
       const workflow = workflows.find(item => provider?.interactionBelongsToWorkflow?.(interaction, item) ?? false)
       if (!workflow) continue
-      candidateWorkflows.set(workflow.id, { ...workflow, pendingInteractionIds: [interaction.id], updatedAt: new Date().toISOString() })
+      candidateWorkflows.set(workflow.id, { ...workflow, pendingInteractionIds: [interaction.id], updatedAt: this.clock.now() })
     }
     const finalWorkflows = [...candidateWorkflows.values()]
     const candidateActions = finalWorkflows.flatMap(workflow => this.workflowExecutor.plan(workflow))
-    const event = roomSnapshotEvent(room, causedBy, candidateState)
+    const event = roomSnapshotEvent(room, causedBy, candidateState, this.clock)
     const candidateRecentEvents = this.withRecentEvents([event])
-    const projectionRevision = isDeepStrictEqual(candidateState, this.state)
+    const projectionRevision = jsonDeepEqual(candidateState, this.state)
       ? Math.max(this.revision, room.revision)
       : Math.max(room.revision, this.revision + 1)
 
@@ -972,7 +976,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     this.interactions.delete(interaction.id)
     for (const [id, workflow] of this.workflows) {
       if (!workflow.pendingInteractionIds.includes(interaction.id)) continue
-      const next = { ...workflow, pendingInteractionIds: workflow.pendingInteractionIds.filter(id => id !== interaction.id), updatedAt: new Date().toISOString() }
+      const next = { ...workflow, pendingInteractionIds: workflow.pendingInteractionIds.filter(id => id !== interaction.id), updatedAt: this.clock.now() }
       this.workflows.set(id, next)
       const roomId = String(next.locals.roomId ?? '')
       if (roomId) this.workflowStore?.save(roomId, next)
@@ -1049,7 +1053,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     if (request.workflowId) {
       const workflow = this.workflows.get(request.workflowId)
       if (workflow) {
-        const next = { ...workflow, pendingModelRequestIds: [...new Set([...workflow.pendingModelRequestIds, request.requestId])], updatedAt: new Date().toISOString() }
+        const next = { ...workflow, pendingModelRequestIds: [...new Set([...workflow.pendingModelRequestIds, request.requestId])], updatedAt: this.clock.now() }
         this.workflows.set(workflow.id, next)
         const roomId = String(next.locals.roomId ?? '')
         if (roomId) this.workflowStore?.save(roomId, next)
@@ -1110,7 +1114,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   async submitModelResult(result: ModelResult): Promise<void> {
     this.pruneCancelledModelRequests()
     const cancelledUntil = this.cancelledModelRequests.get(result.requestId)
-    if (cancelledUntil && cancelledUntil > Date.now()) { this.cancelledModelRequests.delete(result.requestId); return }
+    if (cancelledUntil && cancelledUntil > this.clockTimestamp()) { this.cancelledModelRequests.delete(result.requestId); return }
     const waiter = this.modelWaiters.get(result.requestId)
     if (waiter) {
       this.modelWaiters.delete(result.requestId)
@@ -1118,7 +1122,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     }
     for (const [id, workflow] of this.workflows) {
       if (!workflow.pendingModelRequestIds.includes(result.requestId)) continue
-      const next = { ...workflow, pendingModelRequestIds: workflow.pendingModelRequestIds.filter(requestId => requestId !== result.requestId), updatedAt: new Date().toISOString() }
+      const next = { ...workflow, pendingModelRequestIds: workflow.pendingModelRequestIds.filter(requestId => requestId !== result.requestId), updatedAt: this.clock.now() }
       this.workflows.set(id, next)
       const roomId = String(next.locals.roomId ?? '')
       if (roomId) this.workflowStore?.save(roomId, next)
@@ -1200,7 +1204,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   private clearPendingModelRequest(requestId: string): void {
     for (const [id, workflow] of this.workflows) {
       if (!workflow.pendingModelRequestIds.includes(requestId)) continue
-      const next = { ...workflow, pendingModelRequestIds: workflow.pendingModelRequestIds.filter(item => item !== requestId), updatedAt: new Date().toISOString() }
+      const next = { ...workflow, pendingModelRequestIds: workflow.pendingModelRequestIds.filter(item => item !== requestId), updatedAt: this.clock.now() }
       this.workflows.set(id, next)
       const roomId = String(next.locals.roomId ?? '')
       if (roomId) this.workflowStore?.save(roomId, next)
@@ -1210,12 +1214,18 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
 
   private rememberCancelledModelRequest(requestId: string): void {
     this.pruneCancelledModelRequests()
-    this.cancelledModelRequests.set(requestId, Date.now() + 5 * 60_000)
+    this.cancelledModelRequests.set(requestId, this.clockTimestamp() + 5 * 60_000)
     while (this.cancelledModelRequests.size > 512) this.cancelledModelRequests.delete(this.cancelledModelRequests.keys().next().value as string)
   }
 
   private pruneCancelledModelRequests(): void {
-    const now = Date.now()
+    const now = this.clockTimestamp()
     for (const [requestId, expiresAt] of this.cancelledModelRequests) if (expiresAt <= now) this.cancelledModelRequests.delete(requestId)
+  }
+
+  private clockTimestamp(): number {
+    const timestamp = Date.parse(this.clock.now())
+    if (!Number.isFinite(timestamp)) throw new Error('Platform clock returned an invalid ISO timestamp.')
+    return timestamp
   }
 }

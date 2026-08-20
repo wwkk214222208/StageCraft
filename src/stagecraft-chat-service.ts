@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto'
 import type { RoomSnapshot, WorldChangeRequest } from './types.ts'
 import type { CoreRuntimePort } from './core/protocol.ts'
 import { domainEvent } from './core/domain-events.ts'
 import type { StageCraftChatPort } from './core/solutions.ts'
 import type { WorkerSet } from './workers.ts'
+import type { StageCraftRepository } from './stagecraft-repository.ts'
+import { systemIds, type IdFactory } from './core/platform.ts'
 
 export interface StageCraftChatThinkingEvent {
   actor: 'role' | 'director'
@@ -21,7 +22,8 @@ export interface StageCraftChatNotifications {
 
 /** Store-backed群聊领域服务。它不依赖 RoomRuntime；RoomRuntime 只作为兼容 facade。 */
 export class StageCraftChatService implements StageCraftChatPort {
-  private readonly store: import('./store.ts').Store
+  private readonly store: StageCraftRepository
+  private readonly ids: IdFactory
   private workers: WorkerSet
   private core?: CoreRuntimePort
   private unsubscribeCore?: () => void
@@ -35,8 +37,9 @@ export class StageCraftChatService implements StageCraftChatPort {
   private readonly coreRequestContexts = new Map<string, { roomId: string; actor: 'role' | 'director'; roleId?: string; turnId: string }>()
   private disposed = false
 
-  constructor(store: import('./store.ts').Store, workers: WorkerSet, core: CoreRuntimePort | undefined, notifications: StageCraftChatNotifications) {
+  constructor(store: StageCraftRepository, workers: WorkerSet, core: CoreRuntimePort | undefined, notifications: StageCraftChatNotifications, ports: { ids?: IdFactory } = {}) {
     this.store = store
+    this.ids = ports.ids ?? systemIds
     this.workers = workers
     this.notifications = notifications
     if (core) this.setCoreRuntime(core)
@@ -121,7 +124,7 @@ export class StageCraftChatService implements StageCraftChatPort {
     if (!role) throw new Error('角色不存在。')
     if (role.presence !== 'present') throw new Error('该角色当前不在场，不能发言。')
     this.activeTurns.add(roomId)
-    const turnId = randomUUID()
+    const turnId = this.ids.create()
     this.cancelledRequests.delete(roomId)
     this.turnIds.set(roomId, turnId)
     this.cancelledTurns.delete(turnId)
@@ -216,7 +219,7 @@ export class StageCraftChatService implements StageCraftChatPort {
         roomId, turnId: `director-${roomId}`,
       }
       const result = await this.workers.directorChat(playerText, context, thinkingText => {
-        this.notifications.thinking(roomId, { actor: 'director', turnId: `director-${Date.now()}`, text: thinkingText, done: false })
+        this.notifications.thinking(roomId, { actor: 'director', turnId: this.ids.create('director'), text: thinkingText, done: false })
       })
       this.notifications.thinking(roomId, { actor: 'director', turnId: 'director', text: '', done: true })
       if (this.cancelledRequests.has(roomId)) return

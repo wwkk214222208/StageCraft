@@ -1,5 +1,6 @@
 import type { RoomSnapshot } from '../types.ts'
 import type { StateEvent } from './protocol.ts'
+import { systemClock, type Clock } from './platform.ts'
 
 export interface StateCategoryDefinition {
   id: string
@@ -80,13 +81,13 @@ export function projectRoomSnapshot(room: RoomSnapshot): CoreStateSnapshot {
 }
 
 /** 将 Store-backed domain service 的完整房间投影转换为统一 StateEvent，供 Core 投影与事务仓储使用。 */
-export function roomSnapshotEvent(room: RoomSnapshot, causedBy = 'core.project-room', categories = projectRoomSnapshot(room).categories): StateEvent {
+export function roomSnapshotEvent(room: RoomSnapshot, causedBy = 'core.project-room', categories = projectRoomSnapshot(room).categories, clock: Clock = systemClock): StateEvent {
   return {
     id: `state-snapshot-${room.id}-${room.revision}`,
     type: 'room.snapshot.projected',
     source: 'system',
     causedBy,
     payload: { revision: room.revision, categories },
-    createdAt: new Date().toISOString(),
+    createdAt: clock.now(),
   }
 }

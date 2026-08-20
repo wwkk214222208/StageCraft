@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from 'node:util'
+import { jsonDeepEqual } from './json-values.ts'
 
 export type StatePatch =
   | { op: 'set' | 'replace'; path: string; value: unknown }
@@ -169,7 +169,7 @@ function insertPath(root: unknown, segments: string[], value: unknown): unknown 
 
 function applyOne(root: unknown, patch: StatePatch): unknown {
   if (patch.op === 'test') {
-    if (!isDeepStrictEqual(read(root, decode(patch.path)), patch.value)) throw new Error(`State test failed at ${patch.path}`)
+    if (!jsonDeepEqual(read(root, decode(patch.path)), patch.value)) throw new Error(`State test failed at ${patch.path}`)
     return root
   }
   if (patch.op === 'move') {
@@ -218,7 +218,7 @@ function applyOne(root: unknown, patch: StatePatch): unknown {
 }
 
 function diff(before: unknown, after: unknown, path = ''): StateChange[] {
-  if (isDeepStrictEqual(before, after)) return []
+  if (jsonDeepEqual(before, after)) return []
   if (before && after && typeof before === 'object' && typeof after === 'object' && Array.isArray(before) === Array.isArray(after)) {
     const changes: StateChange[] = []
     if (Array.isArray(before) && Array.isArray(after)) {
