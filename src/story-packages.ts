@@ -114,7 +114,7 @@ export function listStoryPackages(directory: string): Array<Pick<StoryPackage, '
   return [...byId.values()]
 }
 
-function validateStoryPackage(value: StoryPackage): void {
+export function validateStoryPackage(value: StoryPackage): void {
   if (!value.id || !value.title || !value.opening || !value.playerCharacter?.name || !value.playerCharacter?.persona || !value.playerCharacter?.currentState || !Array.isArray(value.roles) || value.roles.length === 0) throw new Error('Invalid story package.')
   const roleIds = new Set<string>()
   for (const role of value.roles) {
