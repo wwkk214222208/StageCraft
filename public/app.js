@@ -664,7 +664,7 @@ async function renderCreatorSession(session) {
   $('#creator-session-chat').hidden = !session
   $('#creator-preview-status').textContent = session ? '已连接' : '未连接'
   $('#creator-preview-status').className = `creator-status ${session ? 'ready' : 'empty'}`
-  $('#creator-session-messages').innerHTML = (session?.messages ?? []).map(message => `<p class="creator-session-message ${message.role}">${escape(message.text)}</p>`).join('')
+  renderCreatorSessionMessages(session)
 }
 async function loadCreatorSessions() {
   const storyId = $('#story-edit-id').textContent
@@ -696,11 +696,26 @@ $('#creator-session-model-save').onclick = async () => {
 }
 $('#creator-session-new').onclick = async () => { try { const session = await creatorRequest('/api/agent/session', { owner: creatorOwner, storyId: $('#story-edit-id').textContent }); void renderCreatorSession(session); $('#creator-session-modal').close() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
 $('#creator-session-close').onclick = async () => { if (!creatorSession) return; await fetch('/api/agent/session', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ owner: creatorOwner, sessionId: creatorSession.id }) }).catch(() => {}); renderCreatorSession(null) }
+async function waitForCreatorReply(sessionId) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    if (!creatorSession || creatorSession.id !== sessionId) return
+    try {
+      const messages = await creatorRequest('/api/agent/history', { owner: creatorOwner, sessionId })
+      creatorSession.messages = messages; renderCreatorSessionMessages(creatorSession)
+      if (messages.some(message => message.role === 'system')) return
+    } catch { return }
+  }
+}
+function renderCreatorSessionMessages(session) {
+  $('#creator-session-messages').innerHTML = (session?.messages ?? []).map(message => `<p class="creator-session-message ${message.role}">${escape(message.text)}</p>`).join('')
+  const messages = $('#creator-session-messages'); messages.scrollTop = messages.scrollHeight
+}
 async function sendCreatorMessage(inputSelector, buttonSelector) {
   if (!creatorSession) return
   const input = $(inputSelector); const text = input.value.trim(); if (!text) return
   const button = $(buttonSelector); const before = await refreshCreatorStory(false); button.disabled = true
-  try { const session = await creatorRequest('/api/agent/message', { owner: creatorOwner, sessionId: creatorSession.id, storyId: $('#story-edit-id').textContent, text }); input.value = ''; renderCreatorSession(session); $('#creator-agent-preview').innerHTML = '<strong>已发送给 DSH</strong><p>正在等待 DSH 完成并写入剧本文件…</p>'; void waitForCreatorAgentFileChange(before) } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false }
+  try { const session = await creatorRequest('/api/agent/message', { owner: creatorOwner, sessionId: creatorSession.id, storyId: $('#story-edit-id').textContent, text }); input.value = ''; await renderCreatorSession(session); $('#creator-agent-preview').innerHTML = '<strong>已发送给 DSH</strong><p>DSH 正在回复，剧本文件变化会另外自动同步。</p>'; void waitForCreatorReply(creatorSession.id); void waitForCreatorAgentFileChange(before) } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false }
 }
 $('#creator-session-send').onclick = () => sendCreatorMessage('#creator-session-input', '#creator-session-send')
 $('#creator-session-input').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#creator-session-send').click() } })
