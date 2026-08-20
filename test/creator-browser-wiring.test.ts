@@ -14,5 +14,7 @@ test('Creator Workbench exposes native DSH story assistant wiring', () => {
   assert.doesNotMatch(html, /id="creator-extract"/)
   assert.match(app, /creatorRequest\('\/api\/agent\/message'/)
   assert.match(app, /waitForCreatorAgentFileChange/)
+  assert.match(app, /Array\.isArray\(data\.groups\)/)
+  assert.match(app, /data\.failures/)
   assert.match(app, /creator-session-input/)
 })

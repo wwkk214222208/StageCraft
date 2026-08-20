@@ -676,10 +676,12 @@ $('#creator-session-model').onclick = async () => {
   if (!creatorSession) return
   try {
     const data = await creatorRequest('/api/agent/models', { owner: creatorOwner, sessionId: creatorSession.id })
-    const providers = Array.isArray(data.providers) ? data.providers : Array.isArray(data.items) ? data.items : []
+    const providers = Array.isArray(data.groups) ? data.groups : Array.isArray(data.providers) ? data.providers : Array.isArray(data.items) ? data.items : []
     $('#creator-session-provider').innerHTML = providers.map(provider => `<option value="${escape(provider.id ?? provider.provider ?? '')}">${escape(provider.name ?? provider.id ?? provider.provider ?? '供应商')}</option>`).join('')
     const updateModels = () => { const provider = providers.find(item => (item.id ?? item.provider) === $('#creator-session-provider').value); const models = provider?.models ?? provider?.availableModels ?? []; $('#creator-session-model-select').innerHTML = models.map(model => `<option value="${escape(typeof model === 'string' ? model : model.id)}">${escape(typeof model === 'string' ? model : model.name ?? model.id)}</option>`).join('') }
-    $('#creator-session-provider').onchange = updateModels; updateModels(); $('#creator-session-model-modal').showModal()
+    $('#creator-session-provider').onchange = updateModels; updateModels()
+    if (!providers.length) { const failures = Array.isArray(data.failures) ? data.failures.map(item => `${item.name ?? item.id}: ${item.message ?? '目录读取失败'}`).join('；') : ''; throw new Error(failures || 'DSH 当前没有返回可用模型。') }
+    $('#creator-session-model-modal').showModal()
   } catch (error) { alert(error instanceof Error ? error.message : String(error)) }
 }
 $('#creator-session-model-save').onclick = async () => {
