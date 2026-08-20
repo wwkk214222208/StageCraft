@@ -212,11 +212,15 @@ export class StageCraftChatService implements StageCraftChatPort {
     this.activeTurns.add(roomId)
     this.activeDirectorChats.add(roomId)
     this.cancelledRequests.delete(roomId)
+    const turnId = this.ids.create('director')
+    this.turnIds.set(roomId, turnId)
+    this.cancelledTurns.delete(turnId)
+    this.store.createTurn(roomId, turnId, playerText, [], 'awaiting-player-input')
     try {
       const context: import('./workers.ts').DirectorChatContext = {
         sceneTime: room.sceneTime, sceneLocation: room.sceneLocation, playerName: room.playerCharacter.name,
-        playerContribution: room.playerContribution ?? '', recentScene: room.scenes.at(-1)?.text, roles: room.roles, lore: room.lore, history: room.consultations,
-        roomId, turnId: `director-${roomId}`,
+        playerContribution: room.playerContribution ?? '', recentScene: room.scenes.at(-1)?.text, roles: room.roles, lore: room.lore, history: this.store.listConsultationsForTurn(roomId, turnId),
+        roomId, turnId,
       }
       const result = await this.workers.directorChat(playerText, context, thinkingText => {
         this.notifications.thinking(roomId, { actor: 'director', turnId: this.ids.create('director'), text: thinkingText, done: false })
@@ -225,8 +229,8 @@ export class StageCraftChatService implements StageCraftChatPort {
       if (this.cancelledRequests.has(roomId)) return
       const reply = result.reply?.trim()
       if (!reply) throw new Error('导演没有产出回复。')
-      this.store.addConsultation(roomId, null, 'player', playerText)
-      this.store.addConsultation(roomId, null, 'director', reply, result.usage, result.thinking)
+      this.store.addConsultation(roomId, null, 'player', playerText, undefined, undefined, turnId)
+      this.store.addConsultation(roomId, null, 'director', reply, result.usage, result.thinking, turnId)
       if (!result.worldChange) this.core?.emitDomainEvent(domainEvent('director.reply.generated', { roomId, text: reply }))
       if (result.worldChange) {
         this.core?.emitDomainEvent(domainEvent('world-change.proposed', { roomId, change: result.worldChange, source: 'director' }))
@@ -246,6 +250,8 @@ export class StageCraftChatService implements StageCraftChatPort {
     } finally {
       this.activeTurns.delete(roomId)
       this.activeDirectorChats.delete(roomId)
+      this.turnIds.delete(roomId)
+      this.cancelledTurns.delete(turnId)
       this.cancelledRequests.delete(roomId)
     }
   }

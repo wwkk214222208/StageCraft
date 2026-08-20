@@ -147,6 +147,7 @@ export class Store {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         room_id TEXT NOT NULL,
         draft_id TEXT,
+        turn_id TEXT,
         role TEXT NOT NULL,
         text TEXT NOT NULL,
         usage TEXT,
@@ -211,6 +212,7 @@ export class Store {
     this.ensureRoleGoals()
     this.ensureRoomModeColumns()
     this.ensureUsageColumns()
+    this.ensureConsultationTurnColumn()
     this.ensureWorldChangeColumn()
     this.ensureSceneWorldChangeColumns()
     this.ensureMemorySortOrder()
@@ -319,6 +321,12 @@ export class Store {
       const columns = new Set(this.db.prepare(`PRAGMA table_info(${table})`).all().map((row: any) => row.name as string))
       if (!columns.has(column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`)
     }
+  }
+
+  /** 旧库迁移：群聊导演咨询的持久化回合边界。 */
+  private ensureConsultationTurnColumn(): void {
+    const columns = new Set(this.db.prepare('PRAGMA table_info(consultations)').all().map((row: any) => row.name as string))
+    if (!columns.has('turn_id')) this.db.exec('ALTER TABLE consultations ADD COLUMN turn_id TEXT')
   }
 
   /** 旧库迁移：rooms.story_id（当前剧本 id，供前端默认选择/存档命名） */
@@ -650,17 +658,17 @@ export class Store {
    * - 最近一次已批准 Scene 之后新增的无草稿设定（draft_id IS NULL）。
    * 上一回合的咨询与设定不会进入本回合的导演上下文。
    */
-  listConsultationsForTurn(roomId: string, turnId: string): ConsultationMessage[] {
-    const turn = this.db.prepare('SELECT created_at FROM turns WHERE id = ?').get(turnId) as { created_at: string } | undefined
+  listConsultationsForTurn(roomId: string, turnId: string, includeLegacy = true): ConsultationMessage[] {
+    const turn = this.db.prepare('SELECT created_at FROM turns WHERE id = ? AND room_id = ?').get(turnId, roomId) as { created_at: string } | undefined
     if (!turn) return []
     const lastScene = this.db.prepare('SELECT created_at FROM scenes WHERE room_id = ? ORDER BY created_at DESC LIMIT 1').get(roomId) as { created_at: string } | undefined
     const anchor = lastScene?.created_at ?? '1970-01-01T00:00:00.000Z'
     const rows = this.db.prepare(`
       SELECT role, text, usage, thinking, created_at FROM consultations
       WHERE room_id = ? AND created_at >= ?
-        AND (draft_id IS NULL OR draft_id IN (SELECT id FROM drafts WHERE room_id = ? AND turn_id = ?))
+        AND (turn_id = ? OR (? = 1 AND turn_id IS NULL AND (draft_id IS NULL OR draft_id IN (SELECT id FROM drafts WHERE room_id = ? AND turn_id = ?))))
       ORDER BY id
-    `).all(roomId, anchor, roomId, turnId)
+    `).all(roomId, anchor, turnId, includeLegacy ? 1 : 0, roomId, turnId)
     return rows.map(rowToConsultation)
   }
 
@@ -1142,9 +1150,9 @@ export class Store {
     this.db.prepare("UPDATE rooms SET phase = 'consulting-director', revision = revision + 1 WHERE id = ?").run(roomId)
   }
 
-  addConsultation(roomId: string, draftId: string | null, role: ConsultationMessage['role'], text: string, usage?: import('./types.ts').TokenUsage, thinking?: string): void {
-    this.db.prepare('INSERT INTO consultations (room_id, draft_id, role, text, usage, thinking, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(roomId, draftId, role, text, usage ? JSON.stringify(usage) : null, thinking || null, new Date().toISOString())
+  addConsultation(roomId: string, draftId: string | null, role: ConsultationMessage['role'], text: string, usage?: import('./types.ts').TokenUsage, thinking?: string, turnId?: string): void {
+    this.db.prepare('INSERT INTO consultations (room_id, draft_id, turn_id, role, text, usage, thinking, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(roomId, draftId, turnId ?? null, role, text, usage ? JSON.stringify(usage) : null, thinking || null, new Date().toISOString())
   }
 
   finishConsultation(roomId: string): void {

@@ -11,6 +11,42 @@ import { loadStoryPackage } from '../src/story-packages.ts'
 import type { WorkerSet } from '../src/workers.ts'
 import { installStageCraftSolution, installLegacyRuntimeSolution } from './core-solution-test-utils.ts'
 
+test('chat.director history is bounded to the current consultation turn and room', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-director-history-'))
+  let store: Store | undefined
+  try {
+    store = new Store(join(root, 'state.sqlite'))
+    const story = loadStoryPackage(fileURLToPath(new URL('../stories', import.meta.url)), 'eldoria')
+    const firstRoom = store.createRoomFromPackage(story, 'history-room-a')
+    const secondRoom = store.createRoomFromPackage(story, 'history-room-b')
+    store.restartRoom(firstRoom, story, { mode: 'chat' })
+    store.restartRoom(secondRoom, story, { mode: 'chat' })
+    const histories: Array<{ roomId: string; texts: string[] }> = []
+    const workers: WorkerSet = {
+      decide: async () => ({ roleId: 'aria', participation: 'excluded', status: 'abstained' }),
+      draft: async () => ({ text: '' }),
+      directorChat: async (text, context) => {
+        histories.push({ roomId: context.roomId, texts: context.history?.map(message => message.text) ?? [] })
+        return { reply: `收到：${text}` }
+      },
+    }
+    const runtime = new RoomRuntime(store, workers)
+    await runtime.directorChat(firstRoom, '第一房间第一轮')
+    await runtime.directorChat(firstRoom, '第一房间第二轮')
+    await runtime.directorChat(secondRoom, '第二房间第一轮')
+    assert.deepEqual(histories, [
+      { roomId: firstRoom, texts: [] },
+      { roomId: firstRoom, texts: [] },
+      { roomId: secondRoom, texts: [] },
+    ])
+    assert.deepEqual(store.getRoom(firstRoom)?.consultations.map(message => message.text), ['第一房间第一轮', '收到：第一房间第一轮', '第一房间第二轮', '收到：第一房间第二轮'])
+    assert.deepEqual(store.getRoom(secondRoom)?.consultations.map(message => message.text), ['第二房间第一轮', '收到：第二房间第一轮'])
+  } finally {
+    store?.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('chat.director suggestion uses Core interaction and returns to suggestion state', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-director-core-'))
   let store: Store | undefined
