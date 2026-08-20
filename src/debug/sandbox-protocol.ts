@@ -5,7 +5,9 @@ export const DEBUG_SANDBOX_PROTOCOL_VERSION = '1.0'
 export const DEBUG_SANDBOX_PROTOCOL_NAME = 'stagecraft.debug-sandbox'
 
 export const DEBUG_SANDBOX_LIMITS = Object.freeze({
-  maxFrameBytes: 256 * 1024,
+  // Core views include bounded story metadata and can legitimately exceed 256 KiB.
+  // Keep a finite transport ceiling while leaving room for one complete diagnostic view.
+  maxFrameBytes: 1024 * 1024,
   maxStringLength: 64 * 1024,
   maxArrayLength: 1024,
   maxObjectKeys: 256,
