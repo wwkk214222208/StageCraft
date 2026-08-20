@@ -60,11 +60,11 @@ thinkingSettingRow?.nextElementSibling?.matches('.hint') && thinkingSettingRow.n
 const tokenSettingRow = document.querySelector('#settings-token-count')?.closest('.settings-row')
 tokenSettingRow?.nextElementSibling?.matches('.hint') && tokenSettingRow.nextElementSibling.remove()
 const stImportOpen = document.querySelector('#st-import-open')
-if (stImportOpen) stImportOpen.textContent = '导入 ST 角色卡（实验功能：仅纯文字 PNG 卡）…'
+if (stImportOpen) stImportOpen.textContent = '导入 ST 角色卡…'
 const stImportInput = document.querySelector('#st-import-file')
-if (stImportInput) stImportInput.accept = '.png,image/png'
+if (stImportInput) stImportInput.accept = '.json,.png,application/json,image/png'
 const stImportHint = document.querySelector('#st-import-modal .hint')
-if (stImportHint) stImportHint.textContent = '实验功能：目前仅支持内容为纯文字、无 JSON 脚本的 SillyTavern PNG 角色卡。导入为当前房间的新角色，角色书条目成为世界书（全量注入）。'
+if (stImportHint) stImportHint.textContent = '支持 SillyTavern chara_card_v2/v3 JSON 或 PNG 内嵌卡。导入为当前房间的新角色，角色书条目成为世界书。'
 const debugStream = document.querySelector('#debug-stream')
 const debugWindow = document.createElement('section')
 debugWindow.id = 'debug-window'
@@ -356,22 +356,22 @@ $('#remote-pairing-code').onclick = async event => {
 
 // ── ST 角色卡导入（坯子） ──
 let stImportFile = null
-$('#st-import-open').onclick = () => { stImportFile = null; $('#st-import-file').value = ''; $('#st-import-run').disabled = true; $('#st-import-preview').innerHTML = '<p class="hint">选择 PNG 角色卡后显示解析结果。</p>'; $('#st-import-modal').showModal() }
+$('#st-import-open').onclick = () => { stImportFile = null; $('#st-import-file').value = ''; $('#st-import-run').disabled = true; $('#st-import-preview').innerHTML = '<p class="hint">选择 JSON 或 PNG 角色卡后显示解析结果。</p>'; $('#st-import-modal').showModal() }
 $('#st-import-close').onclick = () => $('#st-import-modal').close()
 $('#st-import-file').onchange = async event => {
   const file = event.target.files[0]
   if (!file) return
   const preview = $('#st-import-preview')
-  if (!/\.png$/i.test(file.name)) {
+  if (!/\.(png|json)$/i.test(file.name)) {
     stImportFile = null
     $('#st-import-run').disabled = true
-    preview.innerHTML = '<p class="error">实验功能目前仅支持内容为纯文字、无 JSON 脚本的 PNG ST 角色卡。</p>'
+    preview.innerHTML = '<p class="error">请选择 .json 或 .png 格式的 ST 角色卡。</p>'
     return
   }
   preview.innerHTML = '<p class="hint">读取中…</p>'
   try {
-    stImportFile = { content: await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file) }), filename: file.name }
-    preview.innerHTML = `<p>已读取 <b>${escape(file.name)}</b>（${file.size} 字节）——点击「导入为角色」执行解析。</p>`
+    stImportFile = { content: await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]+,/, '')); reader.onerror = () => reject(reader.error); if (/\.json$/i.test(file.name)) reader.readAsText(file); else reader.readAsDataURL(file) }), filename: file.name }
+    preview.innerHTML = `<p>已读取 <b>${escape(file.name)}</b>（${file.size} 字节）——点击「导入为角色」执行服务器解析。</p>`
     $('#st-import-run').disabled = false
   } catch (error) {
     preview.innerHTML = `<p class="error">读取失败：${escape(error.message)}</p>`
@@ -392,6 +392,14 @@ $('#st-import-run').onclick = async () => {
     const mapped = data.mapped ?? {}
     const warnings = (mapped.warnings ?? []).map(warning => `<li>${escape(warning)}</li>`).join('')
     preview.innerHTML = `<p class="st-import-ok">✅ 已导入 <b>${escape(mapped.name)}</b>（${mapped.selfModelChars} 字人设${mapped.loreCount ? `，${mapped.loreCount} 条世界书` : ''}${mapped.spec ? `，${escape(mapped.spec)}` : ''}）</p>${warnings ? `<ul class="st-import-warnings">${warnings}</ul>` : ''}<p class="hint">可在左侧角色列表中查看；世界书条目在「世界书」标签页。</p>`
+    const workbench = $('#creator-agent-preview')
+    if (workbench !== missingElement) {
+      $('#creator-preview-status').textContent = '已完成'
+      $('#creator-preview-status').className = 'creator-status ready'
+      workbench.innerHTML = `<strong>${escape(mapped.name ?? 'ST 角色卡')}</strong><p>服务器已完成角色映射${mapped.loreCount ? `，包含 ${mapped.loreCount} 条世界书条目` : ''}。</p>`
+      $('#creator-warnings').innerHTML = warnings || '<li class="hint">暂无警告</li>'
+      $('#creator-field-diffs').innerHTML = '<p class="hint">角色已直接导入当前房间；本次导入没有可供 StoryPackage 审批的字段差异。</p>'
+    }
     button.textContent = '已导入'
   } catch (error) {
     preview.innerHTML = `<p class="error">导入失败：${escape(error.message)}</p>`
@@ -546,8 +554,30 @@ async function openStoryEditor() {
   $('#story-edit-player-state').value = story.playerCharacter?.currentState ?? ''
   renderStoryRoles()
   renderStoryLore()
+  renderCreatorRoleSummary()
+  $('#creator-save-state').textContent = '已加载'
+  $('#creator-preview-status').textContent = '空'
+  $('#creator-preview-status').className = 'creator-status empty'
+  $('#creator-agent-preview').innerHTML = '<strong>尚未生成预览</strong><p>导入 ST 角色卡后，服务器返回的映射结果会显示在这里。没有真实响应时不会伪造候选内容。</p>'
+  $('#creator-story-tree .tree-item').forEach(item => item.classList.toggle('active', item.dataset.workbenchTarget === 'story-package'))
+  document.querySelectorAll('.creator-section').forEach(section => { section.hidden = false })
   $('#story-edit-modal').showModal()
 }
+function renderCreatorRoleSummary() {
+  const target = $('#story-roles-grid-duplicate')
+  if (!target || target === missingElement) return
+  target.innerHTML = storyEditRoles.length ? storyEditRoles.map((role, index) => `<button type="button" class="creator-role-summary-item" data-role-index="${index}"><img src="${escape(role.portraitRef ?? '/assets/default.svg')}" onerror="this.onerror=null;this.src='/assets/default.svg'"><span><b>${escape(role.name)}</b><small>${escape(role.selfModel ?? '暂无人设')}</small></span></button>`).join('') : '<p class="hint">暂无可复用角色。</p>'
+  target.querySelectorAll('[data-role-index]').forEach(button => button.addEventListener('click', () => openStoryRoleEditor(Number(button.dataset.roleIndex))))
+}
+document.addEventListener('click', event => {
+  const target = event.target.closest?.('[data-workbench-target]')
+  if (target) {
+    document.querySelectorAll('#creator-story-tree .tree-item').forEach(item => item.classList.toggle('active', item === target))
+    const section = document.querySelector(`#creator-section-${target.dataset.workbenchTarget}`)
+    section?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }
+  if (event.target.closest?.('#creator-import-card')) { $('#story-edit-modal').close(); $('#st-import-open').click() }
+})
 function renderStoryRoles() {
   const grid = $('#story-roles-grid')
   grid.innerHTML = storyEditRoles.map((role, index) => `<div class="story-role-card" draggable="true" data-index="${index}" title="点击编辑，拖拽调整顺序"><img src="${escape(role.portraitRef ?? '/assets/default.svg')}" onerror="this.onerror=null;this.src='/assets/default.svg'"><div class="story-role-meta"><span class="story-role-name">${escape(role.name)}</span><span class="story-role-presence ${role.presence === 'present' ? 'on' : ''}">${role.presence === 'present' ? '在场' : role.presence === 'unavailable' ? '不可用' : '不在场'}</span><span class="story-role-state" title="当前状态">${escape((role.currentState ?? '').slice(0, 26))}</span></div><button type="button" class="story-role-del" title="删除角色">✕</button></div>`).join('')
@@ -563,7 +593,7 @@ function renderStoryRoles() {
       event.preventDefault(); card.classList.remove('drag-over')
       const from = Number(event.dataTransfer.getData('text/plain'))
       const to = index()
-      if (from !== to && storyEditRoles[from]) { const [moved] = storyEditRoles.splice(from, 1); storyEditRoles.splice(to, 0, moved); renderStoryRoles() }
+      if (from !== to && storyEditRoles[from]) { const [moved] = storyEditRoles.splice(from, 1); storyEditRoles.splice(to, 0, moved); renderStoryRoles(); renderCreatorRoleSummary() }
     })
   })
 }
@@ -597,7 +627,7 @@ function renderStoryInitialMemories(role) {
 function collectStoryInitialMemories() { const role = storyEditRoles[storyEditRoleIndex]; if (role) syncStoryExpandedMemory(role); return (role?.initialMemories ?? []).filter(memory => memory.text?.trim()).map(memory => ({ text: memory.text.trim(), occurredAt: memory.occurredAt?.trim() || '过去' })) }
 document.addEventListener('click', event => { const target = event.target.closest?.('#story-memory-add,[data-story-memory-delete],[data-story-memory-expand]'); if (!target) return; const role = storyEditRoles[storyEditRoleIndex]; if (!role) return; syncStoryExpandedMemory(role); if (target.id === 'story-memory-add') { role.initialMemories.push({ text: '', occurredAt: '过去' }); expandedStoryMemoryIndex = role.initialMemories.length - 1 } else if (target.dataset.storyMemoryExpand !== undefined) expandedStoryMemoryIndex = Number(target.dataset.storyMemoryExpand); else role.initialMemories.splice(Number(target.dataset.storyMemoryDelete), 1); renderStoryInitialMemories(role); document.querySelector('[data-story-memory-text]')?.focus() })
 document.addEventListener('focusout', event => { const editor = event.target.closest?.('[data-story-memory-expanded]'); if (editor) setTimeout(() => { if (!editor.contains(document.activeElement)) { const role = storyEditRoles[storyEditRoleIndex]; if (role) { syncStoryExpandedMemory(role); renderStoryInitialMemories(role) } } }) })
-$('#story-role-add').onclick = () => { storyEditRoles.push({ id: `new-role-${Date.now()}`, name: '新角色', portraitRef: '/assets/default.svg', currentState: '尚未进入具体场景，等待剧情展开。', presence: 'absent', initialMemories: [], impressions: {}, selfModel: '待补充的角色设定。' }); renderStoryRoles() }
+$('#story-role-add').onclick = () => { storyEditRoles.push({ id: `new-role-${Date.now()}`, name: '新角色', portraitRef: '/assets/default.svg', currentState: '尚未进入具体场景，等待剧情展开。', presence: 'absent', initialMemories: [], impressions: {}, selfModel: '待补充的角色设定。' }); renderStoryRoles(); renderCreatorRoleSummary() }
 function openStoryRoleEditor(index) {
   const role = storyEditRoles[index]
   if (!role) return
@@ -847,6 +877,7 @@ $('#inspector-save').onclick = event => {
     storyEditRoleIndex = null
     closeInspectorModals()
     renderStoryRoles()
+    renderCreatorRoleSummary()
     return
   }
   api('/api/roles/intervene', { roleId: $('#inspector-role-id').value, selfModel: $('#inspector-self-model').value, providerId: $('#inspector-provider').value, modelOverride: $('#inspector-model').value, impressions: JSON.stringify(impressions), goals: JSON.stringify(collectGoalsFromEdit()), thinkingStrength: $('#inspector-thinking').value }).then(ok => { if (ok) closeInspectorModals() })
