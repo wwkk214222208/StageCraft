@@ -47,10 +47,11 @@ export class DshStorySessionService {
   private readonly sessions = new Map<string, DshStorySession>()
   private readonly readStory: (id: string) => StoryPackage
   private readonly native?: NativeSessions
-  private readonly apiProxy?: NativeApiProxy
+  private readonly apiProxy?: NativeApiProxy | (() => NativeApiProxy | undefined)
   private readonly now: () => Date
-  constructor(readStory: (id: string) => StoryPackage, native?: NativeSessions, apiProxy?: NativeApiProxy, now = () => new Date()) { this.readStory = readStory; this.native = native; this.apiProxy = apiProxy; this.now = now }
-  capability(): DshStoryCapability { return this.native?.create || this.native?.binding ? { available: true, native: true, modelSelection: Boolean(this.apiProxy?.sessions?.models && this.apiProxy?.sessions?.selectModel), ...(!this.apiProxy?.sessions?.models ? { reason: '当前 DSH 宿主未暴露模型目录 API。' } : {}) } : { available: false, native: false, modelSelection: false, reason: '当前 DSH 宿主没有暴露原生会话服务。' } }
+  constructor(readStory: (id: string) => StoryPackage, native?: NativeSessions, apiProxy?: NativeApiProxy | (() => NativeApiProxy | undefined), now = () => new Date()) { this.readStory = readStory; this.native = native; this.apiProxy = apiProxy; this.now = now }
+  private currentApiProxy(): NativeApiProxy | undefined { return typeof this.apiProxy === 'function' ? this.apiProxy() : this.apiProxy }
+  capability(): DshStoryCapability { const apiProxy = this.currentApiProxy(); return this.native?.create || this.native?.binding ? { available: true, native: true, modelSelection: Boolean(apiProxy?.sessions?.models && apiProxy?.sessions?.selectModel), ...(!apiProxy?.sessions?.models ? { reason: '当前 DSH 宿主未暴露模型目录 API。' } : {}) } : { available: false, native: false, modelSelection: false, reason: '当前 DSH 宿主没有暴露原生会话服务。' } }
   open(owner: string, storyId: string): DshStorySession {
     if (!owner.trim()) throw new Error('会话所有者不能为空。')
     const story = this.readStory(storyId); const timestamp = this.now().toISOString()
@@ -65,12 +66,14 @@ export class DshStorySessionService {
   get(owner: string, id: string): DshStorySession { return publicSession(this.require(owner, id)) }
   list(owner: string, storyId?: string): DshStorySession[] { return [...this.sessions.values()].filter(session => session.owner === owner && (!storyId || session.storyId === storyId)).map(publicSession) }
   async models(owner: string, id: string): Promise<unknown> {
-    if (!this.apiProxy?.sessions?.models) throw new Error('当前 DSH 宿主未提供模型目录 API。')
-    return clone(await this.apiProxy.sessions.models({ sessionId: this.require(owner, id).nativeId ?? id }))
+    const apiProxy = this.currentApiProxy()
+    if (!apiProxy?.sessions?.models) throw new Error('当前 DSH 宿主未提供模型目录 API。')
+    return clone(await apiProxy.sessions.models({ sessionId: this.require(owner, id).nativeId ?? id }))
   }
   async selectModel(owner: string, id: string, selection: { provider: string; model: string; reasoningEffort?: string }): Promise<unknown> {
-    if (!this.apiProxy?.sessions?.selectModel) throw new Error('当前 DSH 宿主未提供模型选择 API。')
-    return clone(await this.apiProxy.sessions.selectModel({ sessionId: this.require(owner, id).nativeId ?? id, ...selection }))
+    const apiProxy = this.currentApiProxy()
+    if (!apiProxy?.sessions?.selectModel) throw new Error('当前 DSH 宿主未提供模型选择 API。')
+    return clone(await apiProxy.sessions.selectModel({ sessionId: this.require(owner, id).nativeId ?? id, ...selection }))
   }
   async prompt(owner: string, id: string, text: string, storyId?: string): Promise<DshStorySession> {
     const session = this.require(owner, id); const message = bounded(text.trim()); if (!message) throw new Error('请输入要发送给 DSH 的内容。')

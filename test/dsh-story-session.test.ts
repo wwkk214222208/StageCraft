@@ -9,7 +9,9 @@ function fixture() {
   const nativeSession = { id: 'native-1', prompt: async (content: unknown) => { calls.push(['prompt', content]) } }
   const native = { create: () => nativeSession, binding: (id: string) => id === 'native-1' ? { session: nativeSession } : undefined }
   const apiProxy = { sessions: { models: async (request: unknown) => { calls.push(['models', request]); return { providers: [{ id: 'provider-a', models: ['model-a'] }] } }, selectModel: async (selection: unknown) => { calls.push(['select-model', selection]); return { selected: selection } } } }
-  const service = new DshStorySessionService(() => structuredClone(current), native, apiProxy)
+  let currentApiProxy: any
+  const service = new DshStorySessionService(() => structuredClone(current), native, () => currentApiProxy)
+  currentApiProxy = apiProxy
   return { service, calls, get current() { return current } }
 }
 
