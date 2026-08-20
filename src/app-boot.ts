@@ -233,18 +233,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const creatorWorkbench = new CreatorWorkbenchService({ read: () => loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'), write: (next, previous) => { if (JSON.stringify(loadStoryPackage(storiesRoot, next.id)) !== JSON.stringify(previous)) throw new Error('Creator preview conflict: StoryPackage changed since preview.'); saveStoryPackage(storiesRoot, next) } }, roomId)
   const stagecraft = createStageCraftService(core, roomId, container, repository => core.attachStateRepository(repository))
   const nativeSessions = ctx.get('sessions', false) as any
-  let nativeApiProxy = ctx.get('apiProxy', false) as any
-  if (nativeSessions && !nativeApiProxy) {
-    try {
-      const { default: ApiProxyService } = await import('@deepseek-ai/dsh-host-apiproxy')
-      const apiProxyFiber = ctx.plugin(ApiProxyService as any, {})
-      await apiProxyFiber
-      trackFiber(apiProxyFiber)
-      nativeApiProxy = ctx.get('apiProxy', false) as any
-    } catch {
-      nativeApiProxy = undefined
-    }
-  }
+  const nativeApiProxy = ctx.get('apiProxy', false) as any
   const dshStorySessions = new DshStorySessionService(id => loadStoryPackage(storiesRoot, id), nativeSessions, nativeApiProxy)
   const solution = new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), management: runtime.getManagementService(), defaultRoomId: roomId })
   async function compensateStartFailure(): Promise<void> {
