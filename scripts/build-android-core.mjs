@@ -5,7 +5,9 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const outputDir = process.argv[process.argv.indexOf('--output-dir') + 1] || resolve(root, 'android/app/build/generated/embedded-core')
+const outputDirFlag = process.argv.indexOf('--output-dir')
+const requestedOutputDir = outputDirFlag >= 0 ? process.argv[outputDirFlag + 1] : undefined
+const outputDir = requestedOutputDir || resolve(root, 'android/app/build/generated/embedded-core')
 const output = resolve(outputDir, 'embedded-core.js')
 const manifestOutput = resolve(outputDir, 'embedded-core.json')
 const version = '1.1.0'
