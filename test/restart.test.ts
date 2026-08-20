@@ -6,9 +6,15 @@ import test from 'node:test'
 import { RoomRuntime } from '../src/room-runtime.ts'
 import { Store } from '../src/store.ts'
 import { loadStoryPackage } from '../src/story-packages.ts'
+import { parsePort } from '../src/app-boot.ts'
 
 const stories = join(import.meta.dirname, '..', 'stories')
 const fixtures = join(import.meta.dirname, 'fixtures')
+
+test('ports are validated before server setup', () => {
+  for (const value of ['0', '8787', 65535]) assert.doesNotThrow(() => parsePort(value))
+  for (const value of ['', '-1', '1.5', '65536', 'abc']) assert.throws(() => parsePort(value), /0 to 65535/)
+})
 
 test('restart atomically clears the current room and applies the selected story package', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-restart-'))

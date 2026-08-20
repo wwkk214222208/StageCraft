@@ -6,15 +6,16 @@ cd "$(dirname "$0")" || exit 1
 PORT="${PORT:-8787}"
 HOST="${HOST:-0.0.0.0}"
 
-# 先停掉可能残留的旧实例，避免两个服务抢同一个数据库
-pkill -f 'experimental-strip-types src/server.ts' 2>/dev/null; true
-
 NODE_VER="$(node -v 2>/dev/null || echo 'v0')"
 echo "Node 版本: $NODE_VER"
 MAJOR="$(printf '%s' "$NODE_VER" | sed 's/^v//;s/\..*//')"
-if [ "${MAJOR:-0}" -lt 22 ]; then
-  echo "警告：当前 Node 版本过低，可能无法运行（项目要求 Node 24+）。"
+if [ "${MAJOR:-0}" -lt 24 ]; then
+  echo "错误：需要 Node 24+，当前为 $NODE_VER。" >&2
+  exit 1
 fi
+
+# 先停掉可能残留的旧实例，避免两个服务抢同一个数据库
+pkill -f 'experimental-strip-types src/server.ts' 2>/dev/null; true
 
 echo "正在启动 StageCraft..."
 echo "  本机浏览器： http://127.0.0.1:$PORT"

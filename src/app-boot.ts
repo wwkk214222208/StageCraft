@@ -85,6 +85,14 @@ export interface TavernApp {
   close(): Promise<void>
 }
 
+export function parsePort(value: string | number | undefined, name = 'PORT'): number {
+  const text = String(value ?? '')
+  if (!/^\d+$/.test(text)) throw new Error(`${name} must be an integer from 0 to 65535.`)
+  const port = Number(text)
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error(`${name} must be an integer from 0 to 65535.`)
+  return port
+}
+
 export async function startTavern(options: TavernOptions = {}): Promise<TavernApp> {
   const ctx = options.ctx ?? new Context()
   const appFibers: Fiber[] = []
@@ -100,7 +108,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const dataDir = options.dataDir ?? join(root, 'data')
   const promptsFilePath = options.promptsFilePath ?? join(root, 'prompts', 'prompts.json')
   const host = options.host ?? process.env.HOST ?? '127.0.0.1'
-  const port = options.port ?? Number(process.env.PORT ?? 8787)
+  const port = options.port === undefined ? parsePort(process.env.PORT ?? '8787') : parsePort(options.port)
   const remoteAccess = new RemoteAccessService(typeof options.remoteAccess === 'boolean' ? { enabled: options.remoteAccess } : options.remoteAccess)
   if (!isLoopbackHost(host) && !remoteAccess.enabled) throw new Error('Non-loopback listening requires remote access to be explicitly enabled.')
   mkdirSync(saveRoot, { recursive: true })
