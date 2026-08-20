@@ -19,6 +19,8 @@ import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { startTavern, type TavernApp } from '../../src/app-boot.ts'
+import { WorkerManager, type WorkerManagerSnapshot } from '../../src/debug/worker-manager.ts'
+import type { DebugRpcMethod, DebugRpcParams, DebugRpcResults, DebugStream, DebugStreamEnvelope } from '../../src/debug/sandbox-protocol.ts'
 
 /** Cordis 插件名（profile 行 id）。 */
 export const name = 'rp'
@@ -26,7 +28,29 @@ export const name = 'rp'
 /** 所需服务：无——自包含，不依赖 dsh 任何服务。 */
 export const inject: string[] = []
 
+export type RuntimeMode = 'embedded' | 'sandboxed'
+
+export interface StageCraftDebugService {
+  readonly mode: RuntimeMode
+  status(): WorkerManagerSnapshot | { status: 'embedded' }
+  start(): Promise<WorkerManagerSnapshot>
+  stop(reason?: string): Promise<WorkerManagerSnapshot>
+  kill(reason?: string): Promise<WorkerManagerSnapshot>
+  restart(reason?: string): Promise<WorkerManagerSnapshot>
+  recover(reason?: string): Promise<WorkerManagerSnapshot>
+  request<M extends DebugRpcMethod>(method: M, params: DebugRpcParams[M], timeoutMs?: number, signal?: AbortSignal): Promise<DebugRpcResults[M]>
+  subscribe(streams: readonly DebugStream[], listener: (envelope: DebugStreamEnvelope) => void): () => void
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    stagecraftDebug: StageCraftDebugService
+  }
+}
+
 export interface Config {
+  /** Runtime isolation; embedded is the development-compatible default. */
+  runtimeMode?: RuntimeMode
   /** HTTP port; omitted uses RP_PORT or the DSH-safe default 8799. */
   port?: number
   /** Bind address; omitted uses HOST or 127.0.0.1. */
@@ -42,6 +66,7 @@ export interface Config {
 }
 
 export const Config = z.object({
+  runtimeMode: z.union([z.const('embedded'), z.const('sandboxed')]),
   port: z.natural().max(65535),
   host: z.string(),
   root: z.string(),
@@ -59,11 +84,51 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const sourceRoot = fileURLToPath(new URL('../..', import.meta.url))
   const defaultRoot = packageRoot.endsWith('/dist') || packageRoot.endsWith('\\dist') ? packageRoot : sourceRoot
   const root = config.root || process.env.RP_ROOT || defaultRoot
-  // 默认 8799：避开独立酒馆（8787）与 dsh web GUI（8898）；可用 RP_PORT 覆盖。
-  const port = config.port ?? Number(process.env.RP_PORT ?? 8799)
-  const host = config.host || process.env.HOST || '127.0.0.1'
+  const runtimeMode = config.runtimeMode ?? 'embedded'
+  const manager = runtimeMode === 'sandboxed' ? new WorkerManager({
+    command: process.execPath,
+    args: [workerEntryPath(packageRoot)],
+    cwd: packageRoot,
+    env: { STAGECRAFT_ROOT: root },
+    onLog: line => console.error(`[stagecraft.worker] ${line}`),
+  }) : undefined
+  const debug: StageCraftDebugService = manager
+    ? {
+        mode: runtimeMode,
+        status: () => manager.getStatus(),
+        start: () => manager.start(),
+        stop: reason => manager.stop(reason),
+        kill: reason => manager.kill(reason),
+        restart: reason => manager.restart(reason),
+        recover: reason => manager.recover(reason),
+        request: (method, params, timeoutMs, signal) => manager.request(method, params, timeoutMs, signal),
+        subscribe: (streams, listener) => manager.subscribe(streams, listener),
+      }
+    : {
+        mode: runtimeMode,
+        status: () => ({ status: 'embedded' as const }),
+        start: async () => { throw new Error('StageCraft sandbox is disabled in embedded runtime mode.') },
+        stop: async () => { throw new Error('StageCraft sandbox is disabled in embedded runtime mode.') },
+        kill: async () => { throw new Error('StageCraft sandbox is disabled in embedded runtime mode.') },
+        restart: async () => { throw new Error('StageCraft sandbox is disabled in embedded runtime mode.') },
+        recover: async () => { throw new Error('StageCraft sandbox is disabled in embedded runtime mode.') },
+        request: async () => { throw new Error('StageCraft sandbox is disabled in embedded runtime mode.') },
+        subscribe: () => () => {},
+      }
   await ctx.effect(async () => {
-    const app: TavernApp = await startTavern({ root, port, host, ctx, remoteAccess: { enabled: config.remoteEnabled === true, pairingTtlMs: config.remotePairingTtlMs, sessionTtlMs: config.remoteSessionTtlMs } })
-    return () => app.close()
+    ctx.provide('stagecraftDebug', debug)
+    if (manager) await manager.start()
+    else {
+      // Embedded mode remains the self-contained development path.
+      const port = config.port ?? Number(process.env.RP_PORT ?? 8799)
+      const host = config.host || process.env.HOST || '127.0.0.1'
+      const app: TavernApp = await startTavern({ root, port, host, ctx, remoteAccess: { enabled: config.remoteEnabled === true, pairingTtlMs: config.remotePairingTtlMs, sessionTtlMs: config.remoteSessionTtlMs } })
+      return () => app.close()
+    }
+    return () => manager?.shutdown('Cordis fiber disposed')
   })
+}
+
+function workerEntryPath(packageRoot: string): string {
+  return `${packageRoot}/worker.js`
 }

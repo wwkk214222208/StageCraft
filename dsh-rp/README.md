@@ -4,9 +4,14 @@
 
 ## 运行模型
 
-- DSH 只提供 Cordis 宿主；Tavern 自己负责 SQLite、HTTP、静态资源与模型连接。
-- 构建脚本把公开的默认剧本、提示词和 UI 资源写入 dist/。
-- data/、save/、custom/ 和本地媒体不会进入 bundle。
+DSH 保持 supervisor 身份；StageCraft 支持两个明确的 Cordis 配置模式：
+
+- `runtimeMode: embedded`（默认）：当前自包含开发路径，StageCraft HTTP、SQLite、静态资源与模型连接在 DSH 进程内运行。
+- `runtimeMode: sandboxed`：DSH 仅在宿主 Context 中注册 `ctx.stagecraftDebug`，并启动 `dist/worker.js` 子进程。状态、日志、Core view/event 通过版本化、bounded JSON RPC 流转；可调用 `start`、`stop`、`kill`、`restart`、`recover` 与 `request`。worker 崩溃只更新 supervisor 状态并发送日志/状态事件，不会销毁 DSH Context。
+
+`ctx.stagecraftDebug` 是可选调试桥；Inspector 不会自动开启，也不提供默认公网或非 loopback 端点。sandboxed worker 默认只监听内部 stdio RPC，不暴露 StageCraft HTTP。
+
+构建脚本把公开的默认剧本、提示词、UI 资源和 worker entry 写入 dist/。data/、save/、custom/、本地媒体、私有卡片内容和本地保存不会进入 bundle。
 
 ## 验证与打包
 
@@ -34,7 +39,8 @@ cordis.patch.yml 中的 config 是正式配置入口：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| port | 8799 | 酒馆 HTTP 端口 |
+| runtimeMode | embedded | `embedded`（开发兼容）或 `sandboxed`（独立 worker） |
+| port | 8799 | embedded 模式的酒馆 HTTP 端口 |
 | host | 127.0.0.1 | HTTP 监听地址 |
 | root | bundle 的 dist/ | 数据、剧本、提示词和静态资源根目录 |
 | remoteEnabled | false | 显式开启开发期局域网配对与 Bearer 鉴权 |

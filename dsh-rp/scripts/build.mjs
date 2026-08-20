@@ -13,11 +13,14 @@ rmSync(distRoot, { recursive: true, force: true })
 mkdirSync(publicRoot, { recursive: true })
 
 await build({
-  entryPoints: [join(packageRoot, 'src', 'index.ts')],
+  entryPoints: {
+    index: join(packageRoot, 'src', 'index.ts'),
+    worker: join(repositoryRoot, 'src', 'debug', 'stagecraft-worker.ts'),
+  },
   bundle: true,
   platform: 'node',
   format: 'esm',
-  outfile: join(distRoot, 'index.js'),
+  outdir: distRoot,
   sourcemap: true,
   packages: 'external',
   external: ['@deepseek-ai/cordis', '@deepseek-ai/schemastery'],
