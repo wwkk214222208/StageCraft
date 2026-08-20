@@ -8,11 +8,11 @@ import { Store } from '../src/store.ts'
 import type { WorkerSet } from '../src/workers.ts'
 import type { Role } from '../src/types.ts'
 
-function fixture(): { runtime: RoomRuntime; roomId: string; databasePath: string } {
+function fixture(): { runtime: RoomRuntime; roomId: string; databasePath: string; store: Store } {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-wc-'))
   const databasePath = join(root, 'app.sqlite')
   const store = new Store(databasePath)
-  return { runtime: new RoomRuntime(store), roomId: store.seed(), databasePath }
+  return { runtime: new RoomRuntime(store), roomId: store.seed(), databasePath, store }
 }
 
 /** 一个会随发言附带世界变更申请的 fake speak worker */
@@ -127,6 +127,45 @@ test('群聊模式：世界变更申请可提议新人物，批准后创建', as
   assert.ok(created, '批准后新人物应被创建')
   assert.equal(created.name, '守门人')
   assert.equal(created.presence, 'present')
+})
+
+test('群聊模式：一次导演咨询的结构化变更统一走批准与记忆流程', async () => {
+  const { runtime, roomId } = fixture()
+  runtime.setRoomConfig(roomId, { mode: 'chat' })
+  const seenDigest: string[] = []
+  runtime.setWorkers({
+    ...directorChatWorkers({
+      sceneTime: '深夜',
+      sceneLocation: '城门下',
+      roleProposals: [{ id: 'guard', name: '守门人', portraitRef: '/assets/default.svg', currentState: '正在城门口巡视。', presence: 'present', selfModel: '沉默寡言的守门人。', memoryTimeline: {} }],
+      rolePresence: [{ roleId: 'noel', presence: 'present' }],
+    }, '诺尔推门走进城门，守门人开始巡视。'),
+    digest: async (role, scene) => {
+      seenDigest.push(`${role.id}:${scene.worldChangeId ?? 'none'}`)
+      return { entries: [{ text: `记住：${scene.text}`, occurredAt: scene.sceneTime }] }
+    },
+  })
+
+  await runtime.directorChat(roomId, '入夜，去城门并让诺尔进场，安排守门人出现。')
+  let room = runtime.get(roomId)
+  assert.equal(room.phase, 'world-change-approval')
+  assert.equal(room.pendingWorldChange?.sceneTime, '深夜')
+  assert.equal(room.pendingWorldChange?.sceneLocation, '城门下')
+  assert.equal(room.pendingWorldChange?.roleProposals?.[0]?.id, 'guard')
+  assert.equal(room.pendingWorldChange?.rolePresence?.[0]?.roleId, 'noel')
+  assert.equal(room.roles.some(role => role.id === 'guard'), false)
+  assert.equal(room.roles.find(role => role.id === 'noel')?.presence, 'absent')
+
+  await runtime.approveWorldChange(roomId)
+  room = runtime.get(roomId)
+  assert.equal(room.phase, 'awaiting-player-input')
+  assert.equal(room.sceneTime, '深夜')
+  assert.equal(room.sceneLocation, '城门下')
+  assert.equal(room.roles.find(role => role.id === 'guard')?.presence, 'present')
+  assert.equal(room.roles.find(role => role.id === 'noel')?.presence, 'present')
+  assert.equal(room.scenes.at(-1)?.text, '诺尔推门走进城门，守门人开始巡视。')
+  assert.ok(seenDigest.some(item => item.startsWith('aria:') && !item.endsWith(':none')))
+  assert.ok(room.roles.find(role => role.id === 'aria')?.memories.some(memory => memory.text.includes('诺尔推门走进城门')))
 })
 
 test('群聊模式：导演对话无变更时仅回复，房间保持空闲', async () => {
