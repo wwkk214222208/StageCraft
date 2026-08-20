@@ -661,6 +661,7 @@ function renderCreatorSession(session) {
   creatorSession = session
   $('#creator-session-label').textContent = session ? `${session.storyTitle} · ${session.id.slice(-8)}` : '尚未选择会话'
   $('#creator-session-close').disabled = !session
+  $('#creator-session-model').disabled = !session
   $('#creator-session-chat').hidden = !session
   $('#creator-preview-status').textContent = session ? '已连接' : '未连接'
   $('#creator-preview-status').className = `creator-status ${session ? 'ready' : 'empty'}`
@@ -675,6 +676,23 @@ async function loadCreatorSessions() {
   list.querySelectorAll('[data-session-id]').forEach(button => button.onclick = () => { const session = sessions.find(item => item.id === button.dataset.sessionId); renderCreatorSession(session); $('#creator-session-modal').close() })
 }
 $('#creator-session-open').onclick = async () => { try { await loadCreatorSessions(); $('#creator-session-modal').showModal() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
+$('#creator-session-model').onclick = async () => {
+  if (!creatorSession) return
+  try {
+    const data = await creatorRequest('/api/agent/models', { owner: creatorOwner, sessionId: creatorSession.id })
+    const providers = Array.isArray(data.providers) ? data.providers : Array.isArray(data.items) ? data.items : []
+    $('#creator-session-provider').innerHTML = providers.map(provider => `<option value="${escape(provider.id ?? provider.provider ?? '')}">${escape(provider.name ?? provider.id ?? provider.provider ?? '供应商')}</option>`).join('')
+    const updateModels = () => { const provider = providers.find(item => (item.id ?? item.provider) === $('#creator-session-provider').value); const models = provider?.models ?? provider?.availableModels ?? []; $('#creator-session-model-select').innerHTML = models.map(model => `<option value="${escape(typeof model === 'string' ? model : model.id)}">${escape(typeof model === 'string' ? model : model.name ?? model.id)}</option>`).join('') }
+    $('#creator-session-provider').onchange = updateModels; updateModels(); $('#creator-session-model-modal').showModal()
+  } catch (error) { alert(error instanceof Error ? error.message : String(error)) }
+}
+$('#creator-session-model-save').onclick = async () => {
+  if (!creatorSession) return
+  const provider = $('#creator-session-provider').value; const model = $('#creator-session-model-select').value
+  if (!provider || !model) return
+  const result = await creatorRequest('/api/agent/model', { owner: creatorOwner, sessionId: creatorSession.id, provider, model, reasoningEffort: $('#creator-session-reasoning').value.trim() || undefined })
+  $('#creator-session-model-modal').close(); $('#creator-agent-preview').innerHTML = `<strong>会话模型已更新</strong><p>${escape(result.selected?.provider ?? provider)} / ${escape(result.selected?.model ?? model)}</p>`
+}
 $('#creator-session-new').onclick = async () => { try { const session = await creatorRequest('/api/agent/session', { owner: creatorOwner, storyId: $('#story-edit-id').textContent }); renderCreatorSession(session); $('#creator-session-modal').close() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
 $('#creator-session-close').onclick = async () => { if (!creatorSession) return; await fetch('/api/agent/session', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ owner: creatorOwner, sessionId: creatorSession.id }) }).catch(() => {}); renderCreatorSession(null) }
 $('#creator-session-send').onclick = async () => { if (!creatorSession) return; const input = $('#creator-session-input'); const text = input.value.trim(); if (!text) return; const button = $('#creator-session-send'); const before = await refreshCreatorStory(false); button.disabled = true; try { const session = await creatorRequest('/api/agent/message', { owner: creatorOwner, sessionId: creatorSession.id, storyId: $('#story-edit-id').textContent, text }); input.value = ''; renderCreatorSession(session); $('#creator-agent-preview').innerHTML = '<strong>已发送给 DSH</strong><p>正在等待 DSH 完成并写入剧本文件…</p>'; void waitForCreatorAgentFileChange(before) } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false } }
