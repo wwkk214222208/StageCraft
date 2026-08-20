@@ -166,7 +166,7 @@ test('Android media and PNG import remain native, bounded, authenticated, and pa
   const policy = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'RemoteAssetPolicy.java')
   const renderer = read('app', 'src', 'main', 'assets', 'renderer.js')
   assert.match(appGradle, /packageRemoteRenderer/)
-  assert.match(appGradle, /include\("index\.html", "styles\.css", "renderer\.js"\)/)
+  assert.match(appGradle, /include\("index\.html", "styles\.css", "renderer\.js",/)
   assert.match(appGradle, /preBuild.*dependsOn\(verifyEmbeddedCoreAssets\)/s)
   assert.match(connection, /public void loadMedia/)
   assert.match(connection, /RemoteAssetPolicy\.requireAssetPath/)
