@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Context, Plugin } from '@deepseek-ai/cordis'
 import { applyStatePatches, type StatePatch } from '../core/state-transaction.ts'
+import { validateUiManifest, type UiActionHandler, type UiBinding, type UiManifest, type UiNode, type UiValue } from '../core/ui.ts'
 
 export interface CompatDiagnostic {
   level: 'info' | 'warning' | 'error'
@@ -41,6 +42,14 @@ export interface CompileReport {
   manifest: { id: string; version: string }
   imports: Array<{ url: string; version?: string; capability: 'blocked' | 'unsupported' }>
   diagnostics: CompatDiagnostic[]
+}
+
+export interface StUiCompileResult {
+  manifest?: UiManifest
+  handlers: UiActionHandler[]
+  diagnostics: CompatDiagnostic[]
+  recognized: number
+  unsupported: number
 }
 
 export interface InitVarResult {
@@ -392,13 +401,89 @@ export class StateOverlay {
   discard(): void { this.current = clone(this.base); this.patches = [] }
 }
 
+type UiMetadata = Record<string, unknown>
+
+function uiMetadata(pkg: CardPackage): UiMetadata | undefined {
+  const candidates = [pkg.extensions.ui, pkg.extensions.mvu_ui, pkg.extensions.mvuUi, pkg.extensions.interface, pkg.extensions.display]
+  for (const candidate of candidates) if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return candidate as UiMetadata
+  return undefined
+}
+
+function uiPointer(path: string, moduleId: string): UiBinding {
+  if (!path.startsWith('/')) throw new Error(`UI binding path must be a JSON Pointer: ${path}`)
+  const segments = path.slice(1).split('/').map(segment => {
+    if (/~(?![01])/.test(segment)) throw new Error(`UI binding path has an invalid escape: ${path}`)
+    const decoded = segment.replace(/~1/g, '/').replace(/~0/g, '~')
+    if (['__proto__', 'prototype', 'constructor'].includes(decoded)) throw new Error(`UI binding path contains a forbidden segment: ${decoded}`)
+    return decoded
+  })
+  const suffix = path === '/' ? '' : path
+  const first = segments[0]
+  return { path: `/modules/${moduleId.replace(/~/g, '~0').replace(/\//g, '~1')}/state/stat_data${first === 'stat_data' ? suffix.slice('/stat_data'.length) : suffix}` }
+}
+
+function uiValue(value: unknown): UiValue {
+  jsonSafe(value, 'ST UI value')
+  return clone(value) as UiValue
+}
+
+function compileUiNode(value: unknown, moduleId: string, diagnostics: CompatDiagnostic[], count: { recognized: number; unsupported: number }): UiNode | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) { count.unsupported++; return undefined }
+  const raw = value as UiMetadata
+  const type = typeof raw.type === 'string' ? raw.type.toLowerCase() : ''
+  const path = typeof raw.path === 'string' ? uiPointer(raw.path, moduleId) : undefined
+  const label = typeof raw.label === 'string' ? raw.label : undefined
+  try {
+    if (type === 'text' || type === 'label' || type === 'value') { count.recognized++; return { type: 'text', ...(raw.id ? { id: String(raw.id) } : {}), text: path ?? String(raw.text ?? raw.value ?? ''), ...(raw.tone ? { tone: String(raw.tone) } : {}) } }
+    if (type === 'markdown') { count.recognized++; return { type: 'markdown', ...(raw.id ? { id: String(raw.id) } : {}), source: path ?? String(raw.source ?? raw.text ?? '') } }
+    if (type === 'image') {
+      const source = raw.source && typeof raw.source === 'object' ? clone(raw.source) as any : typeof raw.asset === 'string' ? { type: 'asset', id: raw.asset } : typeof raw.url === 'string' ? { type: 'https', url: raw.url } : undefined
+      if (!source) throw new Error('image requires an asset or HTTPS source')
+      count.recognized++; return { type: 'image', ...(raw.id ? { id: String(raw.id) } : {}), source, ...(raw.alt ? { alt: String(raw.alt) } : {}) }
+    }
+    if (type === 'progress' && path) { count.recognized++; return { type: 'progress', ...(raw.id ? { id: String(raw.id) } : {}), value: path, ...(raw.max !== undefined ? { max: Number(raw.max) } : {}), ...(label ? { label } : {}) } }
+    if (type === 'button' || type === 'action') { if (typeof raw.action !== 'string') throw new Error('button requires an action') ; count.recognized++; return { type: 'button', ...(raw.id ? { id: String(raw.id) } : {}), label: label ?? String(raw.text ?? raw.action), action: `${moduleId}.ui.${raw.action}` } }
+    if (type === 'stack') {
+      const children = Array.isArray(raw.children) ? raw.children.map(child => compileUiNode(child, moduleId, diagnostics, count)).filter((child): child is UiNode => Boolean(child)) : []
+      count.recognized++; return { type: 'stack', ...(raw.id ? { id: String(raw.id) } : {}), direction: raw.direction === 'row' ? 'row' : 'column', children }
+    }
+    throw new Error(`unsupported node type ${type || '(missing)'}`)
+  } catch (error) { count.unsupported++; diagnostics.push({ level: 'warning', code: 'ui.node.unsupported', message: `${type || 'node'}: ${error instanceof Error ? error.message : String(error)}` }); return undefined }
+}
+
+export function compileStCardUi(pkg: CardPackage, moduleId: string): StUiCompileResult {
+  const diagnostics: CompatDiagnostic[] = [], count = { recognized: 0, unsupported: 0 }, metadata = uiMetadata(pkg)
+  if (!metadata) return { handlers: [], diagnostics, recognized: 0, unsupported: 0 }
+  const rawPanels = Array.isArray(metadata.panels) ? metadata.panels : Array.isArray(metadata.views) ? metadata.views : []
+  if (!Array.isArray(metadata.panels) && !Array.isArray(metadata.views)) { count.unsupported++; diagnostics.push({ level: 'warning', code: 'ui.panels.unsupported', message: 'UI metadata requires a panels or views array.' }) }
+  for (const key of Object.keys(metadata)) if (!['title', 'panels', 'views', 'actions', 'theme'].includes(key)) { count.unsupported++; diagnostics.push({ level: 'warning', code: 'ui.metadata.unsupported', message: `Unsupported UI metadata field: ${key}.` }) }
+  const panels = rawPanels.map((value, index) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) { count.unsupported++; diagnostics.push({ level: 'warning', code: 'ui.panel.unsupported', message: `Panel ${index + 1} is not an object.` }); return undefined }
+    const panel = value as UiMetadata, rawNodes = Array.isArray(panel.nodes) ? panel.nodes : Array.isArray(panel.content) ? panel.content : []
+    const content = rawNodes.map(node => compileUiNode(node, moduleId, diagnostics, count)).filter((node): node is UiNode => Boolean(node))
+    if (!content.length) { count.unsupported++; diagnostics.push({ level: 'warning', code: 'ui.panel.empty', message: `Panel ${String(panel.id ?? index + 1)} has no supported nodes.` }) }
+    return { id: String(panel.id ?? `panel-${index + 1}`), title: String(panel.title ?? panel.name ?? `Card panel ${index + 1}`), content, ...(typeof panel.priority === 'number' ? { priority: panel.priority } : {}), ...(typeof panel.visible === 'string' ? { visible: uiPointer(panel.visible, moduleId) } : {}) }
+  }).filter((panel): panel is NonNullable<typeof panel> => Boolean(panel))
+  const actions = (Array.isArray(metadata.actions) ? metadata.actions : []).flatMap((value, index) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) { count.unsupported++; return [] }
+    const action = value as UiMetadata
+    if (typeof action.id !== 'string' || typeof action.path !== 'string') { count.unsupported++; diagnostics.push({ level: 'warning', code: 'ui.action.unsupported', message: `Action ${index + 1} requires id and path.` }); return [] }
+    try { count.recognized++; return [{ id: `${moduleId}.ui.${action.id}`, label: String(action.label ?? action.id), input: { op: String(action.op ?? 'set'), path: uiPointer(action.path, moduleId).path, ...(Object.prototype.hasOwnProperty.call(action, 'value') ? { value: uiValue(action.value) } : {}) }, ...(action.confirmation ? { confirmation: String(action.confirmation) } : {}) }] }
+    catch (error) { count.unsupported++; diagnostics.push({ level: 'warning', code: 'ui.action.unsupported', message: `${action.id}: ${error instanceof Error ? error.message : String(error)}` }); return [] }
+  })
+  const manifest: UiManifest = { id: `${moduleId}.ui`, version: pkg.metadata.sha256.slice(0, 12), owner: moduleId, ...(typeof metadata.title === 'string' ? { title: metadata.title } : {}), panels, actions, ...(metadata.theme && typeof metadata.theme === 'object' ? { theme: clone(metadata.theme) as any } : {}) }
+  try { validateUiManifest(manifest) } catch (error) { diagnostics.push({ level: 'error', code: 'ui.manifest.invalid', message: error instanceof Error ? error.message : String(error) }); return { handlers: [], diagnostics, recognized: count.recognized, unsupported: count.unsupported + 1 } }
+  return { manifest, handlers: [], diagnostics, recognized: count.recognized, unsupported: count.unsupported }
+}
+
 export interface StCompatPluginOptions { moduleId?: string; package: CardPackage; report?: CompileReport }
 
 export function stMvuCompatPlugin(options: StCompatPluginOptions): Plugin {
   const report = options.report ?? compileCardPackage(options.package)
   const moduleId = options.moduleId ?? report.moduleId
   const init = extractInitVars(options.package)
-  const diagnostics = uniqueDiagnostics([...options.package.diagnostics, ...report.diagnostics, ...init.diagnostics, ...worldbookDiagnostics(options.package.worldbook)])
+  const ui = compileStCardUi(options.package, moduleId)
+  const diagnostics = uniqueDiagnostics([...options.package.diagnostics, ...report.diagnostics, ...init.diagnostics, ...worldbookDiagnostics(options.package.worldbook), ...ui.diagnostics])
   const statePrefix = `/modules/${moduleId.replace(/~/g, '~0').replace(/\//g, '~1')}/state/stat_data`
   const validateProposal = (input: unknown): void | string[] => {
     const patches = (input as any)?.patches
@@ -425,6 +510,17 @@ export function stMvuCompatPlugin(options: StCompatPluginOptions): Plugin {
         registrations.push(service.state.registerSchema({ id: `${moduleId}.schema`, moduleId, validate: state => state === undefined || (state && typeof state === 'object') ? undefined : ['state must be an object'] }))
         registrations.push(service.extensions.registerProposalType({ id: `${moduleId}.mvu-patch`, moduleId, path: '/runtime/proposals', validate: validateProposal, apply: input => (input as any).patches }))
         registrations.push(service.extensions.registerPromptContributor({ id: `${moduleId}.worldbook`, priority: 0, contribute: input => ({ kind: 'compat.worldbook', content: selectWorldbook(options.package.worldbook, { text: String((input as any)?.text ?? '') }).map(entry => ({ id: entry.id, content: entry.content, position: entry.position, order: entry.order })) }) }))
+        if (ui.manifest) {
+          const handlers = (ui.manifest.actions ?? []).map(action => ({ definition: action, validateInput: (input: unknown) => {
+            const payload = input && typeof input === 'object' ? input as Record<string, unknown> : {}
+            if (payload.op !== action.input?.['op'] || payload.path !== action.input?.['path']) return ['action payload does not match its declaration']
+          }, execute: (input: unknown) => {
+            const payload = input && typeof input === 'object' ? input as Record<string, unknown> : {}
+            const patch = { op: payload.op, path: payload.path, ...(Object.prototype.hasOwnProperty.call(payload, 'value') ? { value: payload.value } : {}) } as StatePatch
+            return service.extensions.operateProposal({ operation: 'create', typeId: `${moduleId}.mvu-patch`, input: { patches: [patch] }, roomId: service.roomId })
+          } }))
+          registrations.push(service.extensions.registerUiManifest(ui.manifest, handlers))
+        }
         registrations.push(service.extensions.registerViewContributor({ id: `${moduleId}.summary`, priority: 0, contribute: input => {
           const source = input && typeof input === 'object' ? input as any : {}
           const state = source.state

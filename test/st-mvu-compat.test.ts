@@ -1,10 +1,26 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
-import { parseCardPackage, compileCardPackage, extractInitVars, parseSafeYaml, selectWorldbook, worldbookDiagnostics, decodeMvuUpdates, StateOverlay, stMvuCompatPlugin } from '../src/compat/st-mvu.ts'
+import { parseCardPackage, compileCardPackage, compileStCardUi, extractInitVars, parseSafeYaml, selectWorldbook, worldbookDiagnostics, decodeMvuUpdates, StateOverlay, stMvuCompatPlugin } from '../src/compat/st-mvu.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { DefaultCorePluginContainer } from '../src/core/container.ts'
 import { createStageCraftService, stageCraftServicePlugin } from '../src/core/cordis-plugins.ts'
+
+const uiCardJson = JSON.stringify({
+  name: 'Public UI Fixture',
+  extensions: { ui: {
+    title: 'State panel',
+    panels: [{ id: 'status', title: 'Status', nodes: [
+      { type: 'text', id: 'score', path: '/stat_data/score' },
+      { type: 'progress', id: 'meter', path: '/stat_data/score', max: 100, label: 'Score' },
+      { type: 'image', id: 'portrait', asset: 'portrait.asset', alt: 'Portrait' },
+      { type: 'button', id: 'advance', label: 'Advance', action: 'advance' },
+      { type: 'unknown', text: 'ignored' },
+    ] }],
+    actions: [{ id: 'advance', label: 'Advance', op: 'delta', path: '/stat_data/score', value: 1 }],
+    unsupported: { script: 'must remain inert' },
+  } },
+})
 
 const cardJson = JSON.stringify({
   spec: 'chara_card_v3', name: 'Public Test Card', description: 'Description', alternate_greetings: ['Hello', 'Hi'],
@@ -14,8 +30,21 @@ const cardJson = JSON.stringify({
     { id: 'selective', keys: ['castle'], secondary_keys: ['moon'], selective: true, content: 'selective', order: 1 },
     { id: 'inserted', keys: ['castle'], content: 'inserted', constant: true, insertion_order: 0 },
   ] },
-  extensions: { tavern_helper: { script: 'throw new Error("must not execute")' }, regex_scripts: [{ script: 'https://example.test/x.js' }], regexScripts: [{ script: 'https://example.test/y.js' }] },
+  extensions: { tavern_helper: { script: 'throw new Error("must not execute")' }, regex_scripts: [{ script: 'https://example.test/x.js' }], regexScripts: [{ script: 'https://example.test/y.js' }], ui: { panels: [{ id: 'status', title: 'Status', nodes: [{ type: 'text', path: '/stat_data/score' }, { type: 'button', label: 'Advance', action: 'advance' }] }], actions: [{ id: 'advance', path: '/stat_data/score', op: 'delta', value: 1 }] } },
   system_prompt: '[InitVar]\nscore: 1\nflags:\n  - ready\n[/InitVar]',
+})
+
+test('ST UI metadata compiles to one namespaced, JSON-safe manifest', () => {
+  const result = compileStCardUi(parseCardPackage(uiCardJson), 'fixture/module')
+  assert.equal(result.manifest?.id, 'fixture/module.ui')
+  assert.equal(result.manifest?.owner, 'fixture/module')
+  assert.equal(result.manifest?.panels[0].content[0].type, 'text')
+  assert.equal((result.manifest?.panels[0].content[0] as any).text.path, '/modules/fixture~1module/state/stat_data/score')
+  assert.equal((result.manifest?.panels[0].content[3] as any).action, 'fixture/module.ui.advance')
+  assert.equal(result.manifest?.actions?.[0].input?.['path'], '/modules/fixture~1module/state/stat_data/score')
+  assert.ok(result.diagnostics.some(item => item.code === 'ui.node.unsupported'))
+  assert.ok(result.unsupported > 0)
+  assert.doesNotThrow(() => JSON.stringify(result.manifest))
 })
 
 test('card package parsing is lossless, cloned and script-free', () => {
@@ -133,6 +162,9 @@ test('Cordis compatibility plugin initializes once, registers proposal/prompt/vi
   const edited = service.extensions.operateProposal({ operation: 'edit', id: proposal.id, input: decodeMvuUpdates('<UpdateVariable><JSONPatch>[{"op":"set","path":"/stat_data/score","value":8}]</JSONPatch></UpdateVariable>', 'compat.test'), roomId: 'room' }) as any
   assert.equal(edited.status, 'pending')
   assert.equal((service.extensions.operateProposal({ operation: 'approve', id: proposal.id, roomId: 'room' }) as any).status, 'approved')
+  const uiManifest = core.listUiManifests().find(item => item.id === 'compat.test.ui')
+  assert.ok(uiManifest)
+  assert.equal((await core.invokeUiAction('compat.test.ui.advance', uiManifest!.actions![0].input, 'compat.test')).status, 'pending')
   const rejected = service.extensions.operateProposal({ operation: 'create', typeId: 'compat.test.mvu-patch', input: decodeMvuUpdates('<UpdateVariable><JSONPatch>[{"op":"set","path":"/stat_data/score","value":10}]</JSONPatch></UpdateVariable>', 'compat.test'), roomId: 'room' }) as any
   assert.equal((service.extensions.operateProposal({ operation: 'reject', id: rejected.id, roomId: 'room' }) as any).status, 'rejected')
   assert.throws(() => service.extensions.operateProposal({ operation: 'create', typeId: 'compat.test.mvu-patch', input: { patches: [{ op: 'set', path: '/modules/compat.test/state/stat_dataevil', value: 2 }] }, roomId: 'room' }), /invalid proposal|namespace/)
