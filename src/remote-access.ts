@@ -169,6 +169,19 @@ export class RemoteAccessService {
   }
 
   async handlePairing(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
+    if (url.pathname === '/api/remote/pairing-code') {
+      if (!isLoopbackAddress(request.socket.remoteAddress)) {
+        this.send(response, 404, { error: 'Not found.' })
+        return true
+      }
+      if (!this.enabled || request.method !== 'POST') {
+        this.send(response, 403, { error: 'Operator request denied.' })
+        return true
+      }
+      const pairing = this.createPairingCode()
+      this.send(response, 200, pairing)
+      return true
+    }
     if (url.pathname !== '/api/remote/pair') return false
     if (!this.enabled) {
       this.send(response, 403, { error: 'Remote access disabled.' })

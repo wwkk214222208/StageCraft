@@ -30,6 +30,7 @@ close-wsl.bat
 # ── 本地工具缓存 / 误入的独立仓库 ──
 .pnpm-home/
 .pnpm-store/
+.toolchains/
 dsh-web-ui/
 dsh-rp/dist/
 dsh-rp/LICENSE

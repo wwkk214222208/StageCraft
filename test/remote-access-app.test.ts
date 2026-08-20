@@ -27,7 +27,11 @@ test('app remote boundary protects API, command, SSE and private assets with pai
     const nullBody = await fetch(`${base}/api/remote/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'null' })
     assert.equal(nullBody.status, 401)
     assert.deepEqual(await nullBody.json(), { error: 'Pairing failed.' })
-    const pairing = app.remoteAccess.createPairingCode()
+    const operatorResponse = await fetch(`${base}/api/remote/pairing-code`, { method: 'POST' })
+    assert.equal(operatorResponse.status, 200)
+    const pairing = await operatorResponse.json() as { code: string; expiresAt: number }
+    assert.match(pairing.code, /^[A-Z2-9]{8}$/)
+    assert.ok(pairing.expiresAt > Date.now())
     const wrong = await fetch(`${base}/api/remote/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: 'WRONG-CODE' }) })
     assert.equal(wrong.status, 401)
     const exchange = await fetch(`${base}/api/remote/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: pairing.code }) })
@@ -55,6 +59,24 @@ test('app remote boundary protects API, command, SSE and private assets with pai
     await app.close()
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('non-loopback bearer cannot create an operator pairing code', async () => {
+  const service = new (await import('../src/remote-access.ts')).RemoteAccessService({ enabled: true, randomBytes: size => new Uint8Array(size).fill(3) })
+  const pairing = service.createPairingCode()
+  const exchanged = service.policy.exchangePairingCode(pairing.code, 'setup')
+  assert.equal(exchanged.ok, true)
+  const responseState: { status?: number; body?: unknown } = {}
+  const response = {
+    writeHead(status: number) { responseState.status = status },
+    end(body: string) { responseState.body = JSON.parse(body) },
+  }
+  const handled = await service.handlePairing({
+    method: 'POST', headers: { authorization: `Bearer ${exchanged.ok ? exchanged.session.token : ''}` }, socket: { remoteAddress: '192.168.1.20' },
+  } as any, response as any, new URL('http://desktop.test/api/remote/pairing-code'))
+  assert.equal(handled, true)
+  assert.equal(responseState.status, 404)
+  assert.deepEqual(responseState.body, { error: 'Not found.' })
 })
 
 test('non-loopback binding fails closed unless remote access is explicitly enabled', async () => {

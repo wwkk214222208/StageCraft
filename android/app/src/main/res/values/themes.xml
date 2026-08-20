@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.StageCraft" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/stagecraft_background</item>
+        <item name="android:statusBarColor">@color/stagecraft_background</item>
+    </style>
+</resources>

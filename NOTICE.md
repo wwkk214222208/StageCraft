@@ -45,3 +45,15 @@ DSH（DeepSeek Harness）本身是 MIT 项目；本阶段不复制或重新分�
 源码，只按其 Cordis 宿主插件接口接入。实际宿主版本和上游许可文本以 DSH
 发布包及其仓库为准：
 <https://github.com/deepseek-ai/deepseek-harness>。
+
+## Android 构建依赖
+
+Android 客户端不引入第三方运行时库。下列依赖仅用于构建或测试，不进入本项目
+Java 运行时代码；标准 Gradle Wrapper JAR/脚本作为构建引导文件随源码提供。
+
+- **Gradle Wrapper 8.9** — Apache-2.0，来源：
+  <https://github.com/gradle/gradle>。
+- **Android Gradle Plugin 8.7.3** — Apache-2.0，仅构建依赖，来源：
+  <https://android.googlesource.com/platform/tools/base/>。
+- **JUnit 4.13.2** — EPL-1.0，仅测试依赖，来源：
+  <https://github.com/junit-team/junit4>。

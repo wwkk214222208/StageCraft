@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src data:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>StageCraft Remote</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header><strong>StageCraft</strong><span id="connection-status">未连接</span></header>
+  <main>
+    <section id="pairing-panel" class="card">
+      <h1>连接电脑</h1>
+      <label>服务器地址<input id="server-address" inputmode="url" autocomplete="off" value="https://"></label>
+      <label class="risk-toggle"><input id="allow-http" type="checkbox">允许不安全的局域网 HTTP</label>
+      <p id="http-warning" class="warning" hidden>HTTP 不加密。只应在你信任的局域网中临时使用，任何中间人都可能读取会话。</p>
+      <label>一次性配对码<input id="pairing-code" autocomplete="one-time-code" maxlength="32"></label>
+      <div class="buttons">
+        <button id="pair-button">配对并连接</button>
+        <button id="reconnect-button" class="secondary">重连</button>
+        <button id="disconnect-button" class="secondary">断开连接</button>
+        <button id="forget-button" class="danger">清除本机会话</button>
+      </div>
+      <p id="connection-error" role="alert"></p>
+    </section>
+
+    <section id="card-import-panel" class="card">
+      <h2>导入角色卡</h2>
+      <p class="hint">选择一张含角色数据的 PNG 卡。文件只由原生层读取并发送到已配对电脑，不会把卡片正文交给本页。</p>
+      <button id="card-import-button" class="secondary">选择 PNG 角色卡</button>
+      <p id="card-import-status" role="status"></p>
+    </section>
+
+    <section id="scene-panel" class="card" hidden>
+      <div class="eyebrow" id="room-title"></div>
+      <h2 id="scene-title">当前场景</h2>
+      <p id="scene-meta"></p>
+      <div id="scene-text"></div>
+    </section>
+
+    <section id="roles-panel" class="card" hidden>
+      <h2>角色</h2>
+      <div id="roles"></div>
+    </section>
+
+    <section id="interactions-panel" class="card" hidden>
+      <h2>等待你的操作</h2>
+      <div id="interactions"></div>
+    </section>
+  </main>
+  <script type="module" src="/renderer.js"></script>
+</body>
+</html>

@@ -338,6 +338,21 @@ $('#settings-token-count').onchange = () => { tokenCountEnabled = $('#settings-t
 $('#settings-debug').onchange = () => { debugWindow.hidden = !$('#settings-debug').checked }
 $('#debug-window-close').onclick = () => { debugWindow.hidden = true; $('#settings-debug').checked = false }
 $('#settings-whale-meme').onchange = () => { whaleMemeEnabled = $('#settings-whale-meme').checked; try { localStorage.setItem(WHALE_MEME_PREFS_KEY, whaleMemeEnabled ? '1' : '0') } catch {}; applyWhaleMeme() }
+$('#remote-pairing-code').onclick = async event => {
+  event.preventDefault()
+  $('#remote-pairing-result').hidden = true
+  $('#remote-pairing-error').textContent = ''
+  try {
+    const response = await fetch('/api/remote/pairing-code', { method: 'POST', headers: { accept: 'application/json' } })
+    const body = await response.json()
+    if (!response.ok) throw new Error(response.status === 403 ? '远程访问未开启，或当前页面不是从本机访问。' : '无法生成配对码。')
+    $('#remote-pairing-value').textContent = body.code
+    $('#remote-pairing-expiry').textContent = `有效期至 ${new Date(body.expiresAt).toLocaleTimeString()}`
+    $('#remote-pairing-result').hidden = false
+  } catch (error) {
+    $('#remote-pairing-error').textContent = error instanceof Error ? error.message : '无法生成配对码。'
+  }
+}
 
 // ── ST 角色卡导入（坯子） ──
 let stImportFile = null
