@@ -29,8 +29,8 @@ type NativeSessions = {
 }
 type NativeApiProxy = {
   sessions?: {
-    models?: (request: { sessionId: string }) => Promise<unknown>
-    selectModel?: (request: { sessionId: string; provider: string; model: string; reasoningEffort?: string }) => Promise<unknown>
+    models?: (request: { rpcId: string; payload: { sessionId: string } }) => Promise<{ result?: { ok: boolean; value?: unknown; error?: { message?: string } } }>
+    selectModel?: (request: { rpcId: string; payload: { sessionId: string; provider: string; model: string; reasoningEffort?: string } }) => Promise<{ result?: { ok: boolean; value?: unknown; error?: { message?: string } } }>
   }
 }
 
@@ -68,12 +68,19 @@ export class DshStorySessionService {
   async models(owner: string, id: string): Promise<unknown> {
     const apiProxy = this.currentApiProxy()
     if (!apiProxy?.sessions?.models) throw new Error('当前 DSH 宿主未提供模型目录 API。')
-    return clone(await apiProxy.sessions.models({ sessionId: this.require(owner, id).nativeId ?? id }))
+    const response = await apiProxy.sessions.models({ rpcId: `creator-models-${randomUUID()}`, payload: { sessionId: this.require(owner, id).nativeId ?? id } })
+    return this.unwrapRpc(response)
   }
   async selectModel(owner: string, id: string, selection: { provider: string; model: string; reasoningEffort?: string }): Promise<unknown> {
     const apiProxy = this.currentApiProxy()
     if (!apiProxy?.sessions?.selectModel) throw new Error('当前 DSH 宿主未提供模型选择 API。')
-    return clone(await apiProxy.sessions.selectModel({ sessionId: this.require(owner, id).nativeId ?? id, ...selection }))
+    const response = await apiProxy.sessions.selectModel({ rpcId: `creator-select-model-${randomUUID()}`, payload: { sessionId: this.require(owner, id).nativeId ?? id, ...selection } })
+    return this.unwrapRpc(response)
+  }
+  private unwrapRpc(response: { result?: { ok: boolean; value?: unknown; error?: { message?: string } } }): unknown {
+    const result = response?.result
+    if (!result?.ok) throw new Error(result?.error?.message ?? 'DSH 模型请求失败。')
+    return clone(result.value)
   }
   async prompt(owner: string, id: string, text: string, storyId?: string): Promise<DshStorySession> {
     const session = this.require(owner, id); const message = bounded(text.trim()); if (!message) throw new Error('请输入要发送给 DSH 的内容。')

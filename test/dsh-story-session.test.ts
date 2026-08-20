@@ -8,7 +8,7 @@ function fixture() {
   const calls: any[] = []; let current = story()
   const nativeSession = { id: 'native-1', prompt: async (content: unknown) => { calls.push(['prompt', content]) } }
   const native = { create: () => nativeSession, binding: (id: string) => id === 'native-1' ? { session: nativeSession } : undefined }
-  const apiProxy = { sessions: { models: async (request: unknown) => { calls.push(['models', request]); return { providers: [{ id: 'provider-a', models: ['model-a'] }] } }, selectModel: async (selection: unknown) => { calls.push(['select-model', selection]); return { selected: selection } } } }
+  const apiProxy = { sessions: { models: async (request: unknown) => { calls.push(['models', request]); return { rpcId: 'models', result: { ok: true, value: { providers: [{ id: 'provider-a', models: ['model-a'] }] } } } }, selectModel: async (selection: unknown) => { calls.push(['select-model', selection]); return { rpcId: 'select', result: { ok: true, value: { selected: selection } } } } } }
   let currentApiProxy: any
   const service = new DshStorySessionService(() => structuredClone(current), native, () => currentApiProxy)
   currentApiProxy = apiProxy
@@ -27,7 +27,9 @@ test('native model directory and selection stay on the DSH session', async () =>
   const f = fixture(); const session = f.service.open('owner-a', 'story')
   assert.deepEqual(await f.service.models('owner-a', session.id), { providers: [{ id: 'provider-a', models: ['model-a'] }] })
   await f.service.selectModel('owner-a', session.id, { provider: 'provider-a', model: 'model-a' })
-  assert.deepEqual(f.calls.find(call => call[0] === 'select-model'), ['select-model', { sessionId: 'native-1', provider: 'provider-a', model: 'model-a' }])
+  const selectCall = f.calls.find(call => call[0] === 'select-model')
+  assert.equal(selectCall[1].payload.sessionId, 'native-1')
+  assert.deepEqual(selectCall[1].payload, { sessionId: 'native-1', provider: 'provider-a', model: 'model-a' })
 })
 
 test('close rejects further access', () => {
