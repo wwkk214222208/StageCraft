@@ -55,7 +55,10 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         }
         if ("asset.write".equals(operation)) {
             String path = JsonSafety.requiredString(input, "path", 512); JsonSafety.path(path); String encoded = JsonSafety.requiredString(input, "data", 16 * 1024 * 1024);
-            repository.putAsset(path, JsonSafety.optionalString(input, "contentType", 128), Base64.decode(encoded, Base64.DEFAULT));
+            if (!encoded.matches("[A-Za-z0-9+/]*={0,2}") || (encoded.length() & 3) != 0) throw new IllegalArgumentException("Invalid asset encoding.");
+            byte[] decoded = Base64.decode(encoded, Base64.DEFAULT);
+            if (decoded.length > 12 * 1024 * 1024) throw new IllegalArgumentException("Asset is too large.");
+            repository.putAsset(path, JsonSafety.optionalString(input, "contentType", 128), decoded);
             return new JSONObject().put("ok", true);
         }
         if ("asset.remove".equals(operation)) { String path = JsonSafety.requiredString(input, "path", 512); JsonSafety.path(path); repository.removeAsset(path); return new JSONObject().put("ok", true); }
@@ -96,8 +99,18 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
 
     private Object dispatchRepository(JSONObject input) throws Exception {
         String method = JsonSafety.requiredString(input, "method", 96);
+        if (!method.matches("[A-Za-z][A-Za-z0-9]{0,95}")) throw new IllegalArgumentException("Invalid repository method.");
         org.json.JSONArray args = JsonSafety.requiredArray(input, "args");
+        if (args.toString().length() > 4 * 1024 * 1024) throw new IllegalArgumentException("Repository arguments are too large.");
         if (args.length() == 0) throw new IllegalArgumentException("Repository operation requires arguments.");
+        if ("saveDecision".equals(method)) {
+            String turnId = JsonSafety.stringArg(args, 0, 256);
+            JSONObject decision = JsonSafety.objectArg(args, 1);
+            JSONObject room = repository.findRoomForTurn(turnId);
+            if (room == null) throw new IllegalArgumentException("Turn not found.");
+            repository.mutateRoom(room.optString("id"), value -> { replaceBy(array(value, "decisions"), "roleId", decision.optString("roleId"), decision); return JSONObject.NULL; });
+            return JSONObject.NULL;
+        }
         String roomId = args.optString(0, null);
         if (roomId == null || roomId.isEmpty() || roomId.length() > 256) throw new IllegalArgumentException("Invalid room id.");
         if ("getLatestTurnId".equals(method)) {
@@ -105,7 +118,14 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
             org.json.JSONArray turns = room.optJSONArray("turns"); return turns == null || turns.length() == 0 ? JSONObject.NULL : turns.optString(turns.length() - 1);
         }
         if ("listConsultationsForTurn".equals(method)) return listConsultations(roomId, args.optString(1, ""));
-        if ("importRoom".equals(method)) { JSONObject archive = args.optJSONObject(1); if (archive == null || archive.optJSONObject("room") == null) throw new IllegalArgumentException("Invalid room archive."); repository.saveRoom(archive.getJSONObject("room")); return JSONObject.NULL; }
+        if ("importRoom".equals(method)) {
+            JSONObject archive = JsonSafety.objectArg(args, 1);
+            JSONObject imported = archive.optJSONObject("room");
+            if (imported == null) throw new IllegalArgumentException("Invalid room archive.");
+            imported = new JSONObject(imported.toString()).put("id", roomId);
+            repository.saveRoom(imported);
+            return JSONObject.NULL;
+        }
         return repository.mutateRoom(roomId, room -> applyRepositoryMutation(room, method, args));
     }
 
@@ -132,8 +152,11 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         if ("rejectSpeech".equals(method)) { JSONObject speech = room.optJSONObject("speech"); if (speech == null) throw new IllegalArgumentException("No speech awaiting rejection."); room.remove("speech"); room.put("phase", "awaiting-player-input"); bump(room); return speech; }
         if ("approveSpeech".equals(method)) { JSONObject speech = room.optJSONObject("speech"); if (speech == null) throw new IllegalArgumentException("No speech awaiting approval."); addScene(room, JsonSafety.stringArg(args, 1, 1024 * 1024), speech.optString("roleId"), speech.optString("turnId")); room.remove("speech"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
         if ("addPlayerScene".equals(method) || "addNarrationScene".equals(method)) { addScene(room, JsonSafety.stringArg(args, 1, 1024 * 1024), "addPlayerScene".equals(method) ? "player" : null, "scene"); bump(room); return JSONObject.NULL; }
-        if ("saveWorldChange".equals(method)) { room.put("pendingWorldChange", JsonSafety.objectArg(args, 1)); room.put("phase", "world-change-approval"); bump(room); return JSONObject.NULL; }
-        if ("approveWorldChange".equals(method) || "rejectWorldChange".equals(method)) { room.remove("pendingWorldChange"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
+        if ("saveWorldChange".equals(method)) { String id = "world-change-" + System.nanoTime(); room.put("pendingWorldChange", JsonSafety.objectArg(args, 1)); room.put("pendingWorldChangeId", id); room.put("phase", "world-change-approval"); bump(room); return id; }
+        if ("approveWorldChange".equals(method)) { String id = room.optString("pendingWorldChangeId", ""); room.remove("pendingWorldChange"); room.remove("pendingWorldChangeId"); room.put("phase", "awaiting-player-input"); bump(room); return id.isEmpty() ? JSONObject.NULL : id; }
+        if ("rejectWorldChange".equals(method)) { room.remove("pendingWorldChange"); room.remove("pendingWorldChangeId"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
+        if ("publish".equals(method)) { JSONObject draft = room.optJSONObject("draft"); if (draft == null) throw new IllegalArgumentException("Draft is no longer available."); addScene(room, JsonSafety.stringArg(args, 2, 1024 * 1024), null, draft.optString("turnId", "turn")); room.remove("draft"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
+        if ("restartRoom".equals(method)) { JSONObject story = JsonSafety.objectArg(args, 1); room.put("title", story.optString("title", room.optString("title"))); room.put("roles", story.optJSONArray("roles") == null ? new org.json.JSONArray() : story.getJSONArray("roles")); room.put("lore", story.optJSONArray("lore") == null ? new org.json.JSONArray() : story.getJSONArray("lore")); room.put("phase", "awaiting-player-input"); room.remove("draft"); room.remove("speech"); bump(room); return JSONObject.NULL; }
         if ("failRoom".equals(method)) { room.put("lastError", JsonSafety.stringArg(args, 1, 1024 * 1024)); bump(room); return JSONObject.NULL; }
         if ("cancelTurn".equals(method)) { room.put("phase", "awaiting-player-input"); room.remove("speech"); room.remove("draft"); bump(room); return JSONObject.NULL; }
         if ("setPlayerAvatar".equals(method)) { JSONObject player = room.optJSONObject("playerCharacter"); if (player == null) throw new IllegalArgumentException("Player unavailable."); player.put("portraitRef", JsonSafety.stringArg(args, 1, 1024)); bump(room); return JSONObject.NULL; }
