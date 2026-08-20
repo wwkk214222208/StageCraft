@@ -411,7 +411,7 @@ $('#st-import-run').onclick = async () => {
       $('#creator-preview-status').className = 'creator-status ready'
       workbench.innerHTML = `<strong>${escape(mapped.name ?? 'ST 角色卡')}</strong><p>服务器已完成角色映射${mapped.loreCount ? `，包含 ${mapped.loreCount} 条世界书条目` : ''}。</p>`
       $('#creator-warnings').innerHTML = warnings || '<li class="hint">暂无警告</li>'
-      $('#creator-field-diffs').innerHTML = '<p class="hint">角色已直接导入当前房间；本次导入没有可供 StoryPackage 审批的字段差异。</p>'
+      $('#creator-field-diffs').innerHTML = '<p class="hint">角色已直接导入当前房间；本次导入没有可供剧本包审批的字段差异。</p>'
     }
     button.textContent = '已导入'
   } catch (error) {

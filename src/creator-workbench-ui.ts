@@ -47,7 +47,7 @@ function workbenchNodes(owner: string, actions: Record<string, UiActionDefinitio
       ] },
     ],
     editor: [
-      { type: 'text', id: 'editor-heading', text: 'StoryPackage editor' },
+      { type: 'text', id: 'editor-heading', text: '剧本包编辑器' },
       { type: 'text-input', id: 'title', label: 'Title', value: binding(path('editor/title'), ''), action: `${owner}.creator.field.edit`, placeholder: 'Story title' },
       { type: 'text-input', id: 'opening', label: 'Opening', value: binding(path('editor/opening'), ''), action: `${owner}.creator.field.edit`, multiline: true },
       { type: 'markdown', id: 'editor-preview', source: binding(path('editor/markdown'), '') },
