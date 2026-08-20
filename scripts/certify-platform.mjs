@@ -39,6 +39,10 @@ const node = process.execPath
 const npm = process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : 'npm'
 const npmArgs = process.platform === 'win32' ? ['/d', '/s', '/c', 'npm test'] : ['test']
 const gradle = process.platform === 'win32' ? join(root, 'android', 'gradlew.bat') : join(root, 'android', 'gradlew')
+const gradleExecutable = process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : gradle
+const gradleArgs = process.platform === 'win32'
+  ? ['/d', '/s', '/c', `"${gradle}" testDebugUnitTest assembleDebug lintDebug --offline --no-daemon`]
+  : ['testDebugUnitTest', 'assembleDebug', 'lintDebug', '--offline', '--no-daemon']
 
 for (const target of ['win32', 'linux', 'darwin']) {
   if (process.platform === target) record(`platform.${target}`, 'platform', 'pass', `runner executing on ${target}`)
@@ -62,12 +66,16 @@ try {
 }
 
 const gradleAvailable = existsSync(gradle) && existsSync(join(root, 'android', 'local.properties'))
+const javaFromHome = process.env.JAVA_HOME
+  ? join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java')
+  : undefined
+const javaExecutable = javaFromHome && existsSync(javaFromHome) ? javaFromHome : 'java'
 let javaAvailable = true
-try { execFileSync('java', ['-version'], { stdio: 'ignore' }) } catch { javaAvailable = false }
+try { execFileSync(javaExecutable, ['-version'], { stdio: 'ignore' }) } catch { javaAvailable = false }
 if (skipGradle) skip('android.gradle', 'android', 'disabled by --skip-gradle')
 else if (!gradleAvailable) skip('android.gradle', 'android', 'Gradle wrapper or Android local.properties unavailable')
 else if (!javaAvailable) skip('android.gradle', 'android', 'Java/JAVA_HOME unavailable in this environment')
-else command('android.gradle', 'android', gradle, ['testDebugUnitTest', 'assembleDebug', 'lintDebug', '--offline', '--no-daemon'])
+else command('android.gradle', 'android', gradleExecutable, gradleArgs, { cwd: join(root, 'android') })
 skip('android.emulator', 'android', 'requires an explicitly provisioned AVD; repository run does not create one')
 skip('android.device', 'android', 'requires a physical Android device; repository run does not claim hardware acceptance')
 

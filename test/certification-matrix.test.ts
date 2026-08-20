@@ -28,3 +28,14 @@ test('certification matrix records device limitations instead of claiming hardwa
   assert.match(runner, /android\.emulator/)
   assert.match(runner, /android\.device/)
 })
+
+test('certification runner executes Gradle from the Android project directory', () => {
+  assert.match(runner, /gradleExecutable/)
+  assert.match(runner, /gradleArgs/)
+  assert.match(runner, /command\('android\.gradle',[\s\S]*\{ cwd: join\(root, 'android'\) \}\)/)
+})
+
+test('certification runner honors JAVA_HOME for Android checks', () => {
+  assert.match(runner, /process\.env\.JAVA_HOME/)
+  assert.match(runner, /javaExecutable/)
+})
