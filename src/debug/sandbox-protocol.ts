@@ -1,4 +1,4 @@
-import type { CoreEvent, CoreView } from '../core/protocol.ts'
+import type { CoreEvent, CoreView, HumanCommand } from '../core/protocol.ts'
 
 /** Version negotiated by the DSH supervisor and the StageCraft worker. */
 export const DEBUG_SANDBOX_PROTOCOL_VERSION = '1.0'
@@ -53,6 +53,7 @@ export type DebugRpcMethod =
   | 'worker.recover'
   | 'fiber.reload'
   | 'core.view.get'
+  | 'core.command.dispatch'
   | 'debug.subscribe'
   | 'inspector.endpoint.get'
 
@@ -64,6 +65,7 @@ export interface DebugRpcParams {
   'worker.recover': { reason?: string }
   'fiber.reload': { fiberId: string }
   'core.view.get': { revision?: number }
+  'core.command.dispatch': { command: HumanCommand }
   'debug.subscribe': { streams: readonly DebugStream[] }
   'inspector.endpoint.get': Record<string, never>
 }
@@ -76,6 +78,7 @@ export interface DebugRpcResults {
   'worker.recover': WorkerStatusSnapshot
   'fiber.reload': { fiberId: string; reloaded: true; generation: number }
   'core.view.get': CoreView
+  'core.command.dispatch': { accepted: true }
   'debug.subscribe': { streams: readonly DebugStream[]; subscribed: true }
   'inspector.endpoint.get': InspectorEndpoint | null
 }
@@ -163,6 +166,14 @@ export interface WorkerStatusStreamEnvelope {
 
 export type DebugStreamEnvelope = CoreViewStreamEnvelope | CoreEventStreamEnvelope | LogStreamEnvelope | WorkerStatusStreamEnvelope
 
+export interface WorkerReadyEnvelope {
+  protocol: typeof DEBUG_SANDBOX_PROTOCOL_VERSION
+  kind: 'ready'
+  generation: number
+  pid?: number
+  changedAt: string
+}
+
 export interface InspectorEndpoint {
   host: '127.0.0.1' | '::1'
   port: number
@@ -234,7 +245,7 @@ export function validateWorkerRequest(request: WorkerRequest): void {
   if (value.protocol !== DEBUG_SANDBOX_PROTOCOL_VERSION) throw new Error('Unsupported sandbox protocol version.')
   if (value.kind !== 'request') throw new Error('Worker request kind is invalid.')
   id(value.requestId, 'requestId'); validateOwner(value.owner as DebugOwner)
-  if (!['worker.status', 'worker.stop', 'worker.kill', 'worker.restart', 'worker.recover', 'fiber.reload', 'core.view.get', 'debug.subscribe', 'inspector.endpoint.get'].includes(String(value.method))) throw new Error('Worker request method is invalid.')
+  if (!['worker.status', 'worker.stop', 'worker.kill', 'worker.restart', 'worker.recover', 'fiber.reload', 'core.view.get', 'core.command.dispatch', 'debug.subscribe', 'inspector.endpoint.get'].includes(String(value.method))) throw new Error('Worker request method is invalid.')
   assertBoundedJson(value.params, 'request.params')
   if (value.deadlineAt !== undefined) date(value.deadlineAt, 'request.deadlineAt')
   assertBoundedJson(value, 'worker request')
