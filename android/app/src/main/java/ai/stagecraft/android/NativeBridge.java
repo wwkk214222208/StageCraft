@@ -32,25 +32,32 @@ public final class NativeBridge implements AutoCloseable {
     private volatile boolean closed;
     private volatile boolean userDisconnected;
     private final EmbeddedCoreArtifact.Verification embeddedCore;
+    private final AndroidCompositionOperations compositionOperations;
 
     public NativeBridge(Activity activity, WebView webView, RemoteSessionStore sessionStore, EmbeddedCoreArtifact.Verification embeddedCore) {
         this.activity = activity;
         this.webView = webView;
         this.sessionStore = sessionStore;
         this.embeddedCore = embeddedCore;
+        this.compositionOperations = new AndroidCompositionOperations(activity, new AndroidSqliteRepository(activity), new AndroidSecretStore(activity), networkExecutor);
     }
 
     @JavascriptInterface public boolean localCoreAllowed() {
         return embeddedCore.valid();
     }
 
-    @JavascriptInterface public String invokeSync(String operation, String inputJson) {
-        if (closed || operation == null || operation.length() > 64 || inputJson == null || inputJson.length() > 4 * 1024 * 1024) return "{}";
+    @JavascriptInterface public synchronized String invokeSync(String operation, String inputJson) {
+        if (closed) return errorJson("Native bridge is closed.");
+        if (operation == null || operation.length() > 64 || inputJson == null || inputJson.length() > 4 * 1024 * 1024) return errorJson("Invalid native request.");
         try {
             JSONObject input = new JSONObject(inputJson);
-            AndroidCompositionOperations operations = new AndroidCompositionOperations(activity, new AndroidSqliteRepository(activity), new AndroidSecretStore(activity), networkExecutor);
-            return operations.invokeSync(operation, input).toString();
-        } catch (Exception error) { return "{}"; }
+            return compositionOperations.invokeSync(operation, input).toString();
+        } catch (Exception error) { return errorJson(error.getMessage() == null ? "Native operation failed." : error.getMessage()); }
+    }
+
+    private String errorJson(String message) {
+        try { return new JSONObject().put("error", message).toString(); }
+        catch (Exception ignored) { return "{\"error\":\"Native operation failed.\"}"; }
     }
 
     @JavascriptInterface public void ready() {
@@ -319,6 +326,7 @@ public final class NativeBridge implements AutoCloseable {
         cancelPairRequest();
         connectionGeneration.incrementAndGet();
         closeConnection();
+        compositionOperations.close();
         networkExecutor.shutdownNow();
     }
 }

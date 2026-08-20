@@ -18,7 +18,9 @@ export function installAndroidCore(global: Record<string, unknown> = globalThis 
     if (typeof method !== 'function') throw new Error('Android native composition bridge is unavailable.')
     const result = method.call(native, operation, json(input))
     if (typeof result !== 'string' || result.length > 4 * 1024 * 1024) throw new Error('Android bridge response is invalid or too large.')
-    return JSON.parse(result)
+    const parsed = JSON.parse(result) as unknown
+    if (parsed && typeof parsed === 'object' && 'error' in parsed && typeof (parsed as { error?: unknown }).error === 'string') throw new Error((parsed as { error: string }).error)
+    return parsed
   }
   const operations: NativeOperations = {
     invoke: (operation, input = {}) => invoke(operation, input),
