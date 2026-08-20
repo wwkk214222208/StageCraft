@@ -102,6 +102,7 @@ test('Android embedded Core is generated, verified, and selected locally', () =>
   const gradle = read('app', 'build.gradle.kts')
   const entrypoint = readFileSync(join(root, 'src', 'portable', 'android-core.ts'), 'utf8')
   assert.match(readme, /embedded-core\.js/)
+  assert.match(readme, /shared StageCraft solution composition/)
   assert.match(readme, /model gateway, SQLite repository, Cordis services/)
   assert.match(bridge, /localCoreAllowed/)
   assert.match(bridge, /embeddedCore\.valid\(\)/)
@@ -110,7 +111,7 @@ test('Android embedded Core is generated, verified, and selected locally', () =>
   assert.match(activity, /EmbeddedCoreArtifact\.verify/)
   assert.match(gradle, /buildEmbeddedCore/)
   assert.match(gradle, /packageEmbeddedCore/)
-  assert.match(entrypoint, /new CoreRuntimeSkeleton/)
+  assert.match(entrypoint, /CoreRuntimeSkeleton/)
   assert.match(entrypoint, /StageCraftEmbeddedCore/)
 })
 

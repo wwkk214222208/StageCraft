@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = resolve(root, 'android/app/build/generated/embedded-core/embedded-core.js')
 const manifestOutput = resolve(root, 'android/app/build/generated/embedded-core/embedded-core.json')
-const version = '1.0.0'
+const version = '1.1.0'
 const protocolVersion = '1.0'
 await mkdir(dirname(output), { recursive: true })
 await build({

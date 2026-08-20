@@ -45,6 +45,15 @@ public final class NativeBridge implements AutoCloseable {
         return embeddedCore.valid();
     }
 
+    @JavascriptInterface public String invokeSync(String operation, String inputJson) {
+        if (closed || operation == null || operation.length() > 64 || inputJson == null || inputJson.length() > 4 * 1024 * 1024) return "{}";
+        try {
+            JSONObject input = new JSONObject(inputJson);
+            AndroidCompositionOperations operations = new AndroidCompositionOperations(activity, new AndroidSqliteRepository(activity), new AndroidSecretStore(activity), networkExecutor);
+            return operations.invokeSync(operation, input).toString();
+        } catch (Exception error) { return "{}"; }
+    }
+
     @JavascriptInterface public void ready() {
         if (closed) return;
         ready = true;

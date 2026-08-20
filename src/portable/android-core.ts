@@ -1,53 +1,52 @@
+import { createAndroidComposition } from './android-composition.ts'
 import { CoreRuntimeSkeleton } from '../core/runtime.ts'
-import { CORE_PROTOCOL_VERSION, type CoreEvent, type HumanCommand } from '../core/protocol.ts'
+import { CORE_PROTOCOL_VERSION, type HumanCommand } from '../core/protocol.ts'
+import type { NativeOperations } from '../platform/composition.ts'
 
-export const ANDROID_CORE_BUNDLE_VERSION = '1.0.0'
+export const ANDROID_CORE_BUNDLE_VERSION = '1.1.0'
 export const ANDROID_CORE_BRIDGE_VERSION = '1'
-
 type EventSink = (message: string) => void
+const json = (value: unknown): string => JSON.stringify(value)
 
-function json(value: unknown): string { return JSON.stringify(value) }
-
-/** Browser/WebView composition root for the shared, platform-neutral Core. */
+/** WebView entry: installs the complete StageCraft solution around the shared Core runtime. */
 export function installAndroidCore(global: Record<string, unknown> = globalThis as unknown as Record<string, unknown>): void {
-  const core = new CoreRuntimeSkeleton()
-  let sink: EventSink | undefined
-  let unsubscribe: (() => void) | undefined
-  let started = false
-
-  const emit = (message: unknown): void => { if (sink) sink(json(message)) }
-  const sendView = (reason: 'initial' | 'manual' | 'command'): void => {
-    const view = core.getView()
-    emit({ type: 'core.resync', reason, revision: view.revision, view })
+  const native = (global.StageCraftNative ?? {}) as Record<string, unknown>
+  if (global.StageCraftNative === undefined || typeof native.invokeSync !== 'function') {
+    const core = new CoreRuntimeSkeleton()
+    let fallbackSink: EventSink | undefined
+    global.StageCraftEmbeddedCore = Object.freeze({ bundleVersion: ANDROID_CORE_BUNDLE_VERSION, bridgeVersion: ANDROID_CORE_BRIDGE_VERSION, protocolVersion: CORE_PROTOCOL_VERSION, start: (next: EventSink) => { fallbackSink = next; fallbackSink(json({ type: 'connection.state', state: 'connected' })); fallbackSink(json({ type: 'core.resync', reason: 'initial', revision: core.getView().revision, view: core.getView() })) }, stop: () => { fallbackSink = undefined }, reconnect: () => {}, refresh: () => {}, dispatch: (value: string) => { void core.dispatch(JSON.parse(value) as HumanCommand).catch(error => fallbackSink?.(json({ type: 'connection.error', message: String(error) }))) }, cancel: () => {}, dispose: () => { fallbackSink = undefined } })
+    return
   }
+  const invoke = (operation: string, input: Record<string, unknown> = {}): unknown => {
+    const method = native.invokeSync as ((name: string, value: string) => string) | undefined
+    if (typeof method !== 'function') throw new Error('Android native composition bridge is unavailable.')
+    const result = method.call(native, operation, json(input))
+    if (typeof result !== 'string' || result.length > 4 * 1024 * 1024) throw new Error('Android bridge response is invalid or too large.')
+    return JSON.parse(result)
+  }
+  const operations: NativeOperations = {
+    invoke: (operation, input = {}) => invoke(operation, input),
+    invokeSync: (operation, input = {}) => invoke(operation, input),
+  }
+  let sink: EventSink | undefined
+  let composition: ReturnType<typeof createAndroidComposition> | undefined
+  const emit = (message: unknown): void => sink?.(json(message))
   const start = (nextSink: EventSink): void => {
     sink = nextSink
-    if (started) { sendView('manual'); return }
-    started = true
-    unsubscribe = core.subscribe((event: CoreEvent) => emit({ type: 'core.event', event }))
-    emit({ type: 'connection.state', state: 'connected' })
-    sendView('initial')
+    composition ??= createAndroidComposition(operations, { onMessage: emit })
+    composition.start()
   }
-  const stop = (): void => { if (sink) emit({ type: 'connection.state', state: 'disconnected' }); sink = undefined }
   const dispatch = (commandJson: string): void => {
-    if (!sink) return
-    try {
-      const command = JSON.parse(commandJson) as HumanCommand
-      void core.dispatch(command).then(() => sendView('command')).catch(error => emit({ type: 'connection.error', message: error instanceof Error ? error.message : String(error) }))
-    } catch (error) { emit({ type: 'connection.error', message: error instanceof Error ? error.message : String(error) }) }
+    if (!composition) return
+    try { void composition.dispatch(JSON.parse(commandJson) as HumanCommand).catch(error => emit({ type: 'connection.error', message: error instanceof Error ? error.message : String(error) })) }
+    catch (error) { emit({ type: 'connection.error', message: error instanceof Error ? error.message : String(error) }) }
   }
   global.StageCraftEmbeddedCore = Object.freeze({
-    bundleVersion: ANDROID_CORE_BUNDLE_VERSION,
-    bridgeVersion: ANDROID_CORE_BRIDGE_VERSION,
-    protocolVersion: CORE_PROTOCOL_VERSION,
-    start,
-    stop,
-    reconnect: () => { if (sink) sendView('manual') },
-    refresh: () => { if (sink) sendView('manual') },
-    dispatch,
-    cancel: (requestId?: string) => { void core.cancel(requestId).catch(error => emit({ type: 'connection.error', message: error instanceof Error ? error.message : String(error) })) },
-    dispose: () => { unsubscribe?.(); unsubscribe = undefined; stop() },
+    bundleVersion: ANDROID_CORE_BUNDLE_VERSION, bridgeVersion: ANDROID_CORE_BRIDGE_VERSION, protocolVersion: CORE_PROTOCOL_VERSION,
+    start, stop: () => { composition?.stop(); sink = undefined }, reconnect: () => composition?.start(), refresh: () => composition?.refresh(), dispatch,
+    cancel: (requestId?: string) => { void composition?.cancel(requestId).catch(error => emit({ type: 'connection.error', message: String(error) })) },
+    dispose: () => { composition?.dispose(); composition = undefined; sink = undefined },
   })
 }
 
-installAndroidCore()
+if (typeof globalThis !== 'undefined') installAndroidCore()
