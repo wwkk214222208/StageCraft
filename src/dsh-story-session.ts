@@ -27,10 +27,12 @@ type NativeSessions = {
   create?: (id?: string, options?: Record<string, unknown>) => NativeSession | { sessionId?: unknown; id?: unknown }
   binding?: (id: unknown) => { session?: NativeSession } | undefined
 }
+type RpcResponse = { result?: { ok: boolean; value?: unknown; error?: { message?: string } } }
 type NativeApiProxy = {
   sessions?: {
-    models?: (request: { rpcId: string; payload: { sessionId: string } }) => Promise<{ result?: { ok: boolean; value?: unknown; error?: { message?: string } } }>
-    selectModel?: (request: { rpcId: string; payload: { sessionId: string; provider: string; model: string; reasoningEffort?: string } }) => Promise<{ result?: { ok: boolean; value?: unknown; error?: { message?: string } } }>
+    create?: (request: { rpcId: string; payload: { sessionId?: string } }) => Promise<RpcResponse>
+    models?: (request: { rpcId: string; payload: { sessionId: string } }) => Promise<RpcResponse>
+    selectModel?: (request: { rpcId: string; payload: { sessionId: string; provider: string; model: string; reasoningEffort?: string } }) => Promise<RpcResponse>
   }
 }
 
@@ -52,19 +54,28 @@ export class DshStorySessionService {
   constructor(readStory: (id: string) => StoryPackage, native?: NativeSessions, apiProxy?: NativeApiProxy | (() => NativeApiProxy | undefined), now = () => new Date()) { this.readStory = readStory; this.native = native; this.apiProxy = apiProxy; this.now = now }
   private currentApiProxy(): NativeApiProxy | undefined { return typeof this.apiProxy === 'function' ? this.apiProxy() : this.apiProxy }
   capability(): DshStoryCapability { const apiProxy = this.currentApiProxy(); return this.native?.create || this.native?.binding ? { available: true, native: true, modelSelection: Boolean(apiProxy?.sessions?.models && apiProxy?.sessions?.selectModel), ...(!apiProxy?.sessions?.models ? { reason: '当前 DSH 宿主未暴露模型目录 API。' } : {}) } : { available: false, native: false, modelSelection: false, reason: '当前 DSH 宿主没有暴露原生会话服务。' } }
-  open(owner: string, storyId: string): DshStorySession {
-    if (!owner.trim()) throw new Error('会话所有者不能为空。')
-    const story = this.readStory(storyId); const timestamp = this.now().toISOString()
-    const nativeSession = this.native?.create?.(undefined, {})
-    const nativeId = sessionIdOf(nativeSession)
-    if (!nativeId) throw new Error('DSH 创建会话未返回有效的 sessionId。')
-    const nativeHandle = nativeSession && typeof nativeSession === 'object' ? nativeSession as NativeSession : undefined
-    const session: DshStorySession = { id: nativeId, owner: owner.slice(0, 128), storyId, storyTitle: story.title, createdAt: timestamp, updatedAt: timestamp, nativeId, ...(nativeHandle ? { nativeHandle } : {}), messages: [] }
-    this.sessions.set(session.id, session); return publicSession(session)
-  }
   close(owner: string, id: string): void { this.sessions.delete(this.require(owner, id).id) }
   get(owner: string, id: string): DshStorySession { return publicSession(this.require(owner, id)) }
   list(owner: string, storyId?: string): DshStorySession[] { return [...this.sessions.values()].filter(session => session.owner === owner && (!storyId || session.storyId === storyId)).map(publicSession) }
+  async open(owner: string, storyId: string): Promise<DshStorySession> {
+    if (!owner.trim()) throw new Error('会话所有者不能为空。')
+    const story = this.readStory(storyId); const timestamp = this.now().toISOString()
+    const apiProxy = this.currentApiProxy()
+    let nativeSession: NativeSession | undefined
+    let nativeId: string | undefined
+    if (apiProxy?.sessions?.create) {
+      const response = await apiProxy.sessions.create({ rpcId: `creator-create-session-${randomUUID()}`, payload: {} })
+      const created = this.unwrapRpc(response) as { sessionId?: unknown }
+      nativeId = sessionIdOf(created)
+      nativeSession = nativeId ? this.native?.binding?.(nativeId)?.session : undefined
+    } else {
+      nativeSession = this.native?.create?.(undefined, {}) as NativeSession | undefined
+      nativeId = sessionIdOf(nativeSession)
+    }
+    if (!nativeId) throw new Error('DSH 创建会话未返回有效的 sessionId。')
+    const session: DshStorySession = { id: nativeId, owner: owner.slice(0, 128), storyId, storyTitle: story.title, createdAt: timestamp, updatedAt: timestamp, nativeId, ...(nativeSession ? { nativeHandle: nativeSession } : {}), messages: [] }
+    this.sessions.set(session.id, session); return publicSession(session)
+  }
   async models(owner: string, id: string): Promise<unknown> {
     const apiProxy = this.currentApiProxy()
     if (!apiProxy?.sessions?.models) throw new Error('当前 DSH 宿主未提供模型目录 API。')

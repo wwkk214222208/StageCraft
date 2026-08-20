@@ -338,7 +338,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         return json(response, 200, dshStorySessions.list(String(url.searchParams.get('owner') ?? ''), url.searchParams.get('storyId') ?? undefined))
       }
       if (url.pathname === '/api/agent/session' && request.method === 'POST') {
-        const body = await readJson(request); return json(response, 200, dshStorySessions.open(String(body.owner ?? ''), String(body.storyId ?? options.storyId ?? 'eldoria')))
+        const body = await readJson(request); return json(response, 200, await dshStorySessions.open(String(body.owner ?? ''), String(body.storyId ?? options.storyId ?? 'eldoria')))
       }
       if (url.pathname === '/api/agent/session' && request.method === 'DELETE') {
         const body = await readJson(request); dshStorySessions.close(String(body.owner ?? ''), String(body.sessionId ?? '')); return json(response, 200, { ok: true })
