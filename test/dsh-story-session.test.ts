@@ -25,7 +25,7 @@ test('native model directory and selection stay on the DSH session', async () =>
   const f = fixture(); const session = f.service.open('owner-a', 'story')
   assert.deepEqual(await f.service.models('owner-a', session.id), { providers: [{ id: 'provider-a', models: ['model-a'] }] })
   await f.service.selectModel('owner-a', session.id, { provider: 'provider-a', model: 'model-a' })
-  assert.deepEqual(f.calls[0], ['select-model', { provider: 'provider-a', model: 'model-a' }])
+  assert.deepEqual(f.calls.find(call => call[0] === 'select-model'), ['select-model', { sessionId: 'native-1', provider: 'provider-a', model: 'model-a' }])
 })
 
 test('close rejects further access', () => {
