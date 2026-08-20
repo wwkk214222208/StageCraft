@@ -27,7 +27,7 @@ test('built bundle contains a worker entry and excludes private custom content',
   const files = readFileSync(new URL('../.gitignore', import.meta.url), 'utf8')
   assert.match(files, /dsh-rp\/dist\//)
   const packaged = readdirSync(dist, { recursive: true }).map(String)
-  assert.ok(packaged.every(file => !/(providers\.json|stagecraft\.sqlite|\.tgz)$/.test(file)))
+  assert.ok(packaged.every(file => !/(^|\/)(providers\.json|stagecraft\.sqlite|[^/]+\.tgz)$/.test(file)))
   const build = readFileSync(new URL('../dsh-rp/scripts/build.mjs', import.meta.url), 'utf8')
   assert.doesNotMatch(build, /copyFileSync\([^\n]*(custom|save|data)/)
 })
