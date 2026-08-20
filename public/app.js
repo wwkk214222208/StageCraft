@@ -501,7 +501,20 @@ $('#provider-save').onclick = event => { event.preventDefault(); api('/api/provi
 $('#player-save').onclick = event => { event.preventDefault(); api('/api/player-character', { name: $('#player-name').value, persona: $('#player-persona').value, currentState: $('#player-state').value }).then(ok => { if (ok) $('#player-modal').close() }) }
 $('#restart').onclick = event => { event.preventDefault(); if (confirm('重开将清除当前剧本的回合、草稿和已批准正文。继续吗？')) api('/api/restart', { storyId: $('#story-select').value, mode: $('#room-mode-select').value, autoPublish: $('#room-auto-publish').checked }).then(ok => { if (ok) $('#story-modal').close() }) }
 $('#save-archive').onclick = event => { event.preventDefault(); api('/api/archive/save', { name: $('#archive-name').value.trim() }).then(ok => { if (ok) { $('#archive-name').value = ''; refreshArchiveList() } }) }
-$('#edit-story').onclick = event => { event.preventDefault(); openStoryEditor() }
+$('#edit-story').onclick = async event => {
+  event.preventDefault()
+  const button = event.currentTarget
+  button.disabled = true
+  try {
+    if (!$('#story-select').value) await loadStories()
+    await openStoryEditor()
+  } catch (error) {
+    console.error('[StageCraft] Creator Workbench open failed', error)
+    alert(`打开 Creator Workbench 失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    button.disabled = false
+  }
+}
 
 // ── 存档管理（任务 A）──
 async function refreshArchiveList() {
