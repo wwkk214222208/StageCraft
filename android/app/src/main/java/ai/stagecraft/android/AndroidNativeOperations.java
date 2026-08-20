@@ -7,7 +7,7 @@ import org.json.JSONObject;
  * It contains persistence/assets/secrets only; StageCraft commands remain in Core.
  */
 public interface AndroidNativeOperations {
-    JSONObject invokeSync(String operation, JSONObject input) throws Exception;
+    Object invokeSync(String operation, JSONObject input) throws Exception;
     void invoke(String operation, JSONObject input, Callback callback);
 
     interface Callback {

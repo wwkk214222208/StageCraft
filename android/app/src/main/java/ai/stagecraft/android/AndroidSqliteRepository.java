@@ -30,8 +30,30 @@ public final class AndroidSqliteRepository extends SQLiteOpenHelper {
     public synchronized JSONObject getRecord(String collection, String id) throws Exception { try (Cursor cursor = getReadableDatabase().query("records", new String[]{"value"}, "collection=? AND id=?", new String[]{collection, id}, null, null, null)) { return cursor.moveToFirst() ? new JSONObject(cursor.getString(0)) : null; } }
     public synchronized List<JSONObject> listRecords(String collection) throws Exception { List<JSONObject> values = new ArrayList<>(); try (Cursor cursor = getReadableDatabase().query("records", new String[]{"value"}, "collection=?", new String[]{collection}, null, null, "id ASC")) { while (cursor.moveToNext()) values.add(new JSONObject(cursor.getString(0))); } return values; }
     public synchronized void deleteRecord(String collection, String id) { getWritableDatabase().delete("records", "collection=? AND id=?", new String[]{collection, id}); }
-    public synchronized void saveRoom(JSONObject room) { putRecord("rooms", room.optString("id"), room); }
+    public interface RoomMutation { Object apply(JSONObject room) throws Exception; }
+    public synchronized void saveRoom(JSONObject room) {
+        if (room == null || room.optString("id", "").isEmpty()) throw new IllegalArgumentException("Invalid room snapshot.");
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            ContentValues row = new ContentValues(); row.put("collection", "rooms"); row.put("id", room.optString("id")); row.put("value", room.toString());
+            if (db.insertWithOnConflict("records", null, row, SQLiteDatabase.CONFLICT_REPLACE) == -1) throw new IllegalStateException("Unable to save room.");
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
     public synchronized JSONObject getRoom(String roomId) throws Exception { return getRecord("rooms", roomId); }
+    public synchronized Object mutateRoom(String roomId, RoomMutation mutation) throws Exception {
+        JSONObject current = getRoom(roomId);
+        if (current == null) throw new IllegalArgumentException("Room not found.");
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            JSONObject next = new JSONObject(current.toString());
+            Object result = mutation.apply(next);
+            if (!roomId.equals(next.optString("id"))) throw new IllegalArgumentException("Invalid room mutation.");
+            ContentValues row = new ContentValues(); row.put("collection", "rooms"); row.put("id", roomId); row.put("value", next.toString());
+            if (db.insertWithOnConflict("records", null, row, SQLiteDatabase.CONFLICT_REPLACE) == -1) throw new IllegalStateException("Unable to persist room mutation.");
+            db.setTransactionSuccessful(); return result;
+        } finally { db.endTransaction(); }
+    }
     public synchronized void saveCoreState(String roomId, long revision, JSONObject state, org.json.JSONArray events, org.json.JSONArray workflows) {
         if (roomId == null || roomId.isEmpty() || roomId.length() > 256 || revision < 0 || state == null || events == null || workflows == null) throw new IllegalArgumentException("Invalid Core state snapshot.");
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();

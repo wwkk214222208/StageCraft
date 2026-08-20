@@ -64,9 +64,10 @@ export function createAndroidComposition(operations: NativeOperations, options: 
     return value
   }
   const notify = (id: string): void => options.onMessage?.({ type: 'room.changed', roomId: id, view: core.getView() })
-  const chat = new StageCraftChatService(repository, options.workers ?? fakeWorkers, core, { get: () => room ??= readRoom(), notify, thinking: (id, event) => options.onMessage?.({ type: 'thinking', roomId: id, event }) })
-  const director = new StageCraftDirectorService(repository, options.workers ?? fakeWorkers, core, { get: () => room ??= readRoom(), notify, thinking: (id, event) => options.onMessage?.({ type: 'thinking', roomId: id, event }) })
-  const management = new StageCraftManagementService(repository, { get: () => room ??= readRoom(), notify })
+  const currentRoom = (): RoomSnapshot => { room = readRoom(); return room }
+  const chat = new StageCraftChatService(repository, options.workers ?? fakeWorkers, core, { get: currentRoom, notify, thinking: (id, event) => options.onMessage?.({ type: 'thinking', roomId: id, event }) })
+  const director = new StageCraftDirectorService(repository, options.workers ?? fakeWorkers, core, { get: currentRoom, notify, thinking: (id, event) => options.onMessage?.({ type: 'thinking', roomId: id, event }) })
+  const management = new StageCraftManagementService(repository, { get: currentRoom, notify })
   const bindings: Disposable[] = [container.addSolution(new StageCraftSolutionPlugin({ chat, director, management, defaultRoomId: roomId })), container.addLlm(new NativeCoreLlmRouter(composition.model))]
   const state: CoreStateRepository = composition.state
   bindings.push(core.attachStateRepository(state))

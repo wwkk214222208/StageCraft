@@ -56,8 +56,8 @@ public final class NativeBridge implements AutoCloseable {
     }
 
     private String errorJson(String message) {
-        try { return new JSONObject().put("error", message).toString(); }
-        catch (Exception ignored) { return "{\"error\":\"Native operation failed.\"}"; }
+        try { return new JSONObject().put("ok", false).put("error", new JSONObject().put("code", "NATIVE_OPERATION_FAILED").put("message", message == null || message.isEmpty() ? "Native operation failed." : message)).toString(); }
+        catch (Exception ignored) { return "{\"ok\":false,\"error\":{\"code\":\"NATIVE_OPERATION_FAILED\",\"message\":\"Native operation failed.\"}}"; }
     }
 
     @JavascriptInterface public void ready() {

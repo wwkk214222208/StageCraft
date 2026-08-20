@@ -28,6 +28,22 @@ public final class JsonSafety {
         if (result == null) throw new IllegalArgumentException("Missing " + key + ".");
         return result;
     }
+    public static String stringArg(JSONArray args, int index, int maximum) {
+        if (args == null || index < 0 || index >= args.length() || args.isNull(index)) throw new IllegalArgumentException("Missing repository argument " + index + ".");
+        String result = args.optString(index, null);
+        if (result == null || result.length() > maximum) throw new IllegalArgumentException("Invalid repository argument " + index + ".");
+        return result;
+    }
+    public static JSONObject objectArg(JSONArray args, int index) {
+        JSONObject result = args == null || index < 0 || index >= args.length() ? null : args.optJSONObject(index);
+        if (result == null) throw new IllegalArgumentException("Invalid repository object argument " + index + ".");
+        return result;
+    }
+    public static JSONArray arrayArg(JSONArray args, int index) {
+        JSONArray result = args == null || index < 0 || index >= args.length() ? null : args.optJSONArray(index);
+        if (result == null) throw new IllegalArgumentException("Invalid repository array argument " + index + ".");
+        return result;
+    }
     public static void path(String path) {
         if (path == null || path.isEmpty() || path.length() > 512 || path.startsWith("/") || path.contains("..") || path.indexOf('\\') >= 0 || path.indexOf('\0') >= 0) throw new IllegalArgumentException("Invalid asset path.");
     }
