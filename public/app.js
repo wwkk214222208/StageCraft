@@ -660,7 +660,7 @@ async function openStoryEditor() {
   $('#story-edit-id').textContent = storyId
   $('#creator-save-state').textContent = '已加载'
   resetCreatorPreview()
-  $('#creator-story-tree .tree-item').forEach(item => item.classList.toggle('active', item.dataset.workbenchTarget === 'story-package'))
+  document.querySelectorAll('#creator-story-tree .tree-item').forEach(item => item.classList.toggle('active', item.dataset.workbenchTarget === 'story-package'))
   document.querySelectorAll('.creator-section').forEach(section => { section.hidden = false })
   $('#story-edit-modal').showModal()
 }
