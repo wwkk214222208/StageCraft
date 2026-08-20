@@ -354,7 +354,7 @@ $('#remote-pairing-code').onclick = async event => {
   }
 }
 
-// ── ST 角色卡导入（坯子） ──
+// ── ST 角色卡导入（兼容旧房间导入与 Creator Workbench 预览） ──
 let stImportFile = null
 $('#st-import-open').onclick = () => { stImportFile = null; $('#st-import-file').value = ''; $('#st-import-run').disabled = true; $('#st-import-preview').innerHTML = '<p class="hint">选择 JSON 或 PNG 角色卡后显示解析结果。</p>'; $('#st-import-modal').showModal() }
 $('#st-import-close').onclick = () => $('#st-import-modal').close()
@@ -386,9 +386,21 @@ $('#st-import-run').onclick = async () => {
   button.disabled = true
   preview.innerHTML = '<p class="hint">解析中…</p>'
   try {
-    const response = await fetch('/api/st-cards/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(stImportFile) })
+    const workbenchMode = document.querySelector('#story-edit-modal')?.open
+    const response = await fetch(workbenchMode ? '/api/creator/preview' : '/api/st-cards/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(workbenchMode ? { ...stImportFile, kind: /\.png$/i.test(stImportFile.filename) ? 'st-card-png' : 'st-card-json' } : stImportFile) })
     const data = await response.json()
     if (!response.ok) { preview.innerHTML = `<p class="error">导入失败：${escape(data.error || response.status)}</p>`; button.disabled = false; return }
+    if (workbenchMode) {
+      window.creatorPreview = data
+      $('#st-import-modal').close()
+      $('#creator-preview-status').textContent = '待审批'
+      $('#creator-preview-status').className = 'creator-status ready'
+      $('#creator-agent-preview').innerHTML = `<strong>已生成 Creator 预览</strong><p>${escape(data.source?.summary ?? '候选内容已准备')}</p>`
+      $('#creator-warnings').innerHTML = (data.warnings ?? []).map(warning => `<li>${escape(warning.message)}</li>`).join('') || '<li class="hint">暂无警告</li>'
+      $('#creator-field-diffs').innerHTML = (data.diffs ?? []).map(diff => `<li data-creator-path="${escape(diff.path)}"><code>${escape(diff.path)}</code>：${escape(diff.change)} <button type="button" data-creator-decision="accept">接受</button><button type="button" data-creator-decision="reject">拒绝</button></li>`).join('')
+      button.textContent = '已生成预览'
+      return
+    }
     const mapped = data.mapped ?? {}
     const warnings = (mapped.warnings ?? []).map(warning => `<li>${escape(warning)}</li>`).join('')
     preview.innerHTML = `<p class="st-import-ok">✅ 已导入 <b>${escape(mapped.name)}</b>（${mapped.selfModelChars} 字人设${mapped.loreCount ? `，${mapped.loreCount} 条世界书` : ''}${mapped.spec ? `，${escape(mapped.spec)}` : ''}）</p>${warnings ? `<ul class="st-import-warnings">${warnings}</ul>` : ''}<p class="hint">可在左侧角色列表中查看；世界书条目在「世界书」标签页。</p>`
@@ -406,6 +418,10 @@ $('#st-import-run').onclick = async () => {
     button.disabled = false
   }
 }
+document.addEventListener('click', event => {
+  const decision = event.target.closest?.('[data-creator-decision]')
+  if (decision) { const row = decision.closest('[data-creator-path]'); const diff = window.creatorPreview?.diffs?.find(item => item.path === row?.dataset.creatorPath); if (diff) { diff.decision = decision.dataset.creatorDecision; row.classList.toggle('accepted', diff.decision === 'accept'); row.classList.toggle('rejected', diff.decision === 'reject') } }
+})
 $('#prompts-edit').onclick = async () => {
   $('#prompts-modal').showModal()
   try {
@@ -576,7 +592,7 @@ document.addEventListener('click', event => {
     const section = document.querySelector(`#creator-section-${target.dataset.workbenchTarget}`)
     section?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
-  if (event.target.closest?.('#creator-import-card')) { $('#story-edit-modal').close(); $('#st-import-open').click() }
+  if (event.target.closest?.('#creator-import-card')) { $('#st-import-open').click() }
 })
 function renderStoryRoles() {
   const grid = $('#story-roles-grid')

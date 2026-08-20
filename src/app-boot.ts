@@ -18,6 +18,7 @@ import { listStoryPackages, loadStoryPackage, saveStoryPackage, type StoryPackag
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
 import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
+import { CreatorWorkbenchService } from './creator-workbench-service.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
 import { ModelGatewayRouterAdapter } from './core/model-router-adapter.ts'
 import { DefaultCorePluginContainer } from './core/container.ts'
@@ -226,6 +227,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const container = new DefaultCorePluginContainer(core)
   const humanCore = new HttpHumanCorePlugin()
   const runtime = new RoomRuntime(store, undefined, core)
+  const creatorWorkbench = new CreatorWorkbenchService({ read: () => loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'), write: (next, previous) => { if (JSON.stringify(loadStoryPackage(storiesRoot, next.id)) !== JSON.stringify(previous)) throw new Error('Creator preview conflict: StoryPackage changed since preview.'); saveStoryPackage(storiesRoot, next) } }, roomId)
   const stagecraft = createStageCraftService(core, roomId, container, repository => core.attachStateRepository(repository))
   const solution = new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), management: runtime.getManagementService(), defaultRoomId: roomId })
   async function compensateStartFailure(): Promise<void> {
@@ -233,6 +235,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       try { await fiber.dispose() } catch { /* preserve the startup error */ }
     }
     appFibers.length = 0
+    try { creatorWorkbench.dispose() } catch { /* preserve the startup error */ }
     try { runtime.dispose() } catch { /* preserve the startup error */ }
     try { await container.dispose() } catch { /* preserve the startup error */ }
     try { store.close() } catch { /* preserve the startup error */ }
@@ -325,6 +328,20 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         return json(response, 200, { ok: true, files: listSaves() })
       }
       if (url.pathname === '/api/story/get' && request.method === 'GET') return json(response, 200, loadStoryPackage(storiesRoot, String(url.searchParams.get('id') ?? '')))
+      if (url.pathname === '/api/creator/preview' && request.method === 'POST') {
+        const body = await readJson(request)
+        const kind = String(body.kind ?? 'text') as import('./creator-contracts.ts').CreatorSourceKind
+        const preview = await creatorWorkbench.preview({ kind, name: body.name ? String(body.name) : undefined, content: String(body.content ?? ''), contentType: body.contentType ? String(body.contentType) : undefined })
+        return json(response, 200, preview)
+      }
+      if (url.pathname === '/api/creator/apply' && request.method === 'POST') {
+        const body = await readJson(request)
+        return json(response, 200, creatorWorkbench.apply(body))
+      }
+      if (url.pathname === '/api/creator/revert' && request.method === 'POST') {
+        const body = await readJson(request)
+        return json(response, 200, { ok: true, story: creatorWorkbench.revert(String(body.previewId ?? '')) })
+      }
       if (url.pathname === '/api/story/save' && request.method === 'POST') {
         const body = await readJson(request)
         const story = body.story as StoryPackage
@@ -831,6 +848,11 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
           try { await fiber.dispose() } catch (error) { firstError ??= error }
         }
         appFibers.length = 0
+      } catch (error) {
+        firstError ??= error
+      }
+      try {
+        creatorWorkbench.dispose()
       } catch (error) {
         firstError ??= error
       }
