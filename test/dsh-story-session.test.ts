@@ -6,9 +6,10 @@ import type { StoryPackage } from '../src/story-packages.ts'
 const story = (title = 'Original'): StoryPackage => ({ id: 'story', title, opening: 'Opening', playerCharacter: { name: 'Player', persona: 'Persona', currentState: 'Ready' }, roles: [{ id: 'role', name: 'Role', portraitRef: '/assets/default.svg', currentState: 'Waiting', presence: 'present', memoryTimeline: {}, selfModel: 'Model' }] })
 function fixture() {
   const calls: any[] = []; let current = story()
-  const nativeSession = { id: 'native-1', prompt: async (content: unknown) => { calls.push(['prompt', content]) }, models: async () => ({ providers: [{ id: 'provider-a', models: ['model-a'] }] }), selectModel: async (selection: unknown) => { calls.push(['select-model', selection]); return { selected: selection } } }
+  const nativeSession = { id: 'native-1', prompt: async (content: unknown) => { calls.push(['prompt', content]) } }
   const native = { create: () => nativeSession, binding: (id: string) => id === 'native-1' ? { session: nativeSession } : undefined }
-  const service = new DshStorySessionService(() => structuredClone(current), native)
+  const apiProxy = { sessions: { models: async (request: unknown) => { calls.push(['models', request]); return { providers: [{ id: 'provider-a', models: ['model-a'] }] } }, selectModel: async (selection: unknown) => { calls.push(['select-model', selection]); return { selected: selection } } } }
+  const service = new DshStorySessionService(() => structuredClone(current), native, apiProxy)
   return { service, calls, get current() { return current } }
 }
 
