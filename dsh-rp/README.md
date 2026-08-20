@@ -37,6 +37,11 @@ cordis.patch.yml 中的 config 是正式配置入口：
 | port | 8799 | 酒馆 HTTP 端口 |
 | host | 127.0.0.1 | HTTP 监听地址 |
 | root | bundle 的 dist/ | 数据、剧本、提示词和静态资源根目录 |
+| remoteEnabled | false | 显式开启开发期局域网配对与 Bearer 鉴权 |
+| remotePairingTtlMs | 300000 | 一次性配对码有效期（毫秒） |
+| remoteSessionTtlMs | 43200000 | 远程会话有效期（毫秒） |
+
+远程入口目前只用于受信任局域网内的开发验证，本身不提供 TLS；跨越不受信任网络时必须由外部 TLS 终结层保护。监听非回环地址但未显式启用 `remoteEnabled` 会拒绝启动。
 
 RP_PORT、HOST、RP_ROOT 仍作为独立开发运行时的兼容回退；DSH 配置字段优先。
 

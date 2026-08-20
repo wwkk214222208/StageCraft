@@ -25,6 +25,7 @@ import { StageCraftSolutionPlugin } from './core/solutions.ts'
 import { StoreCoreStateRepository } from './core/store-state-repository.ts'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { coreRuntimeCordisPlugin, createStageCraftService, humanCordisPlugin, llmCordisPlugin, solutionCordisPlugin, stageCraftServicePlugin, stateRepositoryCordisPlugin } from './core/cordis-plugins.ts'
+import { RemoteAccessService, isLoopbackAddress, isLoopbackHost, type RemoteAccessOptions } from './remote-access.ts'
 
 /** Provider replacement transaction: preflight must run before tearing down the old route. */
 export async function switchProviderSafely<T>(assertReady: () => void, disposeOld: () => Promise<void> | void, installNew: () => T): Promise<T> {
@@ -62,6 +63,8 @@ export interface TavernOptions {
   port?: number
   /** 监听主机（默认 process.env.HOST ?? '127.0.0.1'） */
   host?: string
+  /** Development-only LAN transport; disabled by default and does not provide TLS. */
+  remoteAccess?: RemoteAccessOptions | boolean
 }
 
 export interface TavernApp {
@@ -75,6 +78,8 @@ export interface TavernApp {
   gateway: ModelGateway | undefined
   providerStore: ProviderConfigStore
   server: Server
+  /** Local operator API for pairing-code creation and session revocation. */
+  remoteAccess: RemoteAccessService
   /** 关闭 HTTP 服务器（立即断开 SSE 等长连接）并关闭数据库 */
   close(): Promise<void>
 }
@@ -93,6 +98,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const saveRoot = options.saveRoot ?? join(root, 'save')
   const dataDir = options.dataDir ?? join(root, 'data')
   const promptsFilePath = options.promptsFilePath ?? join(root, 'prompts', 'prompts.json')
+  const host = options.host ?? process.env.HOST ?? '127.0.0.1'
+  const port = options.port ?? Number(process.env.PORT ?? 8787)
+  const remoteAccess = new RemoteAccessService(typeof options.remoteAccess === 'boolean' ? { enabled: options.remoteAccess } : options.remoteAccess)
+  if (!isLoopbackHost(host) && !remoteAccess.enabled) throw new Error('Non-loopback listening requires remote access to be explicitly enabled.')
   mkdirSync(saveRoot, { recursive: true })
   mkdirSync(dataDir, { recursive: true })
 
@@ -261,6 +270,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     try {
+      if (await remoteAccess.handlePairing(request, response, url)) return
+      const protectedPath = ['/api', '/assets', '/custom'].some(prefix => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
+      const requiresAuthorization = protectedPath && (remoteAccess.authenticateLoopback || !isLoopbackAddress(request.socket.remoteAddress))
+      if (requiresAuthorization && !remoteAccess.authorizeRequest(request)) return json(response, 401, { error: 'Unauthorized' })
       if (url.pathname === '/api/room') return json(response, 200, runtime.get(url.searchParams.get('id') ?? roomId))
       
       // 新架构：Core Runtime 协议端点由 HumanCoreInteractionPlugin 处理。
@@ -739,8 +752,6 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     }
   }
 
-  const host = options.host ?? process.env.HOST ?? '127.0.0.1'
-  const port = options.port ?? Number(process.env.PORT ?? 8787)
   try {
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error): void => { server.off('listening', onListening); reject(error) }
@@ -777,6 +788,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     providerStore,
     container,
     server,
+    remoteAccess,
     async close(): Promise<void> {
       if (closed) return
       closed = true

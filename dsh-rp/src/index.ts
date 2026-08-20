@@ -33,12 +33,21 @@ export interface Config {
   host?: string
   /** Bundle data/resource root; omitted uses RP_ROOT or this package's root. */
   root?: string
+  /** Enable development-only bearer-authenticated LAN access (TLS is external). */
+  remoteEnabled?: boolean
+  /** One-time pairing code lifetime in milliseconds. */
+  remotePairingTtlMs?: number
+  /** Bearer session lifetime in milliseconds. */
+  remoteSessionTtlMs?: number
 }
 
 export const Config = z.object({
   port: z.natural().max(65535),
   host: z.string(),
   root: z.string(),
+  remoteEnabled: z.boolean(),
+  remotePairingTtlMs: z.natural(),
+  remoteSessionTtlMs: z.natural(),
 })
 
 /**
@@ -54,7 +63,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const port = config.port ?? Number(process.env.RP_PORT ?? 8799)
   const host = config.host || process.env.HOST || '127.0.0.1'
   await ctx.effect(async () => {
-    const app: TavernApp = await startTavern({ root, port, host, ctx })
+    const app: TavernApp = await startTavern({ root, port, host, ctx, remoteAccess: { enabled: config.remoteEnabled === true, pairingTtlMs: config.remotePairingTtlMs, sessionTtlMs: config.remoteSessionTtlMs } })
     return () => app.close()
   })
 }
