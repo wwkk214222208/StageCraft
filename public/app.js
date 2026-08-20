@@ -698,8 +698,7 @@ async function sendCreatorMessage(inputSelector, buttonSelector) {
   try { const session = await creatorRequest('/api/agent/message', { owner: creatorOwner, sessionId: creatorSession.id, storyId: $('#story-edit-id').textContent, text }); input.value = ''; renderCreatorSession(session); $('#creator-agent-preview').innerHTML = '<strong>已发送给 DSH</strong><p>正在等待 DSH 完成并写入剧本文件…</p>'; void waitForCreatorAgentFileChange(before) } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false }
 }
 $('#creator-session-send').onclick = () => sendCreatorMessage('#creator-session-input', '#creator-session-send')
-$('#creator-player-send').onclick = () => sendCreatorMessage('#creator-player-input', '#creator-player-send')
-$('#creator-player-input').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#creator-player-send').click() } })
+$('#creator-session-input').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#creator-session-send').click() } })
 async function refreshCreatorStory(notify = true) {
   const storyId = $('#story-edit-id').textContent
   if (!storyId) return null

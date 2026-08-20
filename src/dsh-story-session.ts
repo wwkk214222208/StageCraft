@@ -24,7 +24,7 @@ type NativeSession = {
   getSnapshot?: () => unknown
 }
 type NativeSessions = {
-  create?: (options?: Record<string, unknown>) => NativeSession | { sessionId?: unknown; id?: unknown }
+  create?: (id?: string, options?: Record<string, unknown>) => NativeSession | { sessionId?: unknown; id?: unknown }
   binding?: (id: unknown) => { session?: NativeSession } | undefined
 }
 
@@ -47,7 +47,7 @@ export class DshStorySessionService {
   open(owner: string, storyId: string): DshStorySession {
     if (!owner.trim()) throw new Error('会话所有者不能为空。')
     const story = this.readStory(storyId); const timestamp = this.now().toISOString()
-    const nativeSession = this.native?.create?.({})
+    const nativeSession = this.native?.create?.(undefined, {})
     const nativeId = sessionIdOf(nativeSession)
     if (!nativeId) throw new Error('DSH 创建会话未返回有效的 sessionId。')
     const nativeHandle = nativeSession && typeof nativeSession === 'object' ? nativeSession as NativeSession : undefined
