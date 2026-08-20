@@ -88,8 +88,12 @@ public final class NativeBridge implements AutoCloseable {
         if (current != null) current.dispatch(commandJson);
     }
 
-    /** Host integration point for the shared Core runtime. The Android app does not implement domain logic. */
+    /**
+     * Host integration point for a packaged shared Core runtime. This checkout does not
+     * provide such a runtime, so the normal Activity never calls this method.
+     */
     public synchronized void installLocalCore(LocalCoreConnection.CoreHost host) {
+        if (host == null) throw new IllegalArgumentException("Standalone local mode is unavailable: a packaged shared Core runtime is required.");
         closeConnection();
         localPlugin = new AndroidHumanPlugin(host, this::emit);
         if (foreground && ready) localPlugin.start();

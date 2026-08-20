@@ -1,6 +1,7 @@
 package ai.stagecraft.android;
 
 import org.json.JSONObject;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -20,7 +21,10 @@ public final class LocalCoreConnection implements AutoCloseable {
     private final ListenerSink sink;
     private final Set<Listener> subscriptions = ConcurrentHashMap.newKeySet();
     private volatile boolean closed;
-    public LocalCoreConnection(CoreHost host, ListenerSink sink) { this.host = host; this.sink = sink; }
+    public LocalCoreConnection(CoreHost host, ListenerSink sink) {
+        this.host = Objects.requireNonNull(host, "A shared Core runtime host is required for local mode.");
+        this.sink = Objects.requireNonNull(sink, "A listener sink is required.");
+    }
     public synchronized void connect() {
         if (closed) return;
         if (subscriptions.isEmpty()) { Listener listener = event -> emit(messageWithEvent(event)); subscriptions.add(listener); host.subscribe(listener); }

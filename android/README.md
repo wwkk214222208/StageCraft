@@ -6,7 +6,7 @@ This directory is the native Android host for the shared StageCraft Core protoco
 
 `NativeBridge.installLocalCore(...)` is the integration point for the app composition root. The supplied `LocalCoreConnection.CoreHost` must be the shared Core runtime; Android does not implement Director, Chat, approval, state transactions, workflows, or card business logic a second time. The renderer and `renderer.js` are shared by both modes.
 
-The checkout currently contains the portable Core as Node/TypeScript and does not contain an Android JS/WASM Core runtime artifact. Therefore the APK host contract, ports, tests, and lifecycle wiring are implemented here, while packaging a real embedded Core runtime remains an integration/build prerequisite for a standalone APK. A future composition root should adapt the shared Core through `CoreHost`, not replace it with Android domain code.
+The checkout currently contains the portable Core as Node/TypeScript and does not contain an Android JS/WASM Core runtime artifact. Consequently the shipped APK is remote-only: `MainActivity` does not claim or select standalone mode, and `installLocalCore(...)` is an integration contract rather than a working APK feature. Passing `null` or omitting the host fails closed; there is no Android fallback implementation. A future composition root may enable standalone mode only after packaging a real shared Core runtime and adapting it through `CoreHost`, not by adding Android domain code.
 
 ## Android ports
 

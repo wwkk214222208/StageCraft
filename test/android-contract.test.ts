@@ -94,6 +94,22 @@ test('Android credentials stay native, encrypted, and out of URLs or Javascript'
   assert.match(bridge, /JSONObject\.quote\(messageJson\)/)
 })
 
+test('Android local mode fails closed until a shared runtime is injected', () => {
+  const readme = readFileSync(join(android, 'README.md'), 'utf8')
+  const bridge = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'NativeBridge.java')
+  const localConnection = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'LocalCoreConnection.java')
+  const activity = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'MainActivity.java')
+  const gradle = read('app', 'build.gradle.kts')
+  assert.match(readme, /shipped APK is remote-only/)
+  assert.match(readme, /does not contain an Android JS\/WASM Core runtime artifact/)
+  assert.match(bridge, /host == null/)
+  assert.match(bridge, /packaged shared Core runtime is required/)
+  assert.match(localConnection, /Objects\.requireNonNull\(host/)
+  assert.match(localConnection, /Objects\.requireNonNull\(sink/)
+  assert.doesNotMatch(activity, /installLocalCore\(/)
+  assert.doesNotMatch(gradle, /localCore|wasm|core-runtime/i)
+})
+
 test('Android native connection establishes SSE before view and never retries commands', () => {
   const connection = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'RemoteCoreConnection.java')
   const openStream = connection.slice(connection.indexOf('private void openStream'), connection.indexOf('private void scheduleReconnect'))
