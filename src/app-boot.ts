@@ -335,7 +335,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       if (url.pathname === '/api/story/get' && request.method === 'GET') return json(response, 200, loadStoryPackage(storiesRoot, String(url.searchParams.get('id') ?? '')))
       if (url.pathname === '/api/agent/capability' && request.method === 'GET') return json(response, 200, dshStorySessions.capability())
       if (url.pathname === '/api/agent/session' && request.method === 'GET') {
-        return json(response, 200, dshStorySessions.list(String(url.searchParams.get('owner') ?? ''), url.searchParams.get('storyId') ?? undefined))
+        return json(response, 200, await dshStorySessions.list(String(url.searchParams.get('owner') ?? ''), url.searchParams.get('storyId') ?? undefined))
       }
       if (url.pathname === '/api/agent/session' && request.method === 'POST') {
         const body = await readJson(request); return json(response, 200, await dshStorySessions.open(String(body.owner ?? ''), String(body.storyId ?? options.storyId ?? 'eldoria')))

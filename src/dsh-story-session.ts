@@ -31,8 +31,10 @@ type RpcResponse = { result?: { ok: boolean; value?: unknown; error?: { message?
 type NativeApiProxy = {
   sessions?: {
     create?: (request: { rpcId: string; payload: { sessionId?: string } }) => Promise<RpcResponse>
+    list?: (request: { rpcId: string; payload: { cursor?: string } }) => Promise<RpcResponse>
     models?: (request: { rpcId: string; payload: { sessionId: string } }) => Promise<RpcResponse>
     selectModel?: (request: { rpcId: string; payload: { sessionId: string; provider: string; model: string; reasoningEffort?: string } }) => Promise<RpcResponse>
+    prompt?: (request: { rpcId: string; payload: { sessionId: string; mode: 'queue' | 'steer'; content: unknown[] } }) => Promise<RpcResponse>
   }
 }
 
@@ -56,7 +58,21 @@ export class DshStorySessionService {
   capability(): DshStoryCapability { const apiProxy = this.currentApiProxy(); return this.native?.create || this.native?.binding ? { available: true, native: true, modelSelection: Boolean(apiProxy?.sessions?.models && apiProxy?.sessions?.selectModel), ...(!apiProxy?.sessions?.models ? { reason: '当前 DSH 宿主未暴露模型目录 API。' } : {}) } : { available: false, native: false, modelSelection: false, reason: '当前 DSH 宿主没有暴露原生会话服务。' } }
   close(owner: string, id: string): void { this.sessions.delete(this.require(owner, id).id) }
   get(owner: string, id: string): DshStorySession { return publicSession(this.require(owner, id)) }
-  list(owner: string, storyId?: string): DshStorySession[] { return [...this.sessions.values()].filter(session => session.owner === owner && (!storyId || session.storyId === storyId)).map(publicSession) }
+  async list(owner: string, storyId?: string): Promise<DshStorySession[]> {
+    const local = [...this.sessions.values()].filter(session => session.owner === owner && (!storyId || session.storyId === storyId))
+    const apiProxy = this.currentApiProxy()
+    if (!apiProxy?.sessions?.list) return local.map(publicSession)
+    const response = await apiProxy.sessions.list({ rpcId: `creator-list-sessions-${randomUUID()}`, payload: {} })
+    const result = this.unwrapRpc(response) as { items?: Array<{ sessionId?: unknown; updatedAt?: number }> }
+    const known = new Set(local.map(session => session.id))
+    for (const item of result.items ?? []) {
+      const id = sessionIdOf(item.sessionId)
+      if (!id || known.has(id)) continue
+      const timestamp = new Date(item.updatedAt ?? Date.now()).toISOString()
+      local.push({ id, owner, storyId: storyId ?? 'eldoria', storyTitle: storyId ?? 'DSH 会话', createdAt: timestamp, updatedAt: timestamp, nativeId: id, messages: [] })
+    }
+    return local.map(publicSession)
+  }
   async open(owner: string, storyId: string): Promise<DshStorySession> {
     if (!owner.trim()) throw new Error('会话所有者不能为空。')
     const story = this.readStory(storyId); const timestamp = this.now().toISOString()
@@ -97,9 +113,15 @@ export class DshStorySessionService {
     const session = this.require(owner, id); const message = bounded(text.trim()); if (!message) throw new Error('请输入要发送给 DSH 的内容。')
     const story = this.readStory(session.storyId)
     const context = `你正在协助编辑剧本文件。当前剧本 ID：${session.storyId}\n当前剧本标题：${story.title}\n剧本文件由 DSH 原生工作区工具负责读写。请直接使用 DSH 原生机制完成用户请求，不要伪造已完成的修改。\n\n用户请求：${message}`
-    const native = this.nativeFor(session)
-    if (!native?.prompt) throw new Error('当前 DSH 会话不可用。')
-    await native.prompt([{ type: 'text', text: context }], 'queue')
+    const apiProxy = this.currentApiProxy()
+    if (apiProxy?.sessions?.prompt) {
+      const response = await apiProxy.sessions.prompt({ rpcId: `creator-prompt-${randomUUID()}`, payload: { sessionId: session.nativeId ?? id, mode: 'queue', content: [{ type: 'text', text: context }] } })
+      this.unwrapRpc(response)
+    } else {
+      const native = this.nativeFor(session)
+      if (!native?.prompt) throw new Error('当前 DSH 会话不可用。')
+      await native.prompt([{ type: 'text', text: context }], 'queue')
+    }
     const timestamp = this.now().toISOString(); session.messages.push({ role: 'user', text: message, createdAt: timestamp }); session.messages = session.messages.slice(-MAX_MESSAGES); session.updatedAt = timestamp
     return publicSession(session)
   }
