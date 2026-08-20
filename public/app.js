@@ -42,6 +42,7 @@ const modelPanel = document.querySelector('[data-inspector-panel="model"]')
 const modelSettings = document.querySelector('.inspector-fields > .inspector-row')
 if (modelPanel && modelSettings) modelPanel.prepend(modelSettings)
 document.querySelector('#model-mode')?.remove()
+document.querySelector('#inspector-sync-story')?.remove()
 document.querySelector('#load-archive')?.closest('.load-label')?.remove()
 document.querySelector('#inspector-story-avatar')?.closest('label')?.remove()
 const whaleMemeSetting = document.createElement('label')
@@ -588,7 +589,7 @@ function updateStoryEditorFromPackage(story) {
   $('#story-edit-player-persona').value = story.playerCharacter?.persona ?? ''
   $('#story-edit-player-state').value = story.playerCharacter?.currentState ?? ''
   storyEditRoleIndex = null
-  renderStoryRoles(); renderStoryLore(); renderCreatorRoleSummary()
+  renderStoryRoles(); renderStoryLore()
 }
 function resetCreatorPreview() {
   window.creatorPreview = null
@@ -665,10 +666,7 @@ async function openStoryEditor() {
   $('#story-edit-modal').showModal()
 }
 function renderCreatorRoleSummary() {
-  const target = $('#story-roles-grid-duplicate')
-  if (!target || target === missingElement) return
-  target.innerHTML = storyEditRoles.length ? storyEditRoles.map((role, index) => `<button type="button" class="creator-role-summary-item" data-role-index="${index}"><img src="${escape(role.portraitRef ?? '/assets/default.svg')}" onerror="this.onerror=null;this.src='/assets/default.svg'"><span><b>${escape(role.name)}</b><small>${escape(role.selfModel ?? '暂无人设')}</small></span></button>`).join('') : '<p class="hint">暂无可复用角色。</p>'
-  target.querySelectorAll('[data-role-index]').forEach(button => button.addEventListener('click', () => openStoryRoleEditor(Number(button.dataset.roleIndex))))
+
 }
 document.addEventListener('click', event => {
   const target = event.target.closest?.('[data-workbench-target]')
@@ -694,7 +692,7 @@ function renderStoryRoles() {
       event.preventDefault(); card.classList.remove('drag-over')
       const from = Number(event.dataTransfer.getData('text/plain'))
       const to = index()
-      if (from !== to && storyEditRoles[from]) { const [moved] = storyEditRoles.splice(from, 1); storyEditRoles.splice(to, 0, moved); renderStoryRoles(); renderCreatorRoleSummary() }
+      if (from !== to && storyEditRoles[from]) { const [moved] = storyEditRoles.splice(from, 1); storyEditRoles.splice(to, 0, moved); renderStoryRoles() }
     })
   })
 }
@@ -728,7 +726,7 @@ function renderStoryInitialMemories(role) {
 function collectStoryInitialMemories() { const role = storyEditRoles[storyEditRoleIndex]; if (role) syncStoryExpandedMemory(role); return (role?.initialMemories ?? []).filter(memory => memory.text?.trim()).map(memory => ({ text: memory.text.trim(), occurredAt: memory.occurredAt?.trim() || '过去' })) }
 document.addEventListener('click', event => { const target = event.target.closest?.('#story-memory-add,[data-story-memory-delete],[data-story-memory-expand]'); if (!target) return; const role = storyEditRoles[storyEditRoleIndex]; if (!role) return; syncStoryExpandedMemory(role); if (target.id === 'story-memory-add') { role.initialMemories.push({ text: '', occurredAt: '过去' }); expandedStoryMemoryIndex = role.initialMemories.length - 1 } else if (target.dataset.storyMemoryExpand !== undefined) expandedStoryMemoryIndex = Number(target.dataset.storyMemoryExpand); else role.initialMemories.splice(Number(target.dataset.storyMemoryDelete), 1); renderStoryInitialMemories(role); document.querySelector('[data-story-memory-text]')?.focus() })
 document.addEventListener('focusout', event => { const editor = event.target.closest?.('[data-story-memory-expanded]'); if (editor) setTimeout(() => { if (!editor.contains(document.activeElement)) { const role = storyEditRoles[storyEditRoleIndex]; if (role) { syncStoryExpandedMemory(role); renderStoryInitialMemories(role) } } }) })
-$('#story-role-add').onclick = () => { storyEditRoles.push({ id: `new-role-${Date.now()}`, name: '新角色', portraitRef: '/assets/default.svg', currentState: '尚未进入具体场景，等待剧情展开。', presence: 'absent', initialMemories: [], impressions: {}, selfModel: '待补充的角色设定。' }); renderStoryRoles(); renderCreatorRoleSummary() }
+$('#story-role-add').onclick = () => { storyEditRoles.push({ id: `new-role-${Date.now()}`, name: '新角色', portraitRef: '/assets/default.svg', currentState: '尚未进入具体场景，等待剧情展开。', presence: 'absent', initialMemories: [], impressions: {}, selfModel: '待补充的角色设定。' }); renderStoryRoles() }
 function openStoryRoleEditor(index) {
   const role = storyEditRoles[index]
   if (!role) return
@@ -908,7 +906,7 @@ document.addEventListener('click', event => { if (event.target.classList.contain
 function setInspectorReadOnly(on) {
   // 沉浸模式只读：除上述运行/剧情字段外，供应商与模型（#inspector-provider / #inspector-model）属运行配置，
   // 允许在沉浸模式下调整；保存按钮（#inspector-save）保留可用以提交这些改动。其余人设/记忆/头像等保持只读。
-  ['#inspector-self-model', '#inspector-goals', '#inspector-memory', '#inspector-delete', '#inspector-sync-story', '#inspector-impression-add', '#inspector-avatar-upload', '#inspector-avatar-url'].forEach(selector => { const el = $(selector); if (el) el.disabled = on })
+  ['#inspector-self-model', '#inspector-goals', '#inspector-memory', '#inspector-delete', '#inspector-impression-add', '#inspector-avatar-upload', '#inspector-avatar-url'].forEach(selector => { const el = $(selector); if (el) el.disabled = on })
   document.querySelectorAll('#role-modal .impression-row input').forEach(input => { input.disabled = on })
   document.querySelectorAll('#role-modal .impression-row .impression-del').forEach(button => { button.disabled = on })
 }
@@ -978,23 +976,12 @@ $('#inspector-save').onclick = event => {
     storyEditRoleIndex = null
     closeInspectorModals()
     renderStoryRoles()
-    renderCreatorRoleSummary()
     return
   }
   api('/api/roles/intervene', { roleId: $('#inspector-role-id').value, selfModel: $('#inspector-self-model').value, providerId: $('#inspector-provider').value, modelOverride: $('#inspector-model').value, impressions: JSON.stringify(impressions), goals: JSON.stringify(collectGoalsFromEdit()), thinkingStrength: $('#inspector-thinking').value }).then(ok => { if (ok) closeInspectorModals() })
 }
 $('#inspector-close').onclick = () => closeInspectorModals()
 // 左侧肖像面板已并入 #role-modal，单独关闭按钮已移除
-$('#inspector-sync-story').onclick = event => {
-  event.preventDefault()
-  const roleId = $('#inspector-role-id').value
-  const storyId = room?.storyId
-  if (!storyId) { alert('未知当前剧本'); return }
-  const role = room.roles.find(item => item.id === roleId)
-  if (!role) return
-  if (!confirm(`把「${role.name}」的角色卡（人设/记忆/在场/头像/模型）写回初始剧本「${storyId}」？`)) return
-  api('/api/story/sync-role', { storyId, roleId }).then(ok => { if (ok) alert('已同步该角色到初始剧本') })
-}
 // ── 头像导入（ST 风格：上传文件 / 从 URL 导入）──
 $('#inspector-avatar-upload').onclick = () => $('#inspector-avatar-file').click()
 $('#inspector-avatar-file').onchange = event => {
