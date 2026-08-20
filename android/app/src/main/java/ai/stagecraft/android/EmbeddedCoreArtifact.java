@@ -15,6 +15,7 @@ public final class EmbeddedCoreArtifact {
     public static final String MANIFEST = "embedded-core.json";
     public static final String EXPECTED_PROTOCOL = "1.0";
     public static final String EXPECTED_BRIDGE = "1";
+    public static final String EXPECTED_BUNDLE = "1.1.0";
 
     private EmbeddedCoreArtifact() {}
 
@@ -30,6 +31,7 @@ public final class EmbeddedCoreArtifact {
             if (!"stagecraft-embedded-core".equals(manifest.optString("artifact"))) return Verification.invalid("artifact");
             if (!EXPECTED_PROTOCOL.equals(manifest.optString("protocolVersion"))) return Verification.invalid("protocol");
             if (!EXPECTED_BRIDGE.equals(manifest.optString("bridgeVersion"))) return Verification.invalid("bridge");
+            if (!EXPECTED_BUNDLE.equals(manifest.optString("bundleVersion"))) return Verification.invalid("bundle");
             if (!digest.equals(manifest.optString("sha256"))) return Verification.invalid("sha256");
             if (bundle.length != manifest.optInt("bytes", -1)) return Verification.invalid("bytes");
             return Verification.valid(manifest.optString("bundleVersion"), digest);

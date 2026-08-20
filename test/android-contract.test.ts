@@ -94,6 +94,16 @@ test('Android credentials stay native, encrypted, and out of URLs or Javascript'
   assert.match(bridge, /JSONObject\.quote\(messageJson\)/)
 })
 
+test('built Android APK contains the verified embedded Core assets', () => {
+  const apk = join(android, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')
+  if (!existsSync(apk)) return
+  const bytes = readFileSync(apk)
+  const zipNames = bytes.toString('latin1')
+  for (const asset of ['assets/embedded-core.js', 'assets/embedded-core.json', 'assets/index.html', 'assets/renderer.js']) {
+    assert.ok(zipNames.includes(asset), `missing ${asset} from APK`)
+  }
+})
+
 test('Android embedded Core is generated, verified, and selected locally', () => {
   const readme = readFileSync(join(android, 'README.md'), 'utf8')
   const bridge = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'NativeBridge.java')
@@ -108,11 +118,19 @@ test('Android embedded Core is generated, verified, and selected locally', () =>
   assert.match(bridge, /embeddedCore\.valid\(\)/)
   assert.match(verifier, /SHA-256/)
   assert.match(verifier, /EXPECTED_PROTOCOL/)
+  assert.match(verifier, /EXPECTED_BUNDLE/)
   assert.match(activity, /EmbeddedCoreArtifact\.verify/)
   assert.match(gradle, /buildEmbeddedCore/)
   assert.match(gradle, /packageEmbeddedCore/)
+  assert.match(gradle, /verifyEmbeddedCoreAssets/)
+  assert.match(gradle, /SHA-256/)
+  assert.match(gradle, /generated\/android-assets/)
+  assert.match(gradle, /embedded-core\.js.*embedded-core\.json/s)
   assert.match(entrypoint, /CoreRuntimeSkeleton/)
   assert.match(entrypoint, /StageCraftEmbeddedCore/)
+  assert.match(read('app', 'src', 'main', 'assets', 'index.html'), /embedded-core\.js/)
+  assert.match(read('app', 'src', 'main', 'assets', 'renderer.js'), /embedded\.start\(message => renderer\.receive\(message\)\)/)
+  assert.doesNotMatch(bridge, /installLocalCore|CoreHost/)
 })
 
 test('Android native connection establishes SSE before view and never retries commands', () => {
@@ -140,7 +158,7 @@ test('Android media and PNG import remain native, bounded, authenticated, and pa
   const renderer = read('app', 'src', 'main', 'assets', 'renderer.js')
   assert.match(appGradle, /packageRemoteRenderer/)
   assert.match(appGradle, /include\("index\.html", "styles\.css", "renderer\.js"\)/)
-  assert.match(appGradle, /preBuild.*dependsOn\(packageRemoteRenderer(?:, packageEmbeddedCore)?\)/s)
+  assert.match(appGradle, /preBuild.*dependsOn\(verifyEmbeddedCoreAssets\)/s)
   assert.match(connection, /public void loadMedia/)
   assert.match(connection, /RemoteAssetPolicy\.requireAssetPath/)
   assert.match(connection, /setInstanceFollowRedirects\(false\)/)

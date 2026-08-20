@@ -31,7 +31,6 @@ public final class NativeBridge implements AutoCloseable {
     private volatile boolean ready;
     private volatile boolean closed;
     private volatile boolean userDisconnected;
-    private volatile AndroidHumanPlugin localPlugin;
     private final EmbeddedCoreArtifact.Verification embeddedCore;
 
     public NativeBridge(Activity activity, WebView webView, RemoteSessionStore sessionStore, EmbeddedCoreArtifact.Verification embeddedCore) {
@@ -90,28 +89,13 @@ public final class NativeBridge implements AutoCloseable {
     }
 
     @JavascriptInterface public void refresh() {
-        AndroidHumanPlugin local = localPlugin;
-        if (local != null) { local.refresh(); return; }
         RemoteCoreConnection current = connection;
         if (current != null) current.refresh();
     }
 
     @JavascriptInterface public void dispatch(String commandJson) {
-        AndroidHumanPlugin local = localPlugin;
-        if (local != null) { local.dispatch(commandJson); return; }
         RemoteCoreConnection current = connection;
         if (current != null) current.dispatch(commandJson);
-    }
-
-    /**
-     * Host integration point for a packaged shared Core runtime. This checkout does not
-     * provide such a runtime, so the normal Activity never calls this method.
-     */
-    public synchronized void installLocalCore(LocalCoreConnection.CoreHost host) {
-        if (host == null) throw new IllegalArgumentException("Standalone local mode is unavailable: a packaged shared Core runtime is required.");
-        closeConnection();
-        localPlugin = new AndroidHumanPlugin(host, this::emit);
-        if (foreground && ready) localPlugin.start();
     }
 
     @JavascriptInterface public void loadMedia(String path, String requestId) {
@@ -157,8 +141,6 @@ public final class NativeBridge implements AutoCloseable {
 
     public void onForeground() {
         foreground = true;
-        AndroidHumanPlugin local = localPlugin;
-        if (local != null) { if (!userDisconnected) local.onForeground(); return; }
         RemoteCoreConnection current = connection;
         if (current != null) {
             if (!userDisconnected) current.resume();
@@ -169,8 +151,6 @@ public final class NativeBridge implements AutoCloseable {
 
     public void onBackground() {
         foreground = false;
-        AndroidHumanPlugin local = localPlugin;
-        if (local != null) local.onBackground();
         RemoteCoreConnection current = connection;
         if (current != null) current.pause();
     }
@@ -339,9 +319,6 @@ public final class NativeBridge implements AutoCloseable {
         cancelPairRequest();
         connectionGeneration.incrementAndGet();
         closeConnection();
-        AndroidHumanPlugin local = localPlugin;
-        localPlugin = null;
-        if (local != null) local.close();
         networkExecutor.shutdownNow();
     }
 }
