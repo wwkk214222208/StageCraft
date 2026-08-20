@@ -15,6 +15,7 @@ import { NodeSqliteRepository } from './platform/node-sqlite-repository.ts'
 import { RoomRuntime } from './room-runtime.ts'
 import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } from './model-gateway.ts'
 import { listStoryPackages, loadStoryPackage, saveStoryPackage, type StoryPackage } from './story-packages.ts'
+import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
 import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
@@ -286,7 +287,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       const protectedPath = ['/api', '/assets', '/custom'].some(prefix => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
       const requiresAuthorization = protectedPath && (remoteAccess.authenticateLoopback || !isLoopbackAddress(request.socket.remoteAddress))
       if (requiresAuthorization && !remoteAccess.authorizeRequest(request)) return json(response, 401, { error: 'Unauthorized' })
-      if (url.pathname === '/api/room') return json(response, 200, runtime.get(url.searchParams.get('id') ?? roomId))
+      if (url.pathname === '/api/room') return json(response, 200, publicRoomSnapshot(runtime.get(url.searchParams.get('id') ?? roomId)))
       
       // 新架构：Core Runtime 协议端点由 HumanCoreInteractionPlugin 处理。
       if (await humanCore.handle(request, response, url)) return
@@ -757,6 +758,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     }
     const [letter, bg, tone] = data[name] ?? data['noel.svg']
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><rect width="160" height="160" fill="${bg}"/><circle cx="80" cy="63" r="34" fill="${tone}"/><path d="M28 158c8-39 26-57 52-57s44 18 52 57" fill="${tone}"/><text x="80" y="145" text-anchor="middle" font-family="serif" font-size="26" fill="${bg}">${letter}</text></svg>`
+  }
+
+  function publicRoomSnapshot(room: RoomSnapshot): Omit<RoomSnapshot, 'roles'> & { roles: Array<Omit<RoomSnapshot['roles'][number], 'memories' | 'selfModel' | 'goals' | 'impressions'>> } {
+    return { ...room, roles: room.roles.map(({ memories: _memories, selfModel: _selfModel, goals: _goals, impressions: _impressions, ...role }) => role) }
   }
 
   function json(response: ServerResponse, status: number, value: unknown): void {
