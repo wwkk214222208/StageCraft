@@ -8,6 +8,8 @@ val rendererSource = layout.projectDirectory.dir("src/main/assets")
 val generatedRenderer = layout.buildDirectory.dir("generated/android-assets")
 val generatedRendererSource = layout.buildDirectory.dir("generated/android-renderer")
 val generatedCore = layout.buildDirectory.dir("generated/embedded-core")
+val coreSourceRoot = rootProject.projectDir.parentFile.resolve("src")
+val coreBuildScript = rootProject.projectDir.parentFile.resolve("scripts/build-android-core.mjs")
 val packageRemoteRenderer by tasks.registering(Copy::class) {
     from(rendererSource)
     into(generatedRendererSource)
@@ -16,7 +18,10 @@ val packageRemoteRenderer by tasks.registering(Copy::class) {
 }
 val buildEmbeddedCore by tasks.registering(Exec::class) {
     workingDir(rootProject.projectDir.parentFile)
-    commandLine("node", "scripts/build-android-core.mjs")
+    val node = System.getenv("NODE_BINARY") ?: "node"
+    commandLine(node, "scripts/build-android-core.mjs", "--output-dir", generatedCore.get().asFile.absolutePath)
+    inputs.file(coreBuildScript)
+    inputs.dir(coreSourceRoot)
     outputs.file(generatedCore.map { it.file("embedded-core.js") })
     outputs.file(generatedCore.map { it.file("embedded-core.json") })
 }
