@@ -3,7 +3,7 @@ import test from 'node:test'
 import { installAndroidCore, ANDROID_CORE_BRIDGE_VERSION, ANDROID_CORE_BUNDLE_VERSION } from '../src/portable/android-core.ts'
 
 test('embedded Android composition executes shared Core and speaks the bridge protocol', async () => {
-  const globalObject: Record<string, unknown> = { StageCraftNative: { invokeSync: () => JSON.stringify({}) } }
+  const globalObject: Record<string, unknown> = { StageCraftNative: { invokeSync: (operation: string) => JSON.stringify(operation === 'core-state.restore' ? { revision: 0, state: {}, events: [], workflows: [] } : operation === 'stagecraft.room.get' ? { id: 'android-local-room', title: 'Test', mode: 'director', autoPublish: false, playerCharacter: { name: 'Player', persona: '', currentState: '' }, phase: 'awaiting-player-input', revision: 0, consultations: [], roles: [], reactions: [], decisions: [], scenes: [], lore: [] } : {}) } }
   installAndroidCore(globalObject)
   const api = globalObject.StageCraftEmbeddedCore as any
   assert.equal(api.bundleVersion, ANDROID_CORE_BUNDLE_VERSION)
