@@ -7,6 +7,7 @@ import {
   authorizeDebugRpc,
   validateCancellation,
   validateInspectorEndpoint,
+  redactDebugValue,
   validateWorkerRequest,
   validateWorkerResponse,
   type DebugOwner,
@@ -43,6 +44,16 @@ test('owner capability rules authorize reads and protect control operations', ()
   authorizeDebugRpc(owner, 'fiber.reload')
   assert.throws(() => authorizeDebugRpc({ ...owner, capabilities: ['debug.read'] }, 'worker.stop'), /debug.control/)
   assert.throws(() => authorizeDebugRpc(owner, 'inspector.endpoint.get'), /debug.inspect/)
+})
+
+test('debug method allowlist and redaction protect private material', () => {
+  validateWorkerRequest(request('debug.status', {}))
+  validateWorkerRequest(request('debug.cancel-request', { requestId: 'request-1' }))
+  const redacted = redactDebugValue({ apiKey: 'secret', cardText: 'private', nested: { password: 'pw', visible: 'ok' } }) as Record<string, unknown>
+  assert.equal(redacted.apiKey, '[redacted]')
+  assert.equal(redacted.cardText, '[redacted]')
+  assert.equal((redacted.nested as Record<string, unknown>).password, '[redacted]')
+  assert.equal((redacted.nested as Record<string, unknown>).visible, 'ok')
 })
 
 test('cancellation is request-scoped and inspector is loopback-only', () => {

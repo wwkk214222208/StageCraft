@@ -13,6 +13,7 @@ import {
   type RequestCancellation,
   type WorkerStatus,
   type WorkerStatusSnapshot,
+  redactDebugValue,
   assertBoundedJson,
   authorizeDebugRpc,
   validateCancellation,
@@ -41,6 +42,7 @@ export class WorkerRpcServer {
   private readonly input: Readable
   private readonly output: Writable
   private readonly owner: DebugOwner
+  private boundOwner?: Pick<DebugOwner, 'ownerId' | 'sessionId'>
   private readonly createComposition: () => Promise<WorkerComposition>
   private readonly now: () => string
   private readonly pid?: number
@@ -52,6 +54,8 @@ export class WorkerRpcServer {
   private composition?: WorkerComposition
   private lineReader?: Interface
   private closed = false
+  private readonly eventHistory: import('../core/protocol.ts').CoreEvent[] = []
+  private readonly pluginFibers = new Map<string, { dispose(): Promise<void> | void }>()
 
   constructor(options: WorkerRpcServerOptions) {
     this.input = options.input
@@ -67,6 +71,8 @@ export class WorkerRpcServer {
     this.composition = await this.createComposition()
     this.generation++
     this.composition.core.subscribe(event => {
+      this.eventHistory.push(redactDebugValue(event) as unknown as import('../core/protocol.ts').CoreEvent)
+      while (this.eventHistory.length > 256) this.eventHistory.shift()
       this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.event', sequence: ++this.sequence, revision: event.revision, event })
       this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.view', sequence: ++this.sequence, revision: this.composition!.core.getView().revision, view: this.composition!.core.getView() })
     })
@@ -105,6 +111,8 @@ export class WorkerRpcServer {
       const request = value as WorkerRequest
       if (!METHODS.has(request.method)) throw new Error('Unsupported worker method.')
       authorizeDebugRpc(request.owner, request.method)
+      if (this.boundOwner && (request.owner.ownerId !== this.boundOwner.ownerId || request.owner.sessionId !== this.boundOwner.sessionId)) throw new Error('Debug owner/session is not authorized for this worker.')
+      this.boundOwner ??= { ownerId: request.owner.ownerId, sessionId: request.owner.sessionId }
       const controller = new AbortController()
       this.pending.set(request.requestId, controller)
       try {
@@ -130,7 +138,25 @@ export class WorkerRpcServer {
       return this.snapshot()
     }
     if (!this.composition) throw new Error('Worker composition is unavailable.')
-    if (request.method === 'core.view.get') return this.composition.core.getView()
+    if (request.method === 'core.view.get' || request.method === 'debug.core.view') return redactDebugValue(this.composition.core.getView())
+    if (request.method === 'debug.status') return this.snapshot()
+    if (request.method === 'debug.core.events') return { events: this.eventHistory.slice(-(request.params.limit ?? 64)) }
+    if (request.method === 'debug.workflows') return { workflows: redactDebugValue(this.composition.core.getView().workflows) }
+    if (request.method === 'debug.pending-requests') return { requestIds: [...this.pending.keys()] }
+    if (request.method === 'debug.creator.previews' || request.method === 'debug.consultations.current-turn') return { [request.method.endsWith('previews') ? 'previews' : 'consultations']: [] }
+    if (request.method === 'debug.room.snapshot') return redactDebugValue(this.composition.core.getView().state)
+    if (request.method === 'debug.cancel-request') {
+      const controller = this.pending.get(request.params.requestId)
+      if (!controller) throw new Error('Request not found for this owner/session.')
+      controller.abort(request.params.reason ?? 'debug cancellation')
+      return { cancelled: true, requestId: request.params.requestId }
+    }
+    if (request.method === 'debug.reload-plugin') {
+      if (!this.pluginFibers.has(request.params.pluginId)) throw new Error(`Plugin is not safely reloadable: ${request.params.pluginId}`)
+      await this.pluginFibers.get(request.params.pluginId)!.dispose()
+      return { pluginId: request.params.pluginId, reloaded: true, generation: this.generation }
+    }
+    if (request.method === 'debug.flush') { await new Promise<void>(resolve => setImmediate(resolve)); return { flushed: true } }
     if (request.method === 'core.command.dispatch') {
       const command = request.params.command
       if (!command || !COMMANDS.has(command.type)) throw new Error('Command type is not allowlisted.')

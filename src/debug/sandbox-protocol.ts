@@ -56,6 +56,17 @@ export type DebugRpcMethod =
   | 'core.command.dispatch'
   | 'debug.subscribe'
   | 'inspector.endpoint.get'
+  | 'debug.status'
+  | 'debug.core.view'
+  | 'debug.core.events'
+  | 'debug.workflows'
+  | 'debug.pending-requests'
+  | 'debug.creator.previews'
+  | 'debug.consultations.current-turn'
+  | 'debug.room.snapshot'
+  | 'debug.cancel-request'
+  | 'debug.reload-plugin'
+  | 'debug.flush'
 
 export interface DebugRpcParams {
   'worker.status': Record<string, never>
@@ -68,6 +79,17 @@ export interface DebugRpcParams {
   'core.command.dispatch': { command: HumanCommand }
   'debug.subscribe': { streams: readonly DebugStream[] }
   'inspector.endpoint.get': Record<string, never>
+  'debug.status': Record<string, never>
+  'debug.core.view': Record<string, never>
+  'debug.core.events': { limit?: number }
+  'debug.workflows': Record<string, never>
+  'debug.pending-requests': Record<string, never>
+  'debug.creator.previews': Record<string, never>
+  'debug.consultations.current-turn': Record<string, never>
+  'debug.room.snapshot': { roomId?: string }
+  'debug.cancel-request': { requestId: string; reason?: string }
+  'debug.reload-plugin': { pluginId: string }
+  'debug.flush': Record<string, never>
 }
 
 export interface DebugRpcResults {
@@ -81,6 +103,17 @@ export interface DebugRpcResults {
   'core.command.dispatch': { accepted: true }
   'debug.subscribe': { streams: readonly DebugStream[]; subscribed: true }
   'inspector.endpoint.get': InspectorEndpoint | null
+  'debug.status': WorkerStatusSnapshot
+  'debug.core.view': CoreView
+  'debug.core.events': { events: readonly CoreEvent[] }
+  'debug.workflows': { workflows: readonly import('../core/protocol.ts').WorkflowInstance[] }
+  'debug.pending-requests': { requestIds: readonly string[] }
+  'debug.creator.previews': { previews: readonly JsonValue[] }
+  'debug.consultations.current-turn': { consultations: readonly JsonValue[] }
+  'debug.room.snapshot': JsonValue
+  'debug.cancel-request': { cancelled: true; requestId: string }
+  'debug.reload-plugin': { pluginId: string; reloaded: true; generation: number }
+  'debug.flush': { flushed: true }
 }
 
 export type DebugStream = 'logs' | 'worker.status' | 'core.view' | 'core.event'
@@ -245,7 +278,7 @@ export function validateWorkerRequest(request: WorkerRequest): void {
   if (value.protocol !== DEBUG_SANDBOX_PROTOCOL_VERSION) throw new Error('Unsupported sandbox protocol version.')
   if (value.kind !== 'request') throw new Error('Worker request kind is invalid.')
   id(value.requestId, 'requestId'); validateOwner(value.owner as DebugOwner)
-  if (!['worker.status', 'worker.stop', 'worker.kill', 'worker.restart', 'worker.recover', 'fiber.reload', 'core.view.get', 'core.command.dispatch', 'debug.subscribe', 'inspector.endpoint.get'].includes(String(value.method))) throw new Error('Worker request method is invalid.')
+  if (!['worker.status', 'worker.stop', 'worker.kill', 'worker.restart', 'worker.recover', 'fiber.reload', 'core.view.get', 'core.command.dispatch', 'debug.subscribe', 'inspector.endpoint.get', 'debug.status', 'debug.core.view', 'debug.core.events', 'debug.workflows', 'debug.pending-requests', 'debug.creator.previews', 'debug.consultations.current-turn', 'debug.room.snapshot', 'debug.cancel-request', 'debug.reload-plugin', 'debug.flush'].includes(String(value.method))) throw new Error('Worker request method is invalid.')
   assertBoundedJson(value.params, 'request.params')
   if (value.deadlineAt !== undefined) date(value.deadlineAt, 'request.deadlineAt')
   assertBoundedJson(value, 'worker request')
@@ -273,7 +306,7 @@ export function validateCancellation(cancellation: RequestCancellation): void {
 
 export function authorizeDebugRpc(owner: DebugOwner, method: DebugRpcMethod): void {
   validateOwner(owner)
-  const required: DebugCapability = method === 'inspector.endpoint.get' ? 'debug.inspect' : method === 'debug.subscribe' ? 'debug.stream' : method === 'fiber.reload' ? 'debug.reload' : method === 'worker.status' || method === 'core.view.get' ? 'debug.read' : 'debug.control'
+  const required: DebugCapability = method === 'inspector.endpoint.get' ? 'debug.inspect' : method === 'debug.subscribe' ? 'debug.stream' : method === 'fiber.reload' || method === 'debug.reload-plugin' ? 'debug.reload' : ['worker.status', 'core.view.get', 'debug.status', 'debug.core.view', 'debug.core.events', 'debug.workflows', 'debug.pending-requests', 'debug.creator.previews', 'debug.consultations.current-turn', 'debug.room.snapshot'].includes(method) ? 'debug.read' : 'debug.control'
   if (!owner.capabilities.includes(required)) throw new Error(`Capability ${required} is required for ${method}.`)
 }
 
@@ -282,4 +315,20 @@ export function validateInspectorEndpoint(endpoint: InspectorEndpoint): void {
   if (!Number.isInteger(endpoint.port) || endpoint.port < 1 || endpoint.port > 65535) throw new Error('Inspector port is invalid.')
   if (!endpoint.token || endpoint.token.length > 256) throw new Error('Inspector token is invalid.')
   date(endpoint.expiresAt, 'Inspector expiry')
+}
+
+/** Remove secrets and private card/prompt text from diagnostic projections. */
+export function redactDebugValue(value: unknown, depth = 0): JsonValue {
+  if (depth > DEBUG_SANDBOX_LIMITS.maxDepth) return '[redacted]'
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') return value
+  if (typeof value === 'string') return value.length > DEBUG_SANDBOX_LIMITS.maxStringLength ? '[redacted]' : value
+  if (Array.isArray(value)) return value.slice(0, DEBUG_SANDBOX_LIMITS.maxArrayLength).map(item => redactDebugValue(item, depth + 1))
+  if (typeof value !== 'object') return '[redacted]'
+  const secret = /api.?key|token|password|secret|authorization|cookie|private.?key/i
+  const privateText = /card|prompt|persona|self.?model|lore|memory|consultation|text|content|thinking/i
+  const result: Record<string, JsonValue> = {}
+  for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, DEBUG_SANDBOX_LIMITS.maxObjectKeys)) {
+    result[key] = secret.test(key) || privateText.test(key) ? '[redacted]' : redactDebugValue(item, depth + 1)
+  }
+  return result
 }
