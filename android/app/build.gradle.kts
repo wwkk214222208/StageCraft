@@ -12,8 +12,10 @@ val coreSourceRoot = rootProject.projectDir.parentFile.resolve("src")
 val coreBuildScript = rootProject.projectDir.parentFile.resolve("scripts/build-android-core.mjs")
 val packageRemoteRenderer by tasks.registering(Copy::class) {
     from(rendererSource)
+    from(rootProject.projectDir.parentFile.resolve("prompts")) { into("prompts") }
+    from(rootProject.projectDir.parentFile.resolve("stories")) { into("stories") }
     into(generatedRendererSource)
-    include("index.html", "styles.css", "renderer.js")
+    include("index.html", "styles.css", "renderer.js", "prompts/prompts.json", "stories/*.json", "stories/custom/*.json")
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
 val buildEmbeddedCore by tasks.registering(Exec::class) {

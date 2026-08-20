@@ -29,6 +29,21 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
             return new JSONObject();
         }
         if ("core-state.restore".equals(operation)) return repository.loadCoreState(input.optString("roomId"));
+        if ("stagecraft.room.get".equals(operation)) {
+            JSONObject snapshot = repository.loadCoreState(input.optString("roomId"));
+            if (snapshot == null || snapshot.optJSONObject("state") == null) throw new IllegalStateException("Android local room is unavailable.");
+            return snapshot.getJSONObject("state");
+        }
+        if ("stagecraft.repository".equals(operation)) {
+            String method = input.optString("method");
+            org.json.JSONArray args = input.optJSONArray("args");
+            if ("importRoom".equals(method) && args != null && args.length() >= 2) {
+                JSONObject room = args.optJSONObject(1);
+                if (room != null) repository.saveRoom(room);
+                return new JSONObject();
+            }
+            throw new IllegalArgumentException("Unsupported Android repository operation: " + method);
+        }
         if ("asset.read".equals(operation)) {
             byte[] data = repository.getAsset(input.optString("path"));
             return data == null ? new JSONObject() : new JSONObject().put("data", Base64.encodeToString(data, Base64.NO_WRAP));
