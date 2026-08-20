@@ -392,9 +392,10 @@ $('#st-import-run').onclick = async () => {
     if (!response.ok) { preview.innerHTML = `<p class="error">导入失败：${escape(data.error || response.status)}</p>`; button.disabled = false; return }
     if (workbenchMode) {
       window.creatorPreview = data
+      $('#creator-apply').disabled = false
+      $('#creator-revert').disabled = false
       $('#st-import-modal').close()
-      $('#creator-preview-status').textContent = '待审批'
-      $('#creator-preview-status').className = 'creator-status ready'
+      setCreatorStatus('待审批', 'ready')
       $('#creator-agent-preview').innerHTML = `<strong>已生成 Creator 预览</strong><p>${escape(data.source?.summary ?? '候选内容已准备')}</p>`
       $('#creator-warnings').innerHTML = (data.warnings ?? []).map(warning => `<li>${escape(warning.message)}</li>`).join('') || '<li class="hint">暂无警告</li>'
       $('#creator-field-diffs').innerHTML = (data.diffs ?? []).map(diff => `<li data-creator-path="${escape(diff.path)}"><code>${escape(diff.path)}</code>：${escape(diff.change)} <button type="button" data-creator-decision="accept">接受</button><button type="button" data-creator-decision="reject">拒绝</button></li>`).join('')
@@ -551,16 +552,21 @@ let storyEditRoles = []
 let storyEditLore = []
 let storyEditRoleIndex = null // null = live 模式（openInspector）；数字 = 正在编辑剧本中的第 N 个角色
 
-async function openStoryEditor() {
-  const storyId = $('#story-select').value
-  if (!storyId) { alert('请先在剧本弹窗中选择剧本。'); return }
-  const response = await fetch(`/api/story/get?id=${encodeURIComponent(storyId)}`)
-  if (!response.ok) { alert((await response.json()).error || '读取剧本失败。'); return }
-  const story = await response.json()
+function setCreatorStatus(text, kind = 'empty') {
+  const status = $('#creator-preview-status')
+  status.textContent = text
+  status.className = `creator-status ${kind}`
+}
+function creatorErrorText(error, fallback = '操作失败。') {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  if (/expired|过期/i.test(message)) return '预览已过期，请重新导入生成预览。'
+  if (/conflict|changed since preview|冲突|发生变化/i.test(message)) return '剧本已发生变化，无法安全应用；请重新加载后生成预览。'
+  return message || fallback
+}
+function updateStoryEditorFromPackage(story) {
+  if (!story) return
   storyEditRoles = story.roles ?? []
   storyEditLore = story.lore ?? []
-  storyEditRoleIndex = null
-  $('#story-edit-id').textContent = storyId
   $('#story-edit-title').value = story.title ?? ''
   $('#story-edit-opening').value = story.opening ?? ''
   $('#story-edit-scene-time').value = story.sceneTime ?? ''
@@ -568,13 +574,79 @@ async function openStoryEditor() {
   $('#story-edit-player-name').value = story.playerCharacter?.name ?? ''
   $('#story-edit-player-persona').value = story.playerCharacter?.persona ?? ''
   $('#story-edit-player-state').value = story.playerCharacter?.currentState ?? ''
-  renderStoryRoles()
-  renderStoryLore()
-  renderCreatorRoleSummary()
-  $('#creator-save-state').textContent = '已加载'
-  $('#creator-preview-status').textContent = '空'
-  $('#creator-preview-status').className = 'creator-status empty'
+  storyEditRoleIndex = null
+  renderStoryRoles(); renderStoryLore(); renderCreatorRoleSummary()
+}
+function resetCreatorPreview() {
+  window.creatorPreview = null
+  $('#creator-apply').disabled = true
+  $('#creator-revert').disabled = true
+  setCreatorStatus('空', 'empty')
   $('#creator-agent-preview').innerHTML = '<strong>尚未生成预览</strong><p>导入 ST 角色卡后，服务器返回的映射结果会显示在这里。没有真实响应时不会伪造候选内容。</p>'
+  $('#creator-warnings').innerHTML = '<li class="hint">暂无警告</li>'
+  $('#creator-field-diffs').innerHTML = '<p class="hint">暂无字段差异。导入或提取后显示真实结果。</p>'
+}
+async function creatorRequest(path, body) {
+  const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  let data = {}
+  try { data = await response.json() } catch {}
+  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
+  return data
+}
+async function applyCreatorPreview() {
+  const preview = window.creatorPreview
+  if (!preview?.id) return
+  const button = $('#creator-apply'); button.disabled = true; $('#creator-revert').disabled = true
+  setCreatorStatus('应用中…', 'ready')
+  try {
+    const accept = (preview.diffs ?? []).filter(diff => diff.decision === 'accept' || diff.decision === 'reject').map(diff => ({ path: diff.path, decision: diff.decision }))
+    const result = await creatorRequest('/api/creator/apply', { previewId: preview.id, requestedAt: new Date().toISOString(), accept })
+    if (result.story) updateStoryEditorFromPackage(result.story)
+    window.creatorPreview = null
+    setCreatorStatus(result.applied ? '已应用' : '未应用', result.applied ? 'ready' : 'empty')
+    $('#creator-save-state').textContent = result.applied ? '已应用 Creator 预览' : '无接受字段'
+    $('#creator-agent-preview').innerHTML = `<strong>${result.applied ? '已应用 Creator 预览' : '没有应用任何字段'}</strong><p>${escape((result.warnings ?? []).join(' ') || '可继续编辑；普通保存仍使用 /api/story/save。')}</p>`
+    $('#creator-field-diffs').innerHTML = '<p class="hint">本次预览已结束。</p>'
+    await loadStories()
+  } catch (error) {
+    setCreatorStatus(/expired|过期/i.test(String(error)) ? '已过期' : /conflict|冲突|changed since preview/i.test(String(error)) ? '冲突' : '错误', 'error')
+    $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(creatorErrorText(error, '应用预览失败。'))}</strong>`
+    button.disabled = false
+  }
+}
+async function revertCreatorPreview() {
+  const preview = window.creatorPreview
+  if (!preview?.id) return
+  const button = $('#creator-revert'); button.disabled = true; $('#creator-apply').disabled = true
+  setCreatorStatus('恢复中…', 'ready')
+  try {
+    const result = await creatorRequest('/api/creator/revert', { previewId: preview.id })
+    updateStoryEditorFromPackage(result.story)
+    window.creatorPreview = null
+    setCreatorStatus('已恢复', 'ready')
+    $('#creator-save-state').textContent = '已恢复预览基线'
+    $('#creator-agent-preview').innerHTML = '<strong>已恢复预览基线</strong><p>候选内容未自动应用；普通保存仍可继续使用。</p>'
+    $('#creator-field-diffs').innerHTML = '<p class="hint">本次预览已结束。</p>'
+    await loadStories()
+  } catch (error) {
+    setCreatorStatus(/expired|过期/i.test(String(error)) ? '已过期' : /conflict|冲突|changed since preview/i.test(String(error)) ? '冲突' : '错误', 'error')
+    $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(creatorErrorText(error, '恢复预览失败。'))}</strong>`
+    button.disabled = false
+  }
+}
+$('#creator-apply').onclick = applyCreatorPreview
+$('#creator-revert').onclick = revertCreatorPreview
+
+async function openStoryEditor() {
+  const storyId = $('#story-select').value
+  if (!storyId) { alert('请先在剧本弹窗中选择剧本。'); return }
+  const response = await fetch(`/api/story/get?id=${encodeURIComponent(storyId)}`)
+  if (!response.ok) { alert((await response.json()).error || '读取剧本失败。'); return }
+  const story = await response.json()
+  updateStoryEditorFromPackage(story)
+  $('#story-edit-id').textContent = storyId
+  $('#creator-save-state').textContent = '已加载'
+  resetCreatorPreview()
   $('#creator-story-tree .tree-item').forEach(item => item.classList.toggle('active', item.dataset.workbenchTarget === 'story-package'))
   document.querySelectorAll('.creator-section').forEach(section => { section.hidden = false })
   $('#story-edit-modal').showModal()
