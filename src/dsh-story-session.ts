@@ -4,22 +4,35 @@ import type { StoryPackage } from './story-packages.ts'
 const MAX_REQUEST = 12_000
 const MAX_MESSAGES = 80
 
+function sessionIdOf(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value
+  if (typeof value !== 'object' || value === null) return undefined
+  const record = value as Record<string, unknown>
+  for (const key of ['sessionId', 'id', 'value', 'result']) {
+    const candidate = record[key]
+    const nested = sessionIdOf(candidate)
+    if (nested) return nested
+  }
+  return undefined
+}
+
 type NativeSession = {
-  id?: string
+  id?: unknown
   prompt?: (content: readonly unknown[], mode: 'queue') => Promise<unknown>
   models?: () => Promise<unknown>
   selectModel?: (selection: { provider: string; model: string; reasoningEffort?: string }) => Promise<unknown>
   getSnapshot?: () => unknown
 }
 type NativeSessions = {
-  create?: (options?: Record<string, unknown>) => NativeSession
-  binding?: (id: string) => { session?: NativeSession } | undefined
+  create?: (options?: Record<string, unknown>) => NativeSession | { sessionId?: unknown; id?: unknown }
+  binding?: (id: unknown) => { session?: NativeSession } | undefined
 }
 
 function clone<T>(value: T): T { return structuredClone(value) }
+function publicSession(session: DshStorySession): DshStorySession { const { nativeHandle: _nativeHandle, ...safe } = session; return clone(safe as DshStorySession) }
 function bounded(value: string): string { return value.slice(0, MAX_REQUEST) }
 
-export interface DshStorySession { id: string; owner: string; storyId: string; storyTitle: string; createdAt: string; updatedAt: string; nativeId?: string; messages: DshStoryMessage[] }
+export interface DshStorySession { id: string; owner: string; storyId: string; storyTitle: string; createdAt: string; updatedAt: string; nativeId?: string; nativeHandle?: NativeSession; messages: DshStoryMessage[] }
 export interface DshStoryMessage { role: 'user' | 'system'; text: string; createdAt: string }
 export interface DshStoryCapability { available: boolean; native: boolean; modelSelection: boolean; reason?: string }
 
@@ -35,12 +48,15 @@ export class DshStorySessionService {
     if (!owner.trim()) throw new Error('会话所有者不能为空。')
     const story = this.readStory(storyId); const timestamp = this.now().toISOString()
     const nativeSession = this.native?.create?.({})
-    const session: DshStorySession = { id: `creator-session-${randomUUID()}`, owner: owner.slice(0, 128), storyId, storyTitle: story.title, createdAt: timestamp, updatedAt: timestamp, ...(nativeSession?.id ? { nativeId: nativeSession.id } : {}), messages: [] }
-    this.sessions.set(session.id, session); return clone(session)
+    const nativeId = sessionIdOf(nativeSession)
+    if (!nativeId) throw new Error('DSH 创建会话未返回有效的 sessionId。')
+    const nativeHandle = nativeSession && typeof nativeSession === 'object' ? nativeSession as NativeSession : undefined
+    const session: DshStorySession = { id: nativeId, owner: owner.slice(0, 128), storyId, storyTitle: story.title, createdAt: timestamp, updatedAt: timestamp, nativeId, ...(nativeHandle ? { nativeHandle } : {}), messages: [] }
+    this.sessions.set(session.id, session); return publicSession(session)
   }
   close(owner: string, id: string): void { this.sessions.delete(this.require(owner, id).id) }
-  get(owner: string, id: string): DshStorySession { return clone(this.require(owner, id)) }
-  list(owner: string, storyId?: string): DshStorySession[] { return [...this.sessions.values()].filter(session => session.owner === owner && (!storyId || session.storyId === storyId)).map(clone) }
+  get(owner: string, id: string): DshStorySession { return publicSession(this.require(owner, id)) }
+  list(owner: string, storyId?: string): DshStorySession[] { return [...this.sessions.values()].filter(session => session.owner === owner && (!storyId || session.storyId === storyId)).map(publicSession) }
   async models(owner: string, id: string): Promise<unknown> {
     const native = this.nativeFor(this.require(owner, id))
     if (!native?.models) throw new Error('当前 DSH 宿主未提供模型目录。')
@@ -59,8 +75,8 @@ export class DshStorySessionService {
     if (!native?.prompt) throw new Error('当前 DSH 会话不可用。')
     await native.prompt([{ type: 'text', text: context }], 'queue')
     const timestamp = this.now().toISOString(); session.messages.push({ role: 'user', text: message, createdAt: timestamp }); session.messages = session.messages.slice(-MAX_MESSAGES); session.updatedAt = timestamp
-    return clone(session)
+    return publicSession(session)
   }
-  private nativeFor(session: DshStorySession): NativeSession | undefined { return session.nativeId ? this.native?.binding?.(session.nativeId)?.session : undefined }
+  private nativeFor(session: DshStorySession): NativeSession | undefined { return session.nativeHandle ?? (session.nativeId ? this.native?.binding?.(session.nativeId)?.session : undefined) }
   private require(owner: string, id: string): DshStorySession { const session = this.sessions.get(id); if (!session || session.owner !== owner) throw new Error('未知或不属于当前用户的 DSH 会话。'); return session }
 }

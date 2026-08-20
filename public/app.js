@@ -395,13 +395,10 @@ $('#st-import-run').onclick = async () => {
     if (!response.ok) { preview.innerHTML = `<p class="error">导入失败：${escape(data.error || response.status)}</p>`; button.disabled = false; return }
     if (workbenchMode) {
       window.creatorPreview = data
-      $('#creator-apply').disabled = false
       $('#creator-revert').disabled = false
       $('#st-import-modal').close()
-      setCreatorStatus('待审批', 'ready')
-      $('#creator-agent-preview').innerHTML = `<strong>已生成 Creator 预览</strong><p>${escape(data.source?.summary ?? '候选内容已准备')}</p>`
-      $('#creator-warnings').innerHTML = (data.warnings ?? []).map(warning => `<li>${escape(warning.message)}</li>`).join('') || '<li class="hint">暂无警告</li>'
-      $('#creator-field-diffs').innerHTML = (data.diffs ?? []).map(diff => `<li data-creator-path="${escape(diff.path)}"><code>${escape(diff.path)}</code>：${escape(diff.change)} <button type="button" data-creator-decision="accept">接受</button><button type="button" data-creator-decision="reject">拒绝</button></li>`).join('')
+      setCreatorStatus('已导入预览', 'ready')
+      $('#creator-agent-preview').innerHTML = `<strong>已生成导入预览</strong><p>${escape(data.source?.summary ?? '候选内容已准备')}。如需修改，请直接在 DSH 剧情编辑助手中提出。</p>`
       button.textContent = '已生成预览'
       return
     }
@@ -413,8 +410,7 @@ $('#st-import-run').onclick = async () => {
       $('#creator-preview-status').textContent = '已完成'
       $('#creator-preview-status').className = 'creator-status ready'
       workbench.innerHTML = `<strong>${escape(mapped.name ?? 'ST 角色卡')}</strong><p>服务器已完成角色映射${mapped.loreCount ? `，包含 ${mapped.loreCount} 条世界书条目` : ''}。</p>`
-      $('#creator-warnings').innerHTML = warnings || '<li class="hint">暂无警告</li>'
-      $('#creator-field-diffs').innerHTML = '<p class="hint">角色已直接导入当前房间；本次导入没有可供剧本包审批的字段差异。</p>'
+      $('#creator-agent-preview').innerHTML += warnings ? `<p class="hint">${escape(warnings.replace(/<[^>]+>/g, ''))}</p>` : ''
     }
     button.textContent = '已导入'
   } catch (error) {
@@ -659,7 +655,7 @@ $('#creator-revert').onclick = revertCreatorPreview
 
 function renderCreatorSession(session) {
   creatorSession = session
-  $('#creator-session-label').textContent = session ? `${session.storyTitle} · ${session.id.slice(-8)}` : '尚未选择会话'
+  $('#creator-session-label').textContent = session ? `${session.storyTitle} · ${String(session.id).slice(-8)}` : '尚未选择会话'
   $('#creator-session-close').disabled = !session
   $('#creator-session-model').disabled = !session
   $('#creator-session-chat').hidden = !session
@@ -672,7 +668,7 @@ async function loadCreatorSessions() {
   const response = await fetch(`/api/agent/session?owner=${encodeURIComponent(creatorOwner)}&storyId=${encodeURIComponent(storyId)}`)
   if (!response.ok) throw new Error('无法读取 DSH 会话。')
   const sessions = await response.json(); const list = $('#creator-session-list')
-  list.innerHTML = sessions.length ? sessions.map(session => `<button type="button" class="creator-session-choice" data-session-id="${escape(session.id)}">${escape(session.storyTitle)} · ${escape(session.id.slice(-8))}</button>`).join('') : '<p class="hint">当前剧本没有已有会话。</p>'
+  list.innerHTML = sessions.length ? sessions.map(session => `<button type="button" class="creator-session-choice" data-session-id="${escape(session.id)}">${escape(session.storyTitle)} · ${escape(String(session.id).slice(-8))}</button>`).join('') : '<p class="hint">当前剧本没有已有会话。</p>'
   list.querySelectorAll('[data-session-id]').forEach(button => button.onclick = () => { const session = sessions.find(item => item.id === button.dataset.sessionId); renderCreatorSession(session); $('#creator-session-modal').close() })
 }
 $('#creator-session-open').onclick = async () => { try { await loadCreatorSessions(); $('#creator-session-modal').showModal() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
@@ -695,7 +691,15 @@ $('#creator-session-model-save').onclick = async () => {
 }
 $('#creator-session-new').onclick = async () => { try { const session = await creatorRequest('/api/agent/session', { owner: creatorOwner, storyId: $('#story-edit-id').textContent }); renderCreatorSession(session); $('#creator-session-modal').close() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
 $('#creator-session-close').onclick = async () => { if (!creatorSession) return; await fetch('/api/agent/session', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ owner: creatorOwner, sessionId: creatorSession.id }) }).catch(() => {}); renderCreatorSession(null) }
-$('#creator-session-send').onclick = async () => { if (!creatorSession) return; const input = $('#creator-session-input'); const text = input.value.trim(); if (!text) return; const button = $('#creator-session-send'); const before = await refreshCreatorStory(false); button.disabled = true; try { const session = await creatorRequest('/api/agent/message', { owner: creatorOwner, sessionId: creatorSession.id, storyId: $('#story-edit-id').textContent, text }); input.value = ''; renderCreatorSession(session); $('#creator-agent-preview').innerHTML = '<strong>已发送给 DSH</strong><p>正在等待 DSH 完成并写入剧本文件…</p>'; void waitForCreatorAgentFileChange(before) } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false } }
+async function sendCreatorMessage(inputSelector, buttonSelector) {
+  if (!creatorSession) return
+  const input = $(inputSelector); const text = input.value.trim(); if (!text) return
+  const button = $(buttonSelector); const before = await refreshCreatorStory(false); button.disabled = true
+  try { const session = await creatorRequest('/api/agent/message', { owner: creatorOwner, sessionId: creatorSession.id, storyId: $('#story-edit-id').textContent, text }); input.value = ''; renderCreatorSession(session); $('#creator-agent-preview').innerHTML = '<strong>已发送给 DSH</strong><p>正在等待 DSH 完成并写入剧本文件…</p>'; void waitForCreatorAgentFileChange(before) } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false }
+}
+$('#creator-session-send').onclick = () => sendCreatorMessage('#creator-session-input', '#creator-session-send')
+$('#creator-player-send').onclick = () => sendCreatorMessage('#creator-player-input', '#creator-player-send')
+$('#creator-player-input').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#creator-player-send').click() } })
 async function refreshCreatorStory(notify = true) {
   const storyId = $('#story-edit-id').textContent
   if (!storyId) return null
