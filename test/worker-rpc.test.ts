@@ -62,12 +62,34 @@ test('worker subscriptions stream status and core events as JSON envelopes', asy
   await h.server.stop('test')
 })
 
-test('worker cancellation is request scoped', async () => {
+test('diagnostic methods expose bounded live state and truthful unsupported providers', async () => {
+  const h = harness()
+  await h.server.start()
+  for (const [method, params] of [
+    ['debug.status', {}],
+    ['debug.core.view', {}],
+    ['debug.core.events', { limit: 1 }],
+    ['debug.workflows', {}],
+    ['debug.pending-requests', {}],
+    ['debug.room.snapshot', {}],
+    ['debug.flush', {}],
+  ] as const) h.input.write(request(method, params))
+  await waitFor(() => h.lines().filter(line => line.kind === 'response').length >= 7)
+  assert.equal(h.lines().find(line => line.requestId === 'debug.status')?.ok, true)
+  assert.equal(h.lines().find(line => line.requestId === 'debug.room.snapshot')?.ok, true)
+  h.input.write(request('debug.creator.previews', {}, 'creator'))
+  await waitFor(() => h.lines().some(line => line.requestId === 'creator'))
+  assert.equal((h.lines().find(line => line.requestId === 'creator')?.error as Record<string, unknown>).code, 'unsupported')
+  await h.server.stop('test')
+})
+
+test('worker cancellation is request scoped and owner scoped', async () => {
   const h = harness()
   await h.server.start()
   h.input.write(request('fiber.reload', { fiberId: 'nope' }, 'cancel-me'))
-  h.input.write(JSON.stringify({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'cancel', requestId: 'cancel-me', owner: { ownerId: 'test', sessionId: 'session' }, reason: 'test' }) + '\n')
+  h.input.write(JSON.stringify({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'cancel', requestId: 'cancel-me', owner: { ownerId: 'other', sessionId: 'session' }, reason: 'test' }) + '\n')
   await waitFor(() => h.lines().some(line => line.requestId === 'cancel-me'))
-  assert.equal(h.lines().find(line => line.requestId === 'cancel-me')?.ok, false)
+  assert.equal((h.lines().find(line => line.requestId === 'cancel-me')?.error as Record<string, unknown>).code, 'unsupported')
+  assert.equal(h.lines().some(line => line.requestId === 'invalid-cancel'), true)
   await h.server.stop('test')
 })

@@ -16,6 +16,7 @@ import {
   redactDebugValue,
   assertBoundedJson,
   authorizeDebugRpc,
+  type DebugRpcError,
   validateCancellation,
   validateWorkerRequest,
 } from './sandbox-protocol.ts'
@@ -35,7 +36,13 @@ export interface WorkerRpcServerOptions {
 }
 
 const DEFAULT_OWNER: DebugOwner = { ownerId: 'dsh-supervisor', sessionId: 'worker', capabilities: ['debug.read', 'debug.control', 'debug.reload', 'debug.stream'] }
-const METHODS = new Set<DebugRpcMethod>(['worker.status', 'worker.stop', 'worker.kill', 'worker.restart', 'worker.recover', 'fiber.reload', 'core.view.get', 'core.command.dispatch', 'debug.subscribe', 'inspector.endpoint.get'])
+const METHODS = new Set<DebugRpcMethod>([
+  'worker.status', 'worker.stop', 'worker.kill', 'worker.restart', 'worker.recover',
+  'fiber.reload', 'core.view.get', 'core.command.dispatch', 'debug.subscribe', 'inspector.endpoint.get',
+  'debug.status', 'debug.core.view', 'debug.core.events', 'debug.workflows', 'debug.pending-requests',
+  'debug.creator.previews', 'debug.consultations.current-turn', 'debug.room.snapshot', 'debug.cancel-request',
+  'debug.reload-plugin', 'debug.flush',
+])
 const COMMANDS = new Set(['submit-text', 'select-role', 'approve', 'reject', 'edit-proposal', 'choose', 'cancel', 'retry', 'restart', 'role-management'])
 
 export class WorkerRpcServer {
@@ -71,10 +78,11 @@ export class WorkerRpcServer {
     this.composition = await this.createComposition()
     this.generation++
     this.composition.core.subscribe(event => {
-      this.eventHistory.push(redactDebugValue(event) as unknown as import('../core/protocol.ts').CoreEvent)
+      const diagnosticEvent = redactDebugValue(event) as unknown as import('../core/protocol.ts').CoreEvent
+      this.eventHistory.push(diagnosticEvent)
       while (this.eventHistory.length > 256) this.eventHistory.shift()
-      this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.event', sequence: ++this.sequence, revision: event.revision, event })
-      this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.view', sequence: ++this.sequence, revision: this.composition!.core.getView().revision, view: this.composition!.core.getView() })
+      this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.event', sequence: ++this.sequence, revision: event.revision, event: diagnosticEvent })
+      this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.view', sequence: ++this.sequence, revision: this.composition!.core.getView().revision, view: redactDebugValue(this.composition!.core.getView()) as unknown as import('../core/protocol.ts').CoreView })
     })
     this.setStatus('running')
     this.write({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'ready', generation: this.generation, ...(this.pid ? { pid: this.pid } : {}), changedAt: this.now() })
@@ -103,7 +111,12 @@ export class WorkerRpcServer {
     let value: unknown
     try { value = JSON.parse(line) } catch { this.writeError('invalid-frame', 'worker.status', 'Frame is not valid JSON.'); return }
     if (value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'cancel') {
-      try { validateCancellation(value as RequestCancellation); this.pending.get((value as RequestCancellation).requestId)?.abort((value as RequestCancellation).reason ?? 'cancelled') } catch (error) { this.writeError('invalid-cancel', 'worker.status', errorMessage(error)) }
+      try {
+        validateCancellation(value as RequestCancellation)
+        const cancellation = value as RequestCancellation
+        if (this.boundOwner && (cancellation.owner.ownerId !== this.boundOwner.ownerId || cancellation.owner.sessionId !== this.boundOwner.sessionId)) throw unauthorized('Debug owner/session is not authorized for this worker.')
+        this.pending.get(cancellation.requestId)?.abort(cancellation.reason ?? 'cancelled')
+      } catch (error) { this.writeError('invalid-cancel', 'worker.status', errorMessage(error), errorCode(error)) }
       return
     }
     try {
@@ -120,7 +133,8 @@ export class WorkerRpcServer {
         this.write({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'response', requestId: request.requestId, owner: { ownerId: request.owner.ownerId, sessionId: request.owner.sessionId }, method: request.method, ok: true, result } as WorkerResponse)
       } catch (error) {
         const cancelled = controller.signal.aborted
-        this.write({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'response', requestId: request.requestId, owner: { ownerId: request.owner.ownerId, sessionId: request.owner.sessionId }, method: request.method, ok: false, error: { code: cancelled ? 'cancelled' : 'internal', message: errorMessage(error), retryable: cancelled } } as WorkerResponse)
+        const code = cancelled ? 'cancelled' : errorCode(error)
+        this.write({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'response', requestId: request.requestId, owner: { ownerId: request.owner.ownerId, sessionId: request.owner.sessionId }, method: request.method, ok: false, error: { code, message: errorMessage(error), retryable: cancelled } } as WorkerResponse)
       } finally { this.pending.delete(request.requestId) }
     } catch (error) {
       this.writeError(typeof (value as { requestId?: unknown })?.requestId === 'string' ? String((value as { requestId: string }).requestId) : 'invalid-request', typeof (value as { method?: unknown })?.method === 'string' ? String((value as { method: string }).method) : 'worker.status', errorMessage(error))
@@ -140,22 +154,28 @@ export class WorkerRpcServer {
     if (!this.composition) throw new Error('Worker composition is unavailable.')
     if (request.method === 'core.view.get' || request.method === 'debug.core.view') return redactDebugValue(this.composition.core.getView())
     if (request.method === 'debug.status') return this.snapshot()
-    if (request.method === 'debug.core.events') return { events: this.eventHistory.slice(-(request.params.limit ?? 64)) }
+    if (request.method === 'debug.core.events') {
+      const limit = request.params.limit ?? 64
+      if (!Number.isInteger(limit) || limit < 1 || limit > 256) throw new Error('Event limit must be an integer from 1 to 256.')
+      return { events: this.eventHistory.slice(-limit) }
+    }
     if (request.method === 'debug.workflows') return { workflows: redactDebugValue(this.composition.core.getView().workflows) }
     if (request.method === 'debug.pending-requests') return { requestIds: [...this.pending.keys()] }
-    if (request.method === 'debug.creator.previews' || request.method === 'debug.consultations.current-turn') return { [request.method.endsWith('previews') ? 'previews' : 'consultations']: [] }
-    if (request.method === 'debug.room.snapshot') return redactDebugValue(this.composition.core.getView().state)
+    if (request.method === 'debug.creator.previews') throw unsupported('Creator preview provider is not installed.')
+    if (request.method === 'debug.consultations.current-turn') throw unsupported('Consultation provider is not installed.')
+    if (request.method === 'debug.room.snapshot') {
+      const roomId = request.params.roomId
+      if (roomId !== undefined) throw unsupported('Room selection is not available in this single-room worker.')
+      return redactDebugValue(this.composition.core.getView().state)
+    }
     if (request.method === 'debug.cancel-request') {
       const controller = this.pending.get(request.params.requestId)
-      if (!controller) throw new Error('Request not found for this owner/session.')
+      if (!controller) throw notFound('Request not found for this owner/session.')
       controller.abort(request.params.reason ?? 'debug cancellation')
       return { cancelled: true, requestId: request.params.requestId }
     }
-    if (request.method === 'debug.reload-plugin') {
-      if (!this.pluginFibers.has(request.params.pluginId)) throw new Error(`Plugin is not safely reloadable: ${request.params.pluginId}`)
-      await this.pluginFibers.get(request.params.pluginId)!.dispose()
-      return { pluginId: request.params.pluginId, reloaded: true, generation: this.generation }
-    }
+    if (request.method === 'debug.reload-plugin') throw unsupported('Plugin reload provider is not installed.')
+    if (request.method === 'fiber.reload') throw unsupported('Cordis fiber reload is not exposed by this worker boundary.')
     if (request.method === 'debug.flush') { await new Promise<void>(resolve => setImmediate(resolve)); return { flushed: true } }
     if (request.method === 'core.command.dispatch') {
       const command = request.params.command
@@ -182,7 +202,7 @@ export class WorkerRpcServer {
     for (const listener of this.subscribers.get(envelope.stream) ?? []) listener(envelope)
   }
   private write(value: unknown): void { assertBoundedJson(value, 'frame'); this.output.write(`${JSON.stringify(value)}\n`) }
-  private writeError(requestId: string, method: string, message: string): void { this.write({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'response', requestId, owner: { ownerId: this.owner.ownerId, sessionId: this.owner.sessionId }, method, ok: false, error: { code: 'invalid-request', message } }) }
+  private writeError(requestId: string, method: string, message: string, code: DebugRpcError['code'] = 'invalid-request'): void { this.write({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'response', requestId, owner: { ownerId: this.owner.ownerId, sessionId: this.owner.sessionId }, method, ok: false, error: { code, message } }) }
 }
 
 export async function runWorkerRpcServer(options: WorkerRpcServerOptions): Promise<WorkerRpcServer> {
@@ -191,4 +211,11 @@ export async function runWorkerRpcServer(options: WorkerRpcServerOptions): Promi
   return server
 }
 
+function unsupported(message: string): Error { return Object.assign(new Error(message), { code: 'unsupported' as const }) }
+function notFound(message: string): Error { return Object.assign(new Error(message), { code: 'not-found' as const }) }
+function unauthorized(message: string): Error { return Object.assign(new Error(message), { code: 'unauthorized' as const }) }
+function errorCode(error: unknown): DebugRpcError['code'] {
+  const code = error && typeof error === 'object' && 'code' in error ? (error as { code?: unknown }).code : undefined
+  return ['unsupported', 'not-found', 'unauthorized'].includes(String(code)) ? code as DebugRpcError['code'] : 'internal'
+}
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }

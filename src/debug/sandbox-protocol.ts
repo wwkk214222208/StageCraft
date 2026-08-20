@@ -142,7 +142,7 @@ export interface WorkerResponse<M extends DebugRpcMethod = DebugRpcMethod> {
 }
 
 export interface DebugRpcError {
-  code: 'invalid-request' | 'unsupported-version' | 'unauthorized' | 'not-found' | 'cancelled' | 'busy' | 'worker-failed' | 'internal'
+  code: 'invalid-request' | 'unsupported-version' | 'unsupported' | 'unauthorized' | 'not-found' | 'cancelled' | 'busy' | 'worker-failed' | 'internal'
   message: string
   retryable?: boolean
 }
