@@ -3,7 +3,7 @@ import test from 'node:test'
 import { installAndroidCore, ANDROID_CORE_BRIDGE_VERSION, ANDROID_CORE_BUNDLE_VERSION } from '../src/portable/android-core.ts'
 
 test('embedded Android composition executes shared Core and speaks the bridge protocol', async () => {
-  const globalObject: Record<string, unknown> = {}
+  const globalObject: Record<string, unknown> = { StageCraftNative: { invokeSync: () => JSON.stringify({}) } }
   installAndroidCore(globalObject)
   const api = globalObject.StageCraftEmbeddedCore as any
   assert.equal(api.bundleVersion, ANDROID_CORE_BUNDLE_VERSION)

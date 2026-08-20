@@ -1,5 +1,4 @@
 import { createAndroidComposition } from './android-composition.ts'
-import { CoreRuntimeSkeleton } from '../core/runtime.ts'
 import { CORE_PROTOCOL_VERSION, type HumanCommand } from '../core/protocol.ts'
 import type { NativeOperations } from '../platform/composition.ts'
 
@@ -12,10 +11,7 @@ const json = (value: unknown): string => JSON.stringify(value)
 export function installAndroidCore(global: Record<string, unknown> = globalThis as unknown as Record<string, unknown>): void {
   const native = (global.StageCraftNative ?? {}) as Record<string, unknown>
   if (global.StageCraftNative === undefined || typeof native.invokeSync !== 'function') {
-    const core = new CoreRuntimeSkeleton()
-    let fallbackSink: EventSink | undefined
-    global.StageCraftEmbeddedCore = Object.freeze({ bundleVersion: ANDROID_CORE_BUNDLE_VERSION, bridgeVersion: ANDROID_CORE_BRIDGE_VERSION, protocolVersion: CORE_PROTOCOL_VERSION, start: (next: EventSink) => { fallbackSink = next; fallbackSink(json({ type: 'connection.state', state: 'connected' })); fallbackSink(json({ type: 'core.resync', reason: 'initial', revision: core.getView().revision, view: core.getView() })) }, stop: () => { fallbackSink = undefined }, reconnect: () => {}, refresh: () => {}, dispatch: (value: string) => { void core.dispatch(JSON.parse(value) as HumanCommand).catch(error => fallbackSink?.(json({ type: 'connection.error', message: String(error) }))) }, cancel: () => {}, dispose: () => { fallbackSink = undefined } })
-    return
+    throw new Error('Android embedded Core requires the native operations bridge.')
   }
   const invoke = (operation: string, input: Record<string, unknown> = {}): unknown => {
     const method = native.invokeSync as ((name: string, value: string) => string) | undefined
@@ -49,4 +45,4 @@ export function installAndroidCore(global: Record<string, unknown> = globalThis 
   })
 }
 
-if (typeof globalThis !== 'undefined') installAndroidCore()
+if (typeof globalThis !== 'undefined' && (globalThis as any).StageCraftNative) installAndroidCore()
