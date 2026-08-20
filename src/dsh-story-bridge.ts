@@ -1,5 +1,6 @@
 import type { Context, Plugin } from '@deepseek-ai/cordis'
 import type { CoreExtensionPort, Disposable } from './core/extensions.ts'
+import type { StoryPackage } from './story-packages.ts'
 
 export const DSH_STORY_TASKS = ['story.generate', 'story.polish', 'story.consistency', 'story.expand-opening'] as const
 export type DshStoryTask = typeof DSH_STORY_TASKS[number]
@@ -18,6 +19,7 @@ export interface DshStoryEnvelope {
   text?: string
   constraints?: string[]
   source?: 'creator' | 'import'
+  story?: StoryPackage
 }
 
 export interface DshStoryResult {
@@ -62,6 +64,7 @@ function normalizeEnvelope(input: unknown, task: DshStoryTask): DshStoryEnvelope
     ...(boundedText(input.text, 'text') ? { text: boundedText(input.text, 'text') } : {}),
     ...(input.source === 'creator' || input.source === 'import' ? { source: input.source } : {}),
     ...(Array.isArray(input.constraints) ? { constraints: input.constraints.slice(0, MAX_ITEMS).map((item, index) => boundedText(item, `constraints[${index}]`) ?? '') } : {}),
+    ...(input.story !== undefined ? { story: structuredClone(input.story) as StoryPackage } : {}),
   }
   assertJsonSafe(envelope, 'DSH story envelope')
   return envelope

@@ -29,6 +29,8 @@ import { StoreCoreStateRepository } from './core/store-state-repository.ts'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { coreRuntimeCordisPlugin, createStageCraftService, humanCordisPlugin, llmCordisPlugin, solutionCordisPlugin, stageCraftServicePlugin, stateRepositoryCordisPlugin } from './core/cordis-plugins.ts'
 import { RemoteAccessService, isLoopbackAddress, isLoopbackHost, type RemoteAccessOptions } from './remote-access.ts'
+import { DshStorySessionService } from './dsh-story-session.ts'
+
 
 /** Provider replacement transaction: preflight must run before tearing down the old route. */
 export async function switchProviderSafely<T>(assertReady: () => void, disposeOld: () => Promise<void> | void, installNew: () => T): Promise<T> {
@@ -230,6 +232,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const runtime = new RoomRuntime(store, undefined, core)
   const creatorWorkbench = new CreatorWorkbenchService({ read: () => loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'), write: (next, previous) => { if (JSON.stringify(loadStoryPackage(storiesRoot, next.id)) !== JSON.stringify(previous)) throw new Error('Creator preview conflict: StoryPackage changed since preview.'); saveStoryPackage(storiesRoot, next) } }, roomId)
   const stagecraft = createStageCraftService(core, roomId, container, repository => core.attachStateRepository(repository))
+  const dshStorySessions = new DshStorySessionService(id => loadStoryPackage(storiesRoot, id), options.ctx?.get('sessions', false) as any)
   const solution = new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), management: runtime.getManagementService(), defaultRoomId: roomId })
   async function compensateStartFailure(): Promise<void> {
     for (const fiber of [...appFibers].reverse()) {
@@ -329,6 +332,25 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         return json(response, 200, { ok: true, files: listSaves() })
       }
       if (url.pathname === '/api/story/get' && request.method === 'GET') return json(response, 200, loadStoryPackage(storiesRoot, String(url.searchParams.get('id') ?? '')))
+      if (url.pathname === '/api/agent/capability' && request.method === 'GET') return json(response, 200, dshStorySessions.capability())
+      if (url.pathname === '/api/agent/session' && request.method === 'GET') {
+        return json(response, 200, dshStorySessions.list(String(url.searchParams.get('owner') ?? ''), url.searchParams.get('storyId') ?? undefined))
+      }
+      if (url.pathname === '/api/agent/session' && request.method === 'POST') {
+        const body = await readJson(request); return json(response, 200, dshStorySessions.open(String(body.owner ?? ''), String(body.storyId ?? options.storyId ?? 'eldoria')))
+      }
+      if (url.pathname === '/api/agent/session' && request.method === 'DELETE') {
+        const body = await readJson(request); dshStorySessions.close(String(body.owner ?? ''), String(body.sessionId ?? '')); return json(response, 200, { ok: true })
+      }
+      if (url.pathname === '/api/agent/models' && request.method === 'POST') {
+        const body = await readJson(request); return json(response, 200, await dshStorySessions.models(String(body.owner ?? ''), String(body.sessionId ?? '')))
+      }
+      if (url.pathname === '/api/agent/model' && request.method === 'POST') {
+        const body = await readJson(request); return json(response, 200, await dshStorySessions.selectModel(String(body.owner ?? ''), String(body.sessionId ?? ''), { provider: String(body.provider ?? ''), model: String(body.model ?? ''), ...(body.reasoningEffort ? { reasoningEffort: String(body.reasoningEffort) } : {}) }))
+      }
+      if (url.pathname === '/api/agent/message' && request.method === 'POST') {
+        const body = await readJson(request); return json(response, 200, await dshStorySessions.prompt(String(body.owner ?? ''), String(body.sessionId ?? ''), String(body.text ?? body.request ?? ''), String(body.storyId ?? '')))
+      }
       if (url.pathname === '/api/creator/preview' && request.method === 'POST') {
         const body = await readJson(request)
         const kind = String(body.kind ?? 'text') as import('./creator-contracts.ts').CreatorSourceKind

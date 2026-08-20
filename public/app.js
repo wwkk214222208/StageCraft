@@ -6,6 +6,8 @@ const coreInteractionPanel = new CoreInteractionPanel({ client: coreClient })
 window.stagecraftCore = coreClient
 
 let room
+let creatorSession = null
+const creatorOwner = `creator-web:${crypto.randomUUID()}`
 let providers = []
 let focalRoleIds = new Set()
 let reconsideringRoleIds = new Set()
@@ -596,7 +598,11 @@ function resetCreatorPreview() {
   $('#creator-apply').disabled = true
   $('#creator-revert').disabled = true
   setCreatorStatus('空', 'empty')
-  $('#creator-agent-preview').innerHTML = '<strong>尚未生成预览</strong><p>导入 ST 角色卡后，服务器返回的映射结果会显示在这里。没有真实响应时不会伪造候选内容。</p>'
+  $('#creator-agent-preview').innerHTML = '<strong>尚未连接 DSH 会话</strong><p>选择或新建会话后，可以直接让 DSH 协助编辑当前剧本。</p>'
+  $('#creator-session-label').textContent = '尚未选择会话'
+  $('#creator-session-close').disabled = true
+  $('#creator-session-chat').hidden = true
+  $('#creator-session-messages').innerHTML = ''
   $('#creator-warnings').innerHTML = '<li class="hint">暂无警告</li>'
   $('#creator-field-diffs').innerHTML = '<p class="hint">暂无字段差异。导入或提取后显示真实结果。</p>'
 }
@@ -651,6 +657,57 @@ async function revertCreatorPreview() {
 $('#creator-apply').onclick = applyCreatorPreview
 $('#creator-revert').onclick = revertCreatorPreview
 
+function renderCreatorSession(session) {
+  creatorSession = session
+  $('#creator-session-label').textContent = session ? `${session.storyTitle} · ${session.id.slice(-8)}` : '尚未选择会话'
+  $('#creator-session-close').disabled = !session
+  $('#creator-session-chat').hidden = !session
+  $('#creator-preview-status').textContent = session ? '已连接' : '未连接'
+  $('#creator-preview-status').className = `creator-status ${session ? 'ready' : 'empty'}`
+  $('#creator-session-messages').innerHTML = (session?.messages ?? []).map(message => `<p class="creator-session-message ${message.role}">${escape(message.text)}</p>`).join('')
+}
+async function loadCreatorSessions() {
+  const storyId = $('#story-edit-id').textContent
+  const response = await fetch(`/api/agent/session?owner=${encodeURIComponent(creatorOwner)}&storyId=${encodeURIComponent(storyId)}`)
+  if (!response.ok) throw new Error('无法读取 DSH 会话。')
+  const sessions = await response.json(); const list = $('#creator-session-list')
+  list.innerHTML = sessions.length ? sessions.map(session => `<button type="button" class="creator-session-choice" data-session-id="${escape(session.id)}">${escape(session.storyTitle)} · ${escape(session.id.slice(-8))}</button>`).join('') : '<p class="hint">当前剧本没有已有会话。</p>'
+  list.querySelectorAll('[data-session-id]').forEach(button => button.onclick = () => { const session = sessions.find(item => item.id === button.dataset.sessionId); renderCreatorSession(session); $('#creator-session-modal').close() })
+}
+$('#creator-session-open').onclick = async () => { try { await loadCreatorSessions(); $('#creator-session-modal').showModal() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
+$('#creator-session-new').onclick = async () => { try { const session = await creatorRequest('/api/agent/session', { owner: creatorOwner, storyId: $('#story-edit-id').textContent }); renderCreatorSession(session); $('#creator-session-modal').close() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
+$('#creator-session-close').onclick = async () => { if (!creatorSession) return; await fetch('/api/agent/session', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ owner: creatorOwner, sessionId: creatorSession.id }) }).catch(() => {}); renderCreatorSession(null) }
+$('#creator-session-send').onclick = async () => { if (!creatorSession) return; const input = $('#creator-session-input'); const text = input.value.trim(); if (!text) return; const button = $('#creator-session-send'); const before = await refreshCreatorStory(false); button.disabled = true; try { const session = await creatorRequest('/api/agent/message', { owner: creatorOwner, sessionId: creatorSession.id, storyId: $('#story-edit-id').textContent, text }); input.value = ''; renderCreatorSession(session); $('#creator-agent-preview').innerHTML = '<strong>已发送给 DSH</strong><p>正在等待 DSH 完成并写入剧本文件…</p>'; void waitForCreatorAgentFileChange(before) } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false } }
+async function refreshCreatorStory(notify = true) {
+  const storyId = $('#story-edit-id').textContent
+  if (!storyId) return null
+  const response = await fetch(`/api/story/get?id=${encodeURIComponent(storyId)}&refresh=${Date.now()}`, { cache: 'no-store' })
+  if (!response.ok) throw new Error('刷新剧本失败。')
+  const story = await response.json()
+  updateStoryEditorFromPackage(story)
+  $('#creator-save-state').textContent = '已从磁盘刷新'
+  if (notify && creatorSession) $('#creator-agent-preview').innerHTML = '<strong>已刷新剧本</strong><p>已重新读取 DSH 可能修改的最新剧本文件。</p>'
+  return story
+}
+async function waitForCreatorAgentFileChange(before) {
+  if (!before) return
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    try {
+      const current = await refreshCreatorStory(false)
+      if (JSON.stringify(current) !== JSON.stringify(before)) {
+        $('#creator-save-state').textContent = '已同步 DSH 修改'
+        $('#creator-agent-preview').innerHTML = '<strong>已收到 DSH 修改</strong><p>剧本文件已更新，工作台已自动读取最新内容。</p>'
+        return
+      }
+    } catch { /* DSH 回合尚未结束，继续等待 */ }
+  }
+  $('#creator-agent-preview').innerHTML = '<strong>等待 DSH 修改</strong><p>消息已发送；暂未检测到剧本文件变化，可稍后使用“刷新剧本”。</p>'
+}
+$('#creator-session-refresh').onclick = async () => {
+  const button = $('#creator-session-refresh'); button.disabled = true
+  try { await refreshCreatorStory() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } finally { button.disabled = false }
+}
 async function openStoryEditor() {
   const storyId = $('#story-select').value
   if (!storyId) { alert('请先在剧本弹窗中选择剧本。'); return }
