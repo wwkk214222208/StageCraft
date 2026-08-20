@@ -48,6 +48,18 @@ test('Android manifest and trusted WebView fail closed around the Javascript bri
   assert.doesNotMatch(html, /(?:src|href)="https?:\/\//i)
 })
 
+test('legacy card WebView is isolated, origin-pinned, and has no native bridge', () => {
+  const policy = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'LegacyWebViewPolicy.java')
+  assert.match(policy, /setAllowFileAccess\(false\)/)
+  assert.match(policy, /setAllowUniversalAccessFromFileURLs\(false\)/)
+  assert.match(policy, /setAcceptCookie\(false\)/)
+  assert.match(policy, /connect-src|isAllowed/)
+  assert.match(policy, /appassets\.androidplatform\.net/)
+  assert.match(policy, /getQueryParameterNames/)
+  assert.doesNotMatch(policy, /addJavascriptInterface/)
+  assert.doesNotMatch(policy, /HttpURLConnection|FileInputStream|StageCraftNative/)
+})
+
 test('Android cleartext access requires the explicit UI risk switch and strict native validation', () => {
   const manifest = read('app', 'src', 'main', 'AndroidManifest.xml')
   const html = read('app', 'src', 'main', 'assets', 'index.html')
