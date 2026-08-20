@@ -33,7 +33,8 @@ public final class MainActivity extends Activity {
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         CookieManager.getInstance().setAcceptCookie(false);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
-        bridge = new NativeBridge(this, webView, new RemoteSessionStore(this));
+        EmbeddedCoreArtifact.Verification embeddedCore = EmbeddedCoreArtifact.verify(this);
+        bridge = new NativeBridge(this, webView, new RemoteSessionStore(this), embeddedCore);
         webView.addJavascriptInterface(bridge, "StageCraftNative");
         webView.setWebViewClient(new LocalAssetWebViewClient(this));
         setContentView(webView);

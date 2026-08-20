@@ -1,12 +1,12 @@
 # StageCraft Android local and remote client
 
-This directory is the native Android host for the shared StageCraft Core protocol. It supports the existing remote HTTP/SSE mode and provides the phase-five local host boundary: `AndroidHumanPlugin` and `LocalCoreConnection` forward the same view, command, event, approval, transaction, and UI-extension protocol to an injected Core runtime.
+This directory is the native Android host for the shared StageCraft Core protocol. It supports remote HTTP/SSE mode and the phase-five embedded browser Core path. The generated `embedded-core.js` executes the shared `CoreRuntimeSkeleton` protocol in the WebView; Java only owns lifecycle, media, pairing, and transport boundaries.
 
 ## Local mode boundary
 
 `NativeBridge.installLocalCore(...)` is the integration point for the app composition root. The supplied `LocalCoreConnection.CoreHost` must be the shared Core runtime; Android does not implement Director, Chat, approval, state transactions, workflows, or card business logic a second time. The renderer and `renderer.js` are shared by both modes.
 
-The checkout currently contains the portable Core as Node/TypeScript and does not contain an Android JS/WASM Core runtime artifact. Consequently the shipped APK is remote-only: `MainActivity` does not claim or select standalone mode, and `installLocalCore(...)` is an integration contract rather than a working APK feature. Passing `null` or omitting the host fails closed; there is no Android fallback implementation. A future composition root may enable standalone mode only after packaging a real shared Core runtime and adapting it through `CoreHost`, not by adding Android domain code.
+The embedded path is deliberately limited to the shared, platform-neutral Core skeleton. Gradle runs `scripts/build-android-core.mjs` with the repository's pinned esbuild, packages the bundle and manifest into the APK, and the native bridge verifies artifact name, byte count, SHA-256, bundle version, protocol version, and bridge version before local mode is allowed. Append `?mode=remote` to the trusted asset URL for remote transport during development. The full desktop StageCraft composition is not embedded: model gateway, SQLite repository, Cordis services, story loading, and Android secret/model adapters still require a future platform composition. No Java domain fallback or fake `CoreHost` is provided.
 
 ## Android ports
 

@@ -216,8 +216,26 @@ export function createRenderer({ document, bridge }) {
   return { receive, renderView }
 }
 
-if (typeof window !== 'undefined' && window.document && window.StageCraftNative) {
-  const renderer = createRenderer({ document: window.document, bridge: window.StageCraftNative })
-  window.StageCraftNativeReceive = message => renderer.receive(message)
-  window.StageCraftNative.ready()
+if (typeof window !== 'undefined' && window.document) {
+  const embedded = window.StageCraftEmbeddedCore
+  const native = window.StageCraftNative
+  const useRemote = new URLSearchParams(window.location.search).get('mode') === 'remote'
+  if (embedded && native?.localCoreAllowed?.() === true && !useRemote) {
+    const bridge = {
+      dispatch: embedded.dispatch,
+      refresh: embedded.refresh,
+      reconnect: embedded.reconnect,
+      disconnect: embedded.stop,
+      loadMedia: () => {},
+      pair: () => {},
+      clearSession: () => {},
+      chooseCharacterCard: () => {},
+    }
+    const renderer = createRenderer({ document: window.document, bridge })
+    embedded.start(message => renderer.receive(message))
+  } else if (native) {
+    const renderer = createRenderer({ document: window.document, bridge: native })
+    window.StageCraftNativeReceive = message => renderer.receive(message)
+    native.ready()
+  }
 }

@@ -32,11 +32,17 @@ public final class NativeBridge implements AutoCloseable {
     private volatile boolean closed;
     private volatile boolean userDisconnected;
     private volatile AndroidHumanPlugin localPlugin;
+    private final EmbeddedCoreArtifact.Verification embeddedCore;
 
-    public NativeBridge(Activity activity, WebView webView, RemoteSessionStore sessionStore) {
+    public NativeBridge(Activity activity, WebView webView, RemoteSessionStore sessionStore, EmbeddedCoreArtifact.Verification embeddedCore) {
         this.activity = activity;
         this.webView = webView;
         this.sessionStore = sessionStore;
+        this.embeddedCore = embeddedCore;
+    }
+
+    @JavascriptInterface public boolean localCoreAllowed() {
+        return embeddedCore.valid();
     }
 
     @JavascriptInterface public void ready() {

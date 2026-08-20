@@ -22,6 +22,8 @@ public final class LocalAssetWebViewClient extends WebViewClient {
         assets.put("/index.html", "text/html");
         assets.put("/styles.css", "text/css");
         assets.put("/renderer.js", "text/javascript");
+        assets.put("/embedded-core.js", "text/javascript");
+        assets.put("/embedded-core.json", "application/json");
         ASSETS = Collections.unmodifiableMap(assets);
     }
     private final Context context;
