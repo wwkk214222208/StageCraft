@@ -5,15 +5,32 @@
  *    用真实 Cordis 跑完整生命周期（ctx.plugin → 请求 → fiber.dispose）。
  * 运行：node dsh-rp/verify.mjs
  */
+import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { pathToFileURL } from 'node:url'
-import { resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
-import * as rp from './dist/index.js'
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const packageRoot = join(repositoryRoot, 'dsh-rp')
+const distRoot = join(packageRoot, 'dist')
+
+// Always verify the artifact that would be installed, including dist/worker.js.
+execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: packageRoot, stdio: 'inherit' })
+if (!existsSync(join(distRoot, 'worker.js'))) throw new Error('dsh-rp build did not produce dist/worker.js')
+const rp = await import(pathToFileURL(join(distRoot, 'index.js')).href + `?verify=${Date.now()}`)
 
 const PORT = Number(process.env.RP_PORT ?? 18787)
 process.env.RP_PORT = String(PORT)
 const base = `http://127.0.0.1:${PORT}`
+const deadline = 5_000
+
+async function bounded(promise, label, timeoutMs = deadline) {
+  let timer
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs) })
+  try { return await Promise.race([promise, timeout]) } finally { clearTimeout(timer) }
+}
 
 /** 轮询等待服务器就绪（最多 10s） */
 async function waitForReady(url) {
@@ -58,4 +75,44 @@ try {
 } catch (error) {
   console.error(`[real cordis] 验证失败：${error instanceof Error ? error.stack ?? error.message : String(error)}`)
   process.exitCode = 1
+}
+
+// ---------- ③ real sandbox worker contract ----------
+const sandboxCtx = new Context()
+const sandboxFiber = sandboxCtx.plugin({ name: rp.name, inject: rp.inject, apply: rp.apply }, {
+  runtimeMode: 'sandboxed',
+  root: distRoot,
+})
+const streamFrames = []
+try {
+  await bounded(sandboxFiber, 'sandbox Cordis plugin startup')
+  const debug = sandboxCtx.stagecraftDebug
+  if (!debug || debug.mode !== 'sandboxed') throw new Error('sandboxed plugin did not provide ctx.stagecraftDebug')
+  const unsubscribe = debug.subscribe(['worker.status', 'core.view'], envelope => streamFrames.push(envelope))
+  const status = await bounded(debug.request('worker.status', {}), 'worker.status request')
+  if (status.status !== 'running') throw new Error(`worker.status was ${status.status}`)
+  const view = await bounded(debug.request('core.view.get', {}), 'core.view.get request')
+  if (!view || typeof view.revision !== 'number') throw new Error('core.view.get returned no bounded core view')
+  const subscribed = await bounded(debug.request('debug.subscribe', { streams: ['worker.status', 'core.view'] }), 'debug.subscribe request')
+  if (!subscribed.subscribed) throw new Error('debug.subscribe was not acknowledged')
+  await bounded(debug.request('debug.flush', {}), 'debug request')
+  await bounded(debug.recover('stream contract'), 'debug worker recover')
+  if (streamFrames.length === 0) throw new Error('sandbox worker emitted no debug/status stream frames')
+  console.log('[sandbox cordis] handshake/status/core.view/debug stream OK')
+
+  const stopped = await bounded(debug.stop('contract graceful stop'), 'worker stop')
+  if (stopped.status !== 'stopped') throw new Error(`worker.stop did not stop worker: ${stopped.status}`)
+  const restarted = await bounded(debug.restart('contract restart'), 'worker restart')
+  if (restarted.status !== 'running' || restarted.generation < 2) throw new Error('worker restart did not create a new running generation')
+  const afterRestart = await bounded(debug.request('worker.status', {}), 'post-restart worker.status')
+  if (afterRestart.status !== 'running') throw new Error('worker unavailable after restart')
+  unsubscribe()
+
+  // A worker lifecycle must not invalidate the host Context or its plugin registry.
+  const probe = sandboxCtx.plugin({ name: 'sandbox.context.probe', apply() {} })
+  await bounded(probe, 'host Context probe plugin')
+  await bounded(probe.dispose(), 'host Context probe disposal')
+  console.log('[sandbox cordis] stop/restart preserved host Context usability')
+} finally {
+  await bounded(sandboxFiber.dispose(), 'sandbox Cordis plugin disposal').catch(error => console.error(`[sandbox cordis] cleanup: ${error.message}`))
 }
