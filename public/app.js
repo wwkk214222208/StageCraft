@@ -653,8 +653,11 @@ async function revertCreatorPreview() {
 $('#creator-apply').onclick = applyCreatorPreview
 $('#creator-revert').onclick = revertCreatorPreview
 
-function renderCreatorSession(session) {
+async function renderCreatorSession(session) {
   creatorSession = session
+  if (session) {
+    try { session.messages = await creatorRequest('/api/agent/history', { owner: creatorOwner, sessionId: session.id }) } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(error instanceof Error ? error.message : String(error))}</strong>` }
+  }
   $('#creator-session-label').textContent = session ? `${session.storyTitle} · ${String(session.id).slice(-8)}` : '尚未选择会话'
   $('#creator-session-close').disabled = !session
   $('#creator-session-model').disabled = !session
@@ -669,7 +672,7 @@ async function loadCreatorSessions() {
   if (!response.ok) throw new Error('无法读取 DSH 会话。')
   const sessions = await response.json(); const list = $('#creator-session-list')
   list.innerHTML = sessions.length ? sessions.map(session => `<button type="button" class="creator-session-choice" data-session-id="${escape(session.id)}">${escape(session.storyTitle)} · ${escape(String(session.id).slice(-8))}</button>`).join('') : '<p class="hint">当前剧本没有已有会话。</p>'
-  list.querySelectorAll('[data-session-id]').forEach(button => button.onclick = () => { const session = sessions.find(item => item.id === button.dataset.sessionId); renderCreatorSession(session); $('#creator-session-modal').close() })
+  list.querySelectorAll('[data-session-id]').forEach(button => button.onclick = () => { const session = sessions.find(item => item.id === button.dataset.sessionId); void renderCreatorSession(session); $('#creator-session-modal').close() })
 }
 $('#creator-session-open').onclick = async () => { try { await loadCreatorSessions(); $('#creator-session-modal').showModal() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
 $('#creator-session-model').onclick = async () => {
@@ -691,7 +694,7 @@ $('#creator-session-model-save').onclick = async () => {
   const result = await creatorRequest('/api/agent/model', { owner: creatorOwner, sessionId: creatorSession.id, provider, model, reasoningEffort: $('#creator-session-reasoning').value.trim() || undefined })
   $('#creator-session-model-modal').close(); $('#creator-agent-preview').innerHTML = `<strong>会话模型已更新</strong><p>${escape(result.selected?.provider ?? provider)} / ${escape(result.selected?.model ?? model)}</p>`
 }
-$('#creator-session-new').onclick = async () => { try { const session = await creatorRequest('/api/agent/session', { owner: creatorOwner, storyId: $('#story-edit-id').textContent }); renderCreatorSession(session); $('#creator-session-modal').close() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
+$('#creator-session-new').onclick = async () => { try { const session = await creatorRequest('/api/agent/session', { owner: creatorOwner, storyId: $('#story-edit-id').textContent }); void renderCreatorSession(session); $('#creator-session-modal').close() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
 $('#creator-session-close').onclick = async () => { if (!creatorSession) return; await fetch('/api/agent/session', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ owner: creatorOwner, sessionId: creatorSession.id }) }).catch(() => {}); renderCreatorSession(null) }
 async function sendCreatorMessage(inputSelector, buttonSelector) {
   if (!creatorSession) return

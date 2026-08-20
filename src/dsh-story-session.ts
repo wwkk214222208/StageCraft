@@ -34,6 +34,7 @@ type NativeApiProxy = {
     list?: (request: { rpcId: string; payload: { cursor?: string } }) => Promise<RpcResponse>
     models?: (request: { rpcId: string; payload: { sessionId: string } }) => Promise<RpcResponse>
     selectModel?: (request: { rpcId: string; payload: { sessionId: string; provider: string; model: string; reasoningEffort?: string } }) => Promise<RpcResponse>
+    history?: (request: { rpcId: string; payload: { sessionId: string; maxMessages?: number } }) => Promise<RpcResponse>
     prompt?: (request: { rpcId: string; payload: { sessionId: string; mode: 'queue' | 'steer'; content: unknown[] } }) => Promise<RpcResponse>
   }
 }
@@ -69,7 +70,9 @@ export class DshStorySessionService {
       const id = sessionIdOf(item.sessionId)
       if (!id || known.has(id)) continue
       const timestamp = new Date(item.updatedAt ?? Date.now()).toISOString()
-      local.push({ id, owner, storyId: storyId ?? 'eldoria', storyTitle: storyId ?? 'DSH 会话', createdAt: timestamp, updatedAt: timestamp, nativeId: id, messages: [] })
+      const restored = { id, owner, storyId: storyId ?? 'eldoria', storyTitle: storyId ?? 'DSH 会话', createdAt: timestamp, updatedAt: timestamp, nativeId: id, messages: [] }
+      this.sessions.set(id, restored)
+      local.push(restored)
     }
     return local.map(publicSession)
   }
@@ -91,6 +94,22 @@ export class DshStorySessionService {
     if (!nativeId) throw new Error('DSH 创建会话未返回有效的 sessionId。')
     const session: DshStorySession = { id: nativeId, owner: owner.slice(0, 128), storyId, storyTitle: story.title, createdAt: timestamp, updatedAt: timestamp, nativeId, ...(nativeSession ? { nativeHandle: nativeSession } : {}), messages: [] }
     this.sessions.set(session.id, session); return publicSession(session)
+  }
+  async history(owner: string, id: string): Promise<DshStoryMessage[]> {
+    const session = this.require(owner, id); const apiProxy = this.currentApiProxy()
+    if (!apiProxy?.sessions?.history) return session.messages.slice(-MAX_MESSAGES)
+    const response = await apiProxy.sessions.history({ rpcId: `creator-history-${randomUUID()}`, payload: { sessionId: session.nativeId ?? id, maxMessages: MAX_MESSAGES } })
+    const value = this.unwrapRpc(response) as { events?: Array<{ event?: { type?: string; data?: Record<string, unknown> } }> }
+    const messages: DshStoryMessage[] = []
+    for (const entry of value.events ?? []) {
+      const event = entry.event ?? (entry as unknown as { type?: string; data?: Record<string, unknown> })
+      const type = event.type ?? ''; const data = event.data ?? {}
+      if (type !== 'user/message' && type !== 'assistant/message') continue
+      const content = data.content
+      const text = Array.isArray(content) ? content.map(item => typeof item === 'string' ? item : (item as Record<string, unknown>)?.text ?? '').join('') : typeof content === 'string' ? content : ''
+      if (text) messages.push({ role: type === 'user/message' ? 'user' : 'system', text, createdAt: this.now().toISOString() })
+    }
+    session.messages = messages.slice(-MAX_MESSAGES); return clone(session.messages)
   }
   async models(owner: string, id: string): Promise<unknown> {
     const apiProxy = this.currentApiProxy()

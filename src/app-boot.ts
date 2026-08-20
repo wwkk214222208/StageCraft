@@ -343,6 +343,9 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       if (url.pathname === '/api/agent/session' && request.method === 'DELETE') {
         const body = await readJson(request); dshStorySessions.close(String(body.owner ?? ''), String(body.sessionId ?? '')); return json(response, 200, { ok: true })
       }
+      if (url.pathname === '/api/agent/history' && request.method === 'POST') {
+        const body = await readJson(request); return json(response, 200, await dshStorySessions.history(String(body.owner ?? ''), String(body.sessionId ?? '')))
+      }
       if (url.pathname === '/api/agent/models' && request.method === 'POST') {
         const body = await readJson(request); return json(response, 200, await dshStorySessions.models(String(body.owner ?? ''), String(body.sessionId ?? '')))
       }
