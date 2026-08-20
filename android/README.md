@@ -1,37 +1,32 @@
-# StageCraft Android remote client
+# StageCraft Android local and remote client
 
-This directory is the native Android remote client. It does not embed Node.js or start a localhost server. A single Activity hosts a local, packaged WebView renderer; Java owns pairing, bearer credentials, Core protocol HTTP/SSE, reconnect policy, lifecycle, and Android Keystore storage.
+This directory is the native Android host for the shared StageCraft Core protocol. It supports the existing remote HTTP/SSE mode and provides the phase-five local host boundary: `AndroidHumanPlugin` and `LocalCoreConnection` forward the same view, command, event, approval, transaction, and UI-extension protocol to an injected Core runtime.
 
-## Platform choices
+## Local mode boundary
 
-- `minSdk 26`: the minimum supported version has Android Keystore AES-GCM and WebView Safe Browsing APIs used by the app.
-- `compileSdk/targetSdk 35`: the first APK baseline targets Android 15 behavior.
-- Java 17 and Android Gradle Plugin 8.7.3 with Gradle 8.9.
-- No third-party runtime libraries. JUnit is test-only.
+`NativeBridge.installLocalCore(...)` is the integration point for the app composition root. The supplied `LocalCoreConnection.CoreHost` must be the shared Core runtime; Android does not implement Director, Chat, approval, state transactions, workflows, or card business logic a second time. The renderer and `renderer.js` are shared by both modes.
 
-The manifest permits cleartext traffic only because Android network security configuration cannot enumerate dynamic LAN IP addresses at runtime. Application validation still rejects every `http://` address unless the user explicitly enables the visible insecure-LAN switch. HTTPS is the default. This development transport is not a substitute for TLS on an untrusted network.
+The checkout currently contains the portable Core as Node/TypeScript and does not contain an Android JS/WASM Core runtime artifact. Therefore the APK host contract, ports, tests, and lifecycle wiring are implemented here, while packaging a real embedded Core runtime remains an integration/build prerequisite for a standalone APK. A future composition root should adapt the shared Core through `CoreHost`, not replace it with Android domain code.
+
+## Android ports
+
+- `AndroidSqliteRepository` provides transactional records, Core snapshots, assets, and recovery metadata in `stagecraft.sqlite`.
+- `AndroidSecretStore` encrypts model provider secrets with an Android Keystore AES-GCM key. Secrets never enter WebView storage, CoreView, URLs, or logs.
+- `AndroidModelTransport` sends model requests and emits bounded SSE deltas; cancellation closes active connections.
+- `StageCraftArchive` imports/exports only bounded `stagecraft.json` ZIP archives and rejects unsafe archive content by requiring the canonical entry.
+- PNG card bytes are bounded and signature-checked before any import. JSON card parsing remains a Core/compatibility concern; Android only transports selected data.
+- Foreground/background state is forwarded to the local or remote human plugin. Core snapshots are persisted by the repository, so force-close recovery is based on durable state rather than WebView memory. Generation must be cancelled or moved to an Android foreground service by the final app composition root.
 
 ## Security boundary
 
-- The WebView loads only `https://appassets.androidplatform.net/` resources intercepted from packaged assets. File/content access, cookies, DOM storage, mixed content, popups, remote frames, and release WebView debugging are disabled.
-- `addJavascriptInterface` is installed only on that trusted page. CSP forbids frames and network requests; untrusted card/UI content must never be placed in this WebView in a later phase.
-- The bearer session is held by Java and encrypted with an Android Keystore AES-GCM key. SharedPreferences contains only ciphertext and IV; JavaScript receives neither the token nor an Authorization header.
-- Commands are single-attempt. SSE is established before the authoritative View fetch; foreground recovery always performs a full resync.
-- Portraits are fetched by Java with the bearer header only from a flat `/assets/<filename>` path on the validated server. Redirects, non-raster MIME types, path traversal, and responses over 2 MiB are rejected; the trusted renderer receives only a raster data URL.
-- The system file picker accepts PNG character cards. Java verifies the PNG signature and 8 MiB bound, then performs one authenticated import request; raw card data is never passed to the WebView.
+The WebView loads only `https://appassets.androidplatform.net/` resources intercepted from packaged assets. File/content access, cookies, DOM storage, mixed content, popups, remote frames, and release WebView debugging are disabled. Remote bearer sessions remain Java-only and are encrypted with Android Keystore AES-GCM. Commands are single-attempt; SSE is established before authoritative view fetch; foreground recovery performs a full resync.
 
-## Renderer asset packaging
+## Build and verification
 
-The three audited renderer sources live in `app/src/main/assets/`. The `packageRemoteRenderer` Gradle `Sync` task copies only `index.html`, `styles.css`, and `renderer.js` into `app/build/generated/remote-renderer`; the Android main source set packages that generated directory. `preBuild` depends on this task, so tests and APK builds use the same deterministic allowlist and cannot accidentally include unrelated files.
-
-## Build
-
-The repository contains the standard Gradle 8.9 wrapper, including its checked wrapper JAR and distribution checksum. With the repository-local toolchain available under `.toolchains/`, run:
+The standard Gradle 8.9 wrapper and AGP 8.7.3 contract are checked in. With the required AGP artifact available in the Gradle cache and SDK 35 installed:
 
 ```text
-android/gradlew -p android testDebugUnitTest assembleDebug
+android/gradlew -p android testDebugUnitTest assembleDebug lintDebug --offline --no-daemon
 ```
 
-SDK 35 and Build Tools 35 are required. A successful local build writes the debug APK below `android/app/build/`; that directory is ignored and the generated APK is not committed or distributed from source control.
-
-For a repository-local toolchain, set `JAVA_HOME`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, `ANDROID_USER_HOME`, and `GRADLE_USER_HOME` to directories below the ignored `.toolchains/` folder before invoking the wrapper. Do not write those absolute machine paths to `local.properties` or committed Gradle files.
+The repository-local JDK is under `.toolchains/jdk-extract/`. With the repository-local toolchain and cached AGP available, `testDebugUnitTest`, `assembleDebug`, and `lintDebug` pass. Android build outputs, `local.properties`, APKs, and private assets remain ignored and are not committed.
