@@ -18,3 +18,24 @@ test('embedded Android composition executes shared Core and speaks the bridge pr
   assert.ok(messages.some(message => message.type === 'connection.error' && /Core command has no handler/.test(message.message)))
   api.dispose()
 })
+
+test('embedded Core refresh projects native repository writes into the current view', () => {
+  let room: any = { id: 'android-local-room', title: 'Before', mode: 'director', autoPublish: false, playerCharacter: { name: 'Player', persona: '', currentState: '' }, phase: 'awaiting-player-input', revision: 0, consultations: [], roles: [], reactions: [], decisions: [], scenes: [], lore: [] }
+  const globalObject: Record<string, unknown> = { StageCraftNative: { invokeSync: (operation: string, inputJson: string) => {
+    const input = JSON.parse(inputJson)
+    if (operation === 'core-state.restore') return JSON.stringify({ revision: 0, state: {}, events: [], workflows: [] })
+    if (operation === 'stagecraft.room.get') return JSON.stringify(room)
+    if (operation === 'stagecraft.repository') { room = { ...room, title: 'After native write', revision: 1 }; return JSON.stringify(null) }
+    return JSON.stringify({})
+  } } }
+  installAndroidCore(globalObject)
+  const api = globalObject.StageCraftEmbeddedCore as any
+  const messages: any[] = []
+  api.start((message: string) => messages.push(JSON.parse(message)))
+  assert.equal(messages.at(-1).view.state.room.title, 'Before')
+  const operations = (globalObject.StageCraftNative as any)
+  operations.invokeSync('stagecraft.repository', JSON.stringify({ method: 'setContribution', args: ['android-local-room', 'native'] }))
+  api.refresh()
+  assert.equal(messages.at(-1).view.state.room.title, 'After native write')
+  api.dispose()
+})

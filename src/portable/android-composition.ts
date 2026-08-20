@@ -77,7 +77,12 @@ export function createAndroidComposition(operations: NativeOperations, options: 
     core, roomId,
     start() { if (running) return; running = true; room = readRoom(); core.restoreState(roomId); core.projectRoom(room, 'android:start'); emit({ type: 'connection.state', state: 'connected' }); emit({ type: 'core.resync', reason: 'initial', revision: core.getView().revision, view: core.getView() }) },
     stop() { if (!running) return; running = false; chat.cancel(roomId); director.cancel(roomId); emit({ type: 'connection.state', state: 'disconnected' }) },
-    refresh() { if (running) emit({ type: 'core.resync', reason: 'manual', revision: core.getView().revision, view: core.getView() }) },
+    refresh() {
+      if (!running) return
+      room = readRoom()
+      core.projectRoom(room, 'android:refresh')
+      emit({ type: 'core.resync', reason: 'manual', revision: core.getView().revision, view: core.getView() })
+    },
     async dispatch(command) { if (!running) return; await core.dispatch(command); emit({ type: 'core.resync', reason: 'command', revision: core.getView().revision, view: core.getView() }) },
     async cancel(requestId) { await core.cancel(requestId) },
     dispose() { if (!running) return; chat.dispose(); director.dispose(); void container.dispose(); running = false },
