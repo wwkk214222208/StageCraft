@@ -745,9 +745,12 @@ export class Store {
           ...(stored.sceneLocation ? { sceneLocation: stored.sceneLocation } : {}),
           ...(stored.roleProposals ? { roleProposals: stored.roleProposals } : {}),
           ...(stored.rolePresence ? { rolePresence: stored.rolePresence } : {}),
+          ...(stored.roleStates ? { roleStates: stored.roleStates } : {}),
           ...(stored.reason ? { reason: stored.reason } : {}),
           ...(worldChangeOverride?.sceneTime ? { sceneTime: worldChangeOverride.sceneTime } : {}),
           ...(worldChangeOverride?.sceneLocation ? { sceneLocation: worldChangeOverride.sceneLocation } : {}),
+          ...(worldChangeOverride?.rolePresence ? { rolePresence: worldChangeOverride.rolePresence } : {}),
+          ...(worldChangeOverride?.roleStates ? { roleStates: worldChangeOverride.roleStates } : {}),
         }
         this.applyWorldChangeLocked(roomId, change)
         if (!worldChangeId) worldChangeId = this.createWorldChange(roomId, stored, 'speech', speech.turnId)
@@ -803,6 +806,14 @@ export class Store {
       const update = this.db.prepare('UPDATE roles SET presence = ? WHERE room_id = ? AND id = ?')
       for (const item of presenceChanges) update.run(item.presence, roomId, item.roleId)
     }
+    // 角色状态更新：roleId → 新 currentState（导演/角色随变更提议，批准后生效）
+    const roleStates = change.roleStates ?? {}
+    const knownRoles = this.db.prepare('SELECT id FROM roles WHERE room_id = ?').all(roomId) as Array<{ id: string }>
+    const known = new Set(knownRoles.map(row => row.id))
+    for (const [roleId, currentState] of Object.entries(roleStates)) {
+      if (!known.has(roleId) || typeof currentState !== 'string' || !currentState.trim()) continue
+      this.db.prepare('UPDATE roles SET current_state = ? WHERE room_id = ? AND id = ?').run(currentState.trim(), roomId, roleId)
+    }
   }
 
   private createWorldChange(roomId: string, request: import('./types.ts').WorldChangeRequest, source: 'speech' | 'director', turnId?: string): string {
@@ -850,9 +861,12 @@ export class Store {
         ...(stored.sceneLocation ? { sceneLocation: stored.sceneLocation } : {}),
         ...(stored.roleProposals ? { roleProposals: stored.roleProposals } : {}),
         ...(stored.rolePresence ? { rolePresence: stored.rolePresence } : {}),
+        ...(stored.roleStates ? { roleStates: stored.roleStates } : {}),
         ...(stored.reason ? { reason: stored.reason } : {}),
         ...(override?.sceneTime ? { sceneTime: override.sceneTime } : {}),
         ...(override?.sceneLocation ? { sceneLocation: override.sceneLocation } : {}),
+        ...(override?.rolePresence ? { rolePresence: override.rolePresence } : {}),
+        ...(override?.roleStates ? { roleStates: override.roleStates } : {}),
       }
       this.applyWorldChangeLocked(roomId, change)
       const id = room.pending_world_change_id ?? this.createWorldChange(roomId, stored, 'director')

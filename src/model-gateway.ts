@@ -732,16 +732,16 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         },
         required: ['text'],
       }
-      const schema = { type: 'object', additionalProperties: false, properties: { entries: { type: 'array', items: entrySchema } }, required: ['entries'] }
-      const result = await gateway.completeStreaming<{ entries?: import('./types.ts').MemoryDigestEntry[] }>(
+      const schema = { type: 'object', additionalProperties: false, properties: { entries: { type: 'array', items: entrySchema }, currentState: { type: 'string', description: '可选。该角色消化这段剧情后最新的人物状态（所处位置、身体/情绪/处境变化），用一句到两句现在时描述；没有变化可省略。' } }, required: ['entries'] }
+      const result = await gateway.completeStreaming<{ entries?: import('./types.ts').MemoryDigestEntry[]; currentState?: string }>(
         renderPrompt(getPrompts().role.digestSystem, { roleName: role.name }),
         renderPrompt(getPrompts().role.digestUser, { sceneText: scene.text }),
         'memory_digest',
         schema,
-        { name: 'submit_memory_digest', description: '提交该角色从场景正文中提取的结构化私有记忆。', parameters: schema },
+        { name: 'submit_memory_digest', description: '提交该角色从场景正文中提取的结构化私有记忆与最新状态。', parameters: schema },
         {}, { thinkingStrength: role.thinkingStrength },
       )
-      return { entries: Array.isArray(result?.entries) ? result.entries : [] }
+      return { entries: Array.isArray(result?.entries) ? result.entries : [], ...(typeof result?.currentState === 'string' && result.currentState.trim() ? { currentState: result.currentState.trim() } : {}) }
     },
     async speak(role: Role, contribution: string, publicRoles: Role[] = [], scene?: { time?: string; location?: string }, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string): Promise<{ text: string; thinking?: string; usage?: import('./types.ts').TokenUsage; worldChange?: import('./types.ts').WorldChangeRequest }> {
       let thinking = ''
@@ -755,6 +755,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
           sceneTime: { type: 'string', description: '剧情推进导致时间变化时填新的时间；否则省略' },
           sceneLocation: { type: 'string', description: '剧情推进导致地点变化时填新的地点；否则省略' },
           roleProposals: { type: 'array', description: '剧情需要引入当前角色列表之外的新人物时提案；没有就不填。', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' }, portraitRef: { type: 'string' }, currentState: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] }, selfModel: { type: 'string' }, memoryTimeline: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } }, required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'selfModel', 'memoryTimeline'] } },
+          roleStates: { type: 'object', additionalProperties: { type: 'string' }, description: '剧情中该角色或其他在场角色的状态发生值得记录的变化时更新（roleId → 最新状态，现在时描述）；没有明显变化省略。' },
           reason: { type: 'string', description: '给玩家看的简短理由，说明为何提出这项世界变更（可省略）' },
         },
       }
@@ -804,6 +805,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
           sceneLocation: { type: 'string', description: '地点变化时填新地点；无变化省略' },
           roleProposals: { type: 'array', description: '需要引入新人物时提案；没有省略。', items: roleProposalSchema },
           rolePresence: { type: 'array', description: '需要切换已有角色进场/离场时列出；没有省略。', items: { type: 'object', additionalProperties: false, properties: { roleId: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] } }, required: ['roleId', 'presence'] } },
+          roleStates: { type: 'object', additionalProperties: { type: 'string' }, description: '角色状态发生值得记录的变化时更新（roleId → 该角色最新状态，现在时描述）；没有明显变化省略。' },
           reason: { type: 'string', description: '给玩家看的简短理由（可省略）' },
         },
       }

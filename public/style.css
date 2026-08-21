@@ -75,10 +75,12 @@
 .world-change-proposal .wc-roles b{color:#b7c8fe;font:600 13px Georgia,serif}
 .world-change-proposal .wc-roles small{color:#679efe;font-size:11px}
 .world-change-proposal .wc-roles p{margin:4px 0 0;color:#a9b8dd;font-size:12px;line-height:1.45}
-.world-change-proposal .wc-presence,.world-change-proposal .wc-narration{margin:4px 0 0}
-.world-change-proposal .wc-presence h5,.world-change-proposal .wc-narration h5{margin:0 0 6px;color:#b7c8fe;font:600 12px system-ui}
-.world-change-proposal .wc-presence ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
-.world-change-proposal .wc-presence li{display:flex;align-items:baseline;justify-content:space-between;gap:8px;border:1px solid #3a4a6e;border-radius:4px;background:#222a3d;padding:6px 9px}
+.world-change-proposal .wc-presence,.world-change-proposal .wc-narration,.world-change-proposal .wc-states{margin:4px 0 0}
+.world-change-proposal .wc-presence h5,.world-change-proposal .wc-narration h5,.world-change-proposal .wc-states h5{margin:0 0 6px;color:#b7c8fe;font:600 12px system-ui}
+.world-change-proposal .wc-presence ul,.world-change-proposal .wc-states ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.world-change-proposal .wc-presence li,.world-change-proposal .wc-states li{display:flex;align-items:baseline;justify-content:space-between;gap:8px;border:1px solid #3a4a6e;border-radius:4px;background:#222a3d;padding:6px 9px}
+.world-change-proposal .wc-states li{flex-direction:column;align-items:flex-start}
+.world-change-proposal .wc-states p{margin:2px 0 0;color:#a9b8dd;font-size:12px;line-height:1.45}
 .world-change-proposal .wc-presence b{color:#b7c8fe;font:600 13px Georgia,serif}
 .world-change-proposal .wc-presence small{color:#679efe;font-size:11px}
 .world-change-proposal .wc-narration p{margin:0;color:#cdd9f5;font-size:12px;line-height:1.55;white-space:pre-wrap}

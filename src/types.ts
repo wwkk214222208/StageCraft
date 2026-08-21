@@ -206,6 +206,8 @@ export interface WorldChangeRequest {
   roleProposals?: RoleProposal[]
   /** 提议的角色进场/离场切换（批准后生效） */
   rolePresence?: Array<{ roleId: string; presence: 'present' | 'absent' | 'unavailable' }>
+  /** 提议的角色状态更新（roleId → 新 currentState；批准后生效） */
+  roleStates?: Record<string, string>
   /** 简短理由，供玩家了解为何提出这项变更 */
   reason?: string
 }
@@ -240,7 +242,8 @@ export type MemoryStatus = 'active' | 'superseded' | 'retracted' | 'archived'
 export interface MemoryDigestEntry { occurredAt?: string; text: string }
 /** 剧本中的角色初始记忆；不含运行期 ID 与审计字段。 */
 export interface InitialMemory extends MemoryDigestEntry {}
-export interface MemoryDigest { entries?: MemoryDigestEntry[] }
+/** 角色消化一条已批准正文的产出：记忆条目 + 可选的最新角色状态（自评）。 */
+export interface MemoryDigest { entries?: MemoryDigestEntry[]; currentState?: string }
 export interface NpcMemory { id: string; roomId: string; roleId: string; sceneId?: string; turnId?: string; worldChangeId?: string; occurredAt: string; occurredLocation?: string; source: MemorySource; text: string; visibility: 'private'; status: MemoryStatus; supersedes: string[]; supersededBy?: string; dedupeKey: string; createdAt: string; updatedAt: string }
 
 export interface RoomSnapshot {

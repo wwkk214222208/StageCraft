@@ -325,6 +325,8 @@ export class StageCraftChatService implements StageCraftChatPort {
           const digest = await this.workers.digest!(role, { id: scene.id, turnId: scene.turnId, text: sceneText, sceneTime: scene.sceneTime, sceneLocation: scene.sceneLocation, source, worldChangeId })
           const entries = normalizeDigestEntries(digest.entries)
           if (entries.length) this.store.insertNpcMemories(roomId, role.id, entries.map((entry, index) => ({ id: `digest-${scene.id}-${role.id}-${index}`, sceneId: scene.id, turnId: scene.turnId, ...(worldChangeId ? { worldChangeId } : {}), occurredAt: entry.occurredAt ?? scene.sceneTime ?? '过去', occurredLocation: scene.sceneLocation, source, ...entry })))
+          // 角色消化后自评最新状态：平时由角色自己更新 currentState。
+          if (digest.currentState?.trim()) this.store.setRoleCurrentState(roomId, role.id, digest.currentState.trim())
         } catch (error) { console.error(`[memory digest failed] ${role.id}: ${error}`) }
       }))
       this.notifications.notify(roomId)
