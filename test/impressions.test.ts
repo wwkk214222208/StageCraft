@@ -19,7 +19,7 @@ function fixture() {
 
 test('applyRoleImpressions merges, updates and deletes impressions', () => {
   const { store, runtime, roomId } = fixture()
-  runtime.interveneRole(roomId, 'aria', 'x', {}, { impressions: { 米拉: '直率好奇。', 诺尔: '谨慎寡言。' } })
+  runtime.interveneRole(roomId, 'aria', 'x', { impressions: { 米拉: '直率好奇。', 诺尔: '谨慎寡言。' } })
   let room = runtime.get(roomId)
   assert.deepEqual(room.roles.find(r => r.id === 'aria')!.impressions, { 米拉: '直率好奇。', 诺尔: '谨慎寡言。' })
   // 新增 + 更新
@@ -38,7 +38,7 @@ test('applyRoleImpressions merges, updates and deletes impressions', () => {
 
 test('impressions survive archive round-trip and story restart', () => {
   const { store, runtime, roomId } = fixture()
-  runtime.interveneRole(roomId, 'mira', 'x', {}, { impressions: { 艾莉娅: '克制敏锐。' } })
+  runtime.interveneRole(roomId, 'mira', 'x', { impressions: { 艾莉娅: '克制敏锐。' } })
   const archive = runtime.exportArchive(roomId)
   runtime.importArchive(roomId, archive)
   assert.deepEqual(runtime.get(roomId).roles.find(r => r.id === 'mira')!.impressions, { 艾莉娅: '克制敏锐。' })

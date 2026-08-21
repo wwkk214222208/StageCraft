@@ -202,8 +202,8 @@ export class RoomRuntime {
     this.managementService.setPlayerAvatar(roomId, portraitRef)
   }
 
-  interveneRole(roomId: string, roleId: string, selfModel: string, memories: import('./types.ts').InitialMemory[] | undefined, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
-    this.managementService.interveneRole(roomId, roleId, selfModel, memories, config)
+  interveneRole(roomId: string, roleId: string, selfModel: string, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
+    this.managementService.interveneRole(roomId, roleId, selfModel, config)
   }
 
   storeNpcMemories(roomId: string, roleId: string, entries: Array<{ id?: string; text?: string; occurredAt?: string }>): void {

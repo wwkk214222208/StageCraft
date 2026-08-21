@@ -1016,7 +1016,7 @@ export class Store {
     })
   }
 
-  updateRolePrivateState(roomId: string, roleId: string, selfModel: string, _memories: import('./types.ts').InitialMemory[] | undefined, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
+  updateRolePrivateState(roomId: string, roleId: string, selfModel: string, config: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: import('./types.ts').ThinkingStrength } = {}): void {
     const sql = 'UPDATE roles SET self_model = ?, provider_id = ?, model_override = ?, impressions = ?, goals = ?, thinking_strength = ? WHERE room_id = ? AND id = ?'
     const values = [selfModel, config.providerId || null, config.modelOverride || null, JSON.stringify(config.impressions ?? {}), JSON.stringify(config.goals ?? []), config.thinkingStrength || null, roomId, roleId]
     const result = this.db.prepare(sql).run(...values)

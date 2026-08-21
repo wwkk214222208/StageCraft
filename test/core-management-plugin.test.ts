@@ -55,7 +55,7 @@ test('management handler maps every supported operation to its narrow port metho
     ['set-room-config', { mode: 'chat', autoPublish: true }, 'setRoomConfig'],
     ['update-player-character', { name: '玩家', persona: '观察者', currentState: '站在门口' }, 'updatePlayerCharacter'],
     ['set-player-avatar', { portraitRef: '/assets/player.svg' }, 'setPlayerAvatar'],
-    ['intervene-role', { roleId: 'aria', selfModel: '克制', memories: [], config: {} }, 'interveneRole'],
+    ['intervene-role', { roleId: 'aria', selfModel: '克制', config: {} }, 'interveneRole'],
     ['store-memories', { roleId: 'aria', entries: [{ text: '记住这件事', occurredAt: '过去' }] }, 'storeNpcMemories'],
     ['retract-memory', { memoryId: 'memory-1' }, 'retractNpcMemory'],
     ['update-memory', { memoryId: 'memory-1', entry: { text: '更新', occurredAt: '过去' } }, 'updateNpcMemory'],

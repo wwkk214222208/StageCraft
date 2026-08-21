@@ -19,7 +19,7 @@ test('sync roles to story: 运行中角色卡写回初始剧本，重开即用�
   const roomId = store.seed()
   const runtime = new RoomRuntime(store)
   // 运行中：修改人设 + 更新印象 + 追加记忆 + 新建角色
-  runtime.interveneRole(roomId, 'aria', '修改后的人设。', undefined, { impressions: { 旅人: '运行中更新的印象。' } })
+  runtime.interveneRole(roomId, 'aria', '修改后的人设。', { impressions: { 旅人: '运行中更新的印象。' } })
   runtime.storeNpcMemories(roomId, 'aria', [{ text: '修改后记忆。', occurredAt: '过去' }])
   runtime.createRole(roomId, { id: 'newbie', name: '新人', portraitRef: '/n.svg', currentState: '站在门口。', presence: 'present', selfModel: '新人设。', memories: [{ text: '刚出场。', occurredAt: '过去' }] })
   // 模拟 /api/story/sync-roles：用 room.roles 覆盖 story.roles（room 有印象时采用运行中印象；room 无印象时回退到剧本原有印象）
@@ -55,7 +55,7 @@ test('sync role to story: 单角色同步保留印象；room 印象为空时保�
   const roomId = store.seed()
   const runtime = new RoomRuntime(store)
   // room 角色没有印象（例如重开后未更新）→ 同步不应抹掉剧本里已有的印象
-  runtime.interveneRole(roomId, 'aria', '修改后的人设。', undefined)
+  runtime.interveneRole(roomId, 'aria', '修改后的人设。')
   const room = runtime.get(roomId)
   const synced = loadStoryPackage(root, 'demo2')
   const index = synced.roles.findIndex(item => item.id === 'aria')
