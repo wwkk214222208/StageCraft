@@ -85,11 +85,13 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const defaultRoot = packageRoot.endsWith('/dist') || packageRoot.endsWith('\\dist') ? packageRoot : sourceRoot
   const root = config.root || process.env.RP_ROOT || defaultRoot
   const runtimeMode = config.runtimeMode ?? 'embedded'
+  const port = config.port ?? Number(process.env.RP_PORT ?? 8799)
+  const host = config.host || process.env.HOST || '127.0.0.1'
   const manager = runtimeMode === 'sandboxed' ? new WorkerManager({
     command: process.execPath,
     args: [workerEntryPath(packageRoot)],
     cwd: packageRoot,
-    env: { STAGECRAFT_ROOT: root },
+    env: { STAGECRAFT_ROOT: root, RP_PORT: String(port), HOST: host },
     onLog: line => console.error(`[stagecraft.worker] ${line}`),
   }) : undefined
   const debug: StageCraftDebugService = manager
@@ -120,8 +122,6 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     if (manager) await manager.start()
     else {
       // Embedded mode remains the self-contained development path.
-      const port = config.port ?? Number(process.env.RP_PORT ?? 8799)
-      const host = config.host || process.env.HOST || '127.0.0.1'
       const app: TavernApp = await startTavern({ root, port, host, ctx, remoteAccess: { enabled: config.remoteEnabled === true, pairingTtlMs: config.remotePairingTtlMs, sessionTtlMs: config.remoteSessionTtlMs } })
       return () => app.close()
     }

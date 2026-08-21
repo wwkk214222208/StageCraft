@@ -1,12 +1,12 @@
 # dsh-rp bundle patch：把酒馆插件行插入 profile 名单。
 # 格式与官方 dsh 插件一致（顶层 YAML 数组，insert 一个插件行）。
 # 装好后 `dsh --profile <name>` 启动时会在 RP_PORT（默认 8799）打开酒馆。
-# runtimeMode=embedded 保持开发期自包含 HTTP；sandboxed 将 StageCraft 放入独立 worker，
-# 仅通过版本化 bounded JSON RPC 暴露调试控制，worker 默认不监听 HTTP。
+# runtimeMode=sandboxed 将 StageCraft 放入独立 worker 进程（WorkerManager 主管），
+# 可单独 restart/reload 而不必重启 DSH；worker 监听 RP_PORT 提供 HTTP。
 - insert:
     - id: rp
       name: 'dsh-rp'
       config:
-        runtimeMode: 'embedded'
+        runtimeMode: 'sandboxed'
         port: 8799
         host: '127.0.0.1'

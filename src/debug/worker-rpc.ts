@@ -76,18 +76,22 @@ export class WorkerRpcServer {
   async start(): Promise<void> {
     this.setStatus('starting')
     this.composition = await this.createComposition()
+    this.attachComposition(this.composition)
     this.generation++
-    this.composition.core.subscribe(event => {
-      const diagnosticEvent = redactDebugValue(event) as unknown as import('../core/protocol.ts').CoreEvent
-      this.eventHistory.push(diagnosticEvent)
-      while (this.eventHistory.length > 256) this.eventHistory.shift()
-      this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.event', sequence: ++this.sequence, revision: event.revision, event: diagnosticEvent })
-      this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.view', sequence: ++this.sequence, revision: this.composition!.core.getView().revision, view: redactDebugValue(this.composition!.core.getView()) as unknown as import('../core/protocol.ts').CoreView })
-    })
     this.setStatus('running')
     this.write({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'ready', generation: this.generation, ...(this.pid ? { pid: this.pid } : {}), changedAt: this.now() })
     this.lineReader = createInterface({ input: this.input })
     this.lineReader.on('line', line => { void this.handleLine(line) })
+  }
+
+  private attachComposition(composition: WorkerComposition): void {
+    composition.core.subscribe(event => {
+      const diagnosticEvent = redactDebugValue(event) as unknown as import('../core/protocol.ts').CoreEvent
+      this.eventHistory.push(diagnosticEvent)
+      while (this.eventHistory.length > 256) this.eventHistory.shift()
+      this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.event', sequence: ++this.sequence, revision: event.revision, event: diagnosticEvent })
+      this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.view', sequence: ++this.sequence, revision: composition.core.getView().revision, view: redactDebugValue(composition.core.getView()) as unknown as import('../core/protocol.ts').CoreView })
+    })
   }
 
   async stop(reason = 'stopped'): Promise<void> {
@@ -174,7 +178,24 @@ export class WorkerRpcServer {
       controller.abort(request.params.reason ?? 'debug cancellation')
       return { cancelled: true, requestId: request.params.requestId }
     }
-    if (request.method === 'debug.reload-plugin') throw unsupported('Plugin reload provider is not installed.')
+    if (request.method === 'debug.reload-plugin') {
+      const pluginId = request.params.pluginId
+      const fiber = this.pluginFibers.get(pluginId)
+      if (fiber) {
+        await fiber.dispose()
+        this.pluginFibers.delete(pluginId)
+      }
+      // StageCraft 在 worker 内以单一 composition 运行：重载即重建 composition。
+      const old = this.composition
+      this.composition = undefined
+      if (old) await old.close()
+      const next = await this.createComposition()
+      this.composition = next
+      this.attachComposition(next)
+      this.generation++
+      this.setStatus('running')
+      return { pluginId, reloaded: true, generation: this.generation }
+    }
     if (request.method === 'fiber.reload') throw unsupported('Cordis fiber reload is not exposed by this worker boundary.')
     if (request.method === 'debug.flush') { await new Promise<void>(resolve => setImmediate(resolve)); return { flushed: true } }
     if (request.method === 'core.command.dispatch') {
