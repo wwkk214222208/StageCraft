@@ -1,120 +1,152 @@
-# StageCraft · 角色酒馆
+# StageCraft
 
-一个跑在你自己机器上的多角色角色扮演（RP）工作台。它本质上是一个"酒馆"：你带上几个角色，给个开场，然后看他们自己互动、推进剧情——或者你亲自下场当玩家。
+> 本文为项目根 `README.md`，面向**开发者**与**接手本仓库的 AI 助手**。玩家向使用说明见 [`玩家看我.md`](./docs/玩家看我.md)。  
+> 起草：WorkBuddy（DeepSeek V4 Flash）· 2026-08-21 · 已作为根 README.md 发布。
 
-角色和"导演（Director）"都不是完整的大模型对话，而是在受控上下文里跑一轮的小工人（Worker）。真正让角色**有连续性**的，是它们各自持久化的私有记忆、自我人设和当前状态，而不是把整段聊天历史都塞回去。这样哪怕聊了很久，角色也不会突然忘了自己是谁、想要什么。
+## 项目定位
 
-项目同时也做好了以 dsh 插件形态运行的准备（见下文的「作为 dsh 插件」）。
+StageCraft是一个**自托管的、插件化的多角色角色扮演（RP）运行时 + Web 工作台**。目标定位是成为比 SillyTavern 更易用的新生态：一端让**创作者**低门槛做角色 / 剧本，一端让**玩家**免配置开玩。
 
----
+- 名称：`stagecraft`，版本 `0.1.0`，`private`，协议 **AGPL-3.0-only**。
+- 运行形态：① 独立 Node 服务；② 作为 **dsh 插件**（经 `dsh-rp` 适配壳）；③ 安卓（远程模式 APK / Termux 本地，**当前暂不推荐**，UI 布局问题待修）。
 
-## 怎么玩
+## 已实现（当前可用）
 
-酒馆目前提供两种游玩模式，外加一个沉浸开关：
+以下能力已在代码与测试中落地，可直接依赖：
 
-- **导演模式** —— 由 Director 来编织场景、推动剧情，是主推的玩法。
-- **群聊模式** —— 没有导演。你点一个角色让它发言，确认（审批）后发出，在场角色会把这个回合记进自己的记忆里。角色发言时若剧情推进需要，可以**随台词附带一条世界变更申请**（推进时间/改地点/引入新人物/角色进离场）——审批台词时一并生效，或整体放弃。
-- **世界状态导演**（群聊模式的侧栏）—— 群聊里你可以随时用自然语言向导演建议世界变化：推进时间、换场景、让某角色进场/离场、引入新人物。导演一次调用会同时产出回复、结构化世界变更申请和一段导演风格的叙述（叙述在世界变更生效后以「导演模式正文」形式发布，不是对话气泡）。上帝模式（默认）下申请仍需你确认后生效；沉浸模式下直接生效。
+- **角色独立身份**：每角色独立记忆 / 性格 / 目标，且可单独指定 provider + model（`role.modelOverride` / `role.providerId`；`resolveRouteModel`）。
+- **OOC 即时修正（肘击 = intervene）**：对单个角色重新决策，可携带修正后的人设 / 记忆 / 印象 / 目标（`POST /api/roles/intervene`；`room-runtime.interveneRole`）。
+- **开放插件架构**：Core 为唯一状态权威，四层插件边界（人机交互 / 核心运行时 / 玩法方案 / LLM 路由）（`src/core/`；`docs/architecture.md`）。
+- **DSH 辅助剧本编辑**：生成 / 润色 / 一致性检查 / 扩开场（`src/dsh-story-bridge.ts`；`creator-workbench-*.ts`）。
+- **崩溃安全**：状态变化一次 SQLite 事务提交（`src/core/state-transaction.ts`）。
+- **开发者调试沙箱**：sandbox 协议 + worker 管理 / RPC（`src/debug/`）。
 
-再来一个 **沉浸模式**：打开后跳过审批，由 AI 主导。你输入一句，酒馆会自动把整轮走完并发布；这期间场景、角色状态和角色面板都是只读的，你只管看戏就好。
+## 待实现 / 规划中（未 shipping，不要依赖）
 
----
+- **ST/MVU 兼容层**：ST 卡 → 可安装、版本化的 State Module（变量 / 自动化 / 世界书均为模块贡献）。当前为设计方向、部分落地（`src/compat/st-mvu.ts`），重度卡仍以文字导入为主。
+- **安卓本地运行 APK**：完全本地运行的安卓形态（不依赖远程服务）。当前安卓 UI 有严重布局问题、暂不推荐使用；远程模式 APK / Termux 本地为实验性形态。
+- **更丰富的剧情引擎**：在不破坏边界的前提下支持更灵活、可版本化的玩法定义与补丁。
+- **社区扩展与皮肤 / 一键分享分发**：开放 UI 扩展机制与内容分发。
+- **通用 Workflow 编排**：当前 Workflow Executor 负责固定定义的注册 / 投影 / 合法转换，不是通用自动业务编排器（见下文"当前限制"）。
+- **独立模式 AI 编辑流**：创作者工作台的 AI 编辑（生成 / 润色 / 一致性检查 / 扩开场）当前依赖 dsh（`dsh-story-bridge`）。脱离 dsh 的"独立模式"AI 编辑流**尚未充分测试**，暂不保证可用。
 
-## 角色会"记得"
+## 技术栈（实测，非设想）
 
-这是酒馆和一次性聊天最大的区别。每个角色都有：
+| 层      | 选型                                                                               |
+| ------ | -------------------------------------------------------------------------------- |
+| 运行时    | **Node.js ≥ 24**（脚本用 `node --experimental-strip-types` 直接跑 TS，**服务端无打包 / 编译步骤**） |
+| 语言     | TypeScript（类型剥离执行，非 tsc 编译）                                                      |
+| 服务端    | 原生 `node:http`                                                                   |
+| 存储     | 原生 `node:sqlite`（SQLite，运行数据 `data/stagecraft.sqlite`）                           |
+| 插件容器   | `@deepseek-ai/cordis` `4.0.0-rc.8`（npm 别名 `cordis`）                              |
+| 配置校验   | `@deepseek-ai/schemastery` `3.18.1`                                              |
+| 前端     | `public/` 下**原生 JS + CSS**（无前端框架）                                                |
+| 安卓核心构建 | `esbuild` `0.28.2`（`scripts/build-android-core.mjs`）                             |
 
-- 一条**私有记忆时间线**（按时间标签归档的往事）
-- 对**其他角色的印象**（剧情推进中自己更新）
-- 一份独立的**长期目标**字段（角色私藏，不写在人设里）
-- 当前的**状态**（在场 / 离场 / 不可用，以及一句话近况）
+> 注意：早期文档曾设想 Fastify / Drizzle / React 技术栈，与现状不符，已归档（见 `custom/docs/archive/`）。
 
-这些全部落盘到 SQLite，所以关掉再打开，角色还是原来的那个角色。
+- **dsh 生态兼容（低成本）**：StageCraft 以 Cordis 宿主插件形态（`dsh-rp` / `cordis.patch.yml`，`runtimeMode: sandboxed`，`RP_PORT` 默认 8799）运行于 dsh 内。对 **dsh 依赖较低** 的外围功能性插件，可通过 `dsh-rp` 适配壳以**简单桥接**的方式接入，无需重写。
 
----
+## 架构（精简版，权威来源见 `docs/architecture.md`）
 
-## 导入与扩展
+核心循环：
 
-- **世界书**：全量注入到相关角色的上下文，用来承载世界观、设定等背景信息。
-- **ST 角色卡导入**：直接把 SillyTavern 的 `.json` 卡（chara_card_v2/v3）或 `.png` 内嵌卡拖进来，会自动拆成「新角色 + 世界书条目 + 私有段」，省去手动录入。
+```
+State → Human Interaction / Workflow Action → Core → LLM Route
+     → Model Result → State Event → Reducer / Local Rules → New State
+```
 
----
+**四层插件边界**（Core 是唯一状态权威）：
 
-## 跑起来
+1. **人-核心交互插件**：Web / HTTP / Cordis Session / CLI 入口。只发 `HumanCommand`，只消费 `CoreView` / `CoreEvent`，**不直接碰 Store / 模型 / 领域流程**。
+2. **核心运行时插件**：状态、Reducer、本地规则、审批、事件历史、取消 / 恢复、Command 调度。不依赖 HTTP / DOM / Cordis / 具体模型。
+3. **玩法方案插件**（`CoreSolutionHost`）：注册固定、版本化的 Workflow Definition、只读房间投影、状态类别 / 投影、可撤销 Command Handler。默认 `StageCraftSolutionPlugin` 提供三条 StageCraft 流程、默认状态类别与群聊命令处理器。
+4. **核心-LLM 路由插件**：负责 `ModelRequest` / `ModelResult`（provider 路由、SSE、thinking、usage、超时、request-scoped 取消、错误归一化）。以 `requestId` 等待匹配结果、隔离迟到结果。
 
-需要 **Node.js 24 或以上**：
+**平台端口（Port）**：Core 通过小型端口使用时间、UUID、仓储、资源、秘密、文件选择、生命周期、模型传输。当前**已正式接入** `Clock`、`IdFactory`、`CoreStateRepository`；`AssetRepository` / `SecretStore` / `FilePicker` / `PlatformLifecycle` / `ModelTransport` 已定义稳定边界，**供后续 Human Plugin、Android 本地运行、UI Extension 阶段逐项接入**。Node / SQLite / HTTP 适配器在桌面组合根；浏览器 / 安卓可提供自身实现，**Core 源码不得直接依赖 Node 文件系统 / Android API / DOM / 平台密钥**。
 
-```powershell
+**状态模型**：状态类别可注册（默认 room / world / entities / narrative / memory / goals / workflow / runtime）。所有变化统一为 `StateEvent`，由 Reducer / Local Rules 产生新状态；`applyStateEvents` 先计算候选状态，再由 Repository **一次 SQLite 事务**提交状态 + 批量事件 + WorkflowInstance，成功后才更新内存并广播。模型只能返回结构化结果或事件提议，**不能直接写库或绕过状态校验**。
+
+**兼容策略**：群聊 / 导演 / 管理命令由已安装的 StageCraft Command Handler 接管；旧 HTTP 路由只构造带 scope / action 的 Core command。两条垂直流程由 `StageCraftChatService` / `StageCraftDirectorService` 持有，编辑由 `StageCraftManagementService` 持有。旧 `RoomRuntime` 仅作兼容 facade，生产组合根不安装 `LegacyRuntimeSolutionPlugin`。Core 对无 handler 命令 **fail closed**。
+
+## 目录与关键入口
+
+```
+src/
+  server.ts                  服务入口（node:http 启动）
+  app-boot.ts                应用引导（装配组合根、挂载 Core / UI / DSH）
+  core/                      运行时内核（插件容器、状态仓储、Workflow、协议、平台端口）
+    index.ts, container.ts, plugins.ts, runtime.ts, protocol.ts
+    state*.ts, workflow-*.ts, domain-events.ts
+    http-human-plugin.ts, model-router-adapter.ts
+    cordis-plugins.ts, extensions.ts, ui.ts, renderer-host.ts, connection.ts
+    platform.ts              端口定义
+  platform/                  Node 适配：node.ts, node-sqlite-repository.ts, composition.ts, model-gateway-transport.ts
+  portable/                  android-core.ts, android-composition.ts（安卓本地组合根）
+  stagecraft-*.ts            业务服务：chat / director / management / repository
+  creator-*.ts              创作者工作台：service / ui / contracts / preview-apply
+  dsh-*.ts                   dsh 桥接：story-bridge / story-session
+  debug/                     沙箱协议、worker 管理（开发期）
+  compat/                    兼容层：index.ts, st-mvu.ts（ST 卡 / MVU 兼容器，前瞻）
+  legacy-sandbox.ts          旧 sandbox（兼容）
+  store.ts, model-gateway.ts, workers.ts, room-runtime.ts, st-card-import.ts
+  prompts.ts, provider-config.ts, thinking-params.ts, types.ts, remote-access.ts
+android/                     安卓工程（远程模式 APK；本地运行在路线图中）
+dsh-rp/                      dsh 适配壳（见其 README）
+public/                      前端（原生 JS / CSS）
+stories/eldoria.json         默认剧本
+prompts/prompts.json         提示词分组（role / director / consult / skills / chat，共 5 组）
+scripts/build-android-core.mjs
+```
+
+## 安装与运行
+
+**要求**：Node.js **≥ 24**（低于 22.6 不支持类型剥离）。
+
+```bash
+# 推荐 pnpm（仓库带 pnpm-lock.yaml）
+pnpm install
+pnpm dev            # 即 node --experimental-strip-types src/server.ts
+
+# 或使用 npm
+npm install
 npm run dev
 ```
 
-然后打开 `http://127.0.0.1:8787` 就能进酒馆了。运行数据存在 `data/stagecraft.sqlite`。
+启动后访问 `http://127.0.0.1:8787`。运行数据在 `data/stagecraft.sqlite`。
 
-> Windows 上也可以直接双击根目录的 **`start.bat`**（普通启动）或 **`start-debug.bat`**（调试，会打印最终发给模型的消息）；想关掉就双击 **`close-windows.bat`**。
+**模型配置**：把 `providers.example.json` 复制为 `providers.json`，填入你的模型端点与密钥（详见该文件注释）。
 
-模型走哪个端点、用什么密钥，写在 `providers.json` 里（模板见 `providers.example.json`，复制一份改改即可）。
-
-> **💡 省钱提醒**：酒馆里**模型请求非常频繁**——导演、在场角色、必选/可选角色的并行决策，往往一轮剧情就触发好几次调用。单次消耗的 token 其实不多，但架不住请求密。所以**尽量不要用按条（按 token）实时计费的 API**，积少成多很容易超额。更推荐**包月/按量封顶**的模型，或本地模型（如 Ollama）。
-
-想跑测试的话：
-
-```powershell
-npm test
-```
-
----
-
-## 作为 dsh 插件
-
-项目自带一个 dsh 适配壳（`dsh-rp`）。装好 profile 之后，`dsh --profile <name>` 会在 `RP_PORT`（默认 **8799**）把酒馆开起来——核心代码和独立运行完全一致，只是换了入口。
-
-更具体的接入方式、环境变量和当前原型限制，见 [`dsh-rp/README.md`](./dsh-rp/README.md)。
-
----
-
-## 在安卓（Termux）上运行
-
-> ⚠️ **实验性**：安卓端脚本目前**尚未经过充分测试**，仅作为初步适配放出，具体行为会在后续版本中完善。欢迎在 Termux 环境下试用并反馈。
-
-手机装好 [Termux](https://termux.dev)，装 Node 24+（`pkg install node`），把仓库弄到手机上后：
+**测试**：
 
 ```bash
-bash start-android.sh
+pnpm test           # node --experimental-strip-types --test --test-concurrency=8 test/*.test.ts
 ```
 
-脚本会启动服务并打印本机与局域网地址——用手机浏览器打开 `http://127.0.0.1:8787` 即可；同一 Wi-Fi 下的电脑也能通过脚本给出的局域网地址访问。停止服务用 `bash close-android.sh`。
+**作为 dsh 插件**：`dsh --profile <name>` 在 `RP_PORT`（默认 **8799**）启动，核心代码与独立运行一致，仅换入口。详见 `dsh-rp/README.md`。
 
-> 注意：安卓端脚本依赖 Termux 环境；若手机没装 Termux 或 Node 版本过低（低于 22.6 不支持类型剥离，项目要求 24+），脚本会给出提示。
+**安卓**：
 
----
+- 远程模式 APK（连接你自己的StageCraft服务）：构建产物见 `android/` 工程。
+- Termux 本地跑：`bash start-android.sh`（脚本启动服务并打印局域网地址）；停止 `bash close-android.sh`。
+- 本地运行核心构建：`pnpm build:android-core`（即 `scripts/build-android-core.mjs`）。
 
-## 存档
+> ⚠️ 安卓端**暂时不推荐使用**：当前存在较严重的 UI 布局问题，尚未经充分实测。玩家向说明见 `docs/玩家看我.md` 的「怎么开始」。
 
-剧本名、游玩模式、编号会自动拼成存档名（比如 `eldoria-director-003`），不用自己起名。独立运行（`npm run dev`）和 dsh 插件（8799）两种形态都能存读档。
+> 注意：`custom/docs/` 目录**不进仓库**（已 ignore），里面是私有设计 / 交接 / 审计文档，仅供内部与 AI 助手参考，请勿视为发布内容。
 
----
+## 给接手 AI 助手的速览
 
-## 目录与发布边界
+- **状态权威在 Core**：任何要改状态的动作都走 Command → Core → StateEvent → 事务提交。不要绕过 Core 直接写 Store / 库。
+- **扩展点**：新玩法通过 `CoreSolutionHost` 注册方案插件；UI 扩展走 `core/extensions.ts` + `core/ui.ts` + `renderer-host.ts`；模型接入走 LLM 路由插件。
+- **兼容层**：ST 卡导入在 `st-card-import.ts`；旧接口 / 外部调用经 `compat/`。改动旧接口前先读 `docs/architecture.md` 的"兼容策略"与 `custom/docs/` 相关设计文档。
+- **不要做的事**：Core 不得依赖 Node 文件系统 / Android API / DOM / 平台密钥；Workflow Definition 不允许被 LLM 或 Author Pack 直接修改（未来走版本化 `WorkflowPatchProposal` 且需授权校验）。
+- **验证基准**：Cordis 锁定 `4.0.0-rc.8`，跟随 dsh 平台版本（`dsh-rp/verify.mjs` 校验 vendor 版本）。
 
-协议沿用 SillyTavern 的 **AGPL-3.0**（徽标与默认内容的单独声明见 [LICENSE](./LICENSE) 与 [NOTICE](./NOTICE)）。**随仓库发布**的是工具协议和默认内容；你自己建的东西不会进仓库。
+## 当前限制（来自架构文档）
 
-| 路径 | 内容 | 是否发布 |
-| --- | --- | --- |
-| `src/` `public/` `test/` `prompts/prompts.json` `dsh-rp/` | 工具协议、逻辑、UI、测试 | ✅ 发布 |
-| `stories/eldoria.json` | 默认剧本（下拉里标「（默认）」） | ✅ 发布 |
-| `stories/custom/`（保留 `.gitkeep`） | 私人剧本，会自动合并进下拉（不带标记） | ❌ 只留目录、内容不上传 |
-| `custom/`（保留 `.gitkeep`） | 私人文档、图片素材、数据库备份 | ❌ 只留目录、内容不上传 |
-| `data/`（sqlite、`providers.json` 密钥、日志）、`save/`（存档） | 运行数据 | ❌ 已 ignore |
-
----
-
-## 默认剧本
-
-- **`stories/eldoria.json`**：新装或空库时自动启动的默认剧本（若已有其他房间则保留现有房间）。讲的是 Eldoria 迷雾森林守护者的故事，基于 SillyTavern 默认角色 Seraphina / Eldoria 的世界观扩充而来，包含塞拉菲娜、罗温与影牙·维克斯三个角色。角色与基础设定来自 SillyTavern（AGPL-3.0，作者 @OtisAlejandro），我们保持 AGPL-3.0 兼容，详见 [NOTICE](./NOTICE)。
-- **`test/fixtures/royal-festival.json`**：早期的占位剧本，现在只作为测试夹具保留。
+Core 通用内核、插件容器、状态仓储、Workflow Registry / Executor、HTTP 人机插件、LLM 路由边界已进入启动链；StageCraft 的 Store-backed domain services 仍是当前业务状态变化的执行者，并通过 Core 投影与事务仓储保持一致。Workflow Executor 当前负责固定定义的注册 / 投影 / 合法转换，**不是通用自动业务编排器**。未来仍需在不破坏边界的前提下继续收紧旧外部接口与迁移策略。
 
 ---
 
-## 授权
-
-本项目以 **GNU AGPL-3.0** 发布（[LICENSE](./LICENSE)）。徽标与第三方默认内容的单独声明见 [NOTICE](./NOTICE)。
+*本文件由 WorkBuddy（DeepSeek V4 Flash）起草于 2026-08-21，已作为项目根 `README.md` 发布（开发者与 AI 向）。玩家向说明见 `docs/玩家看我.md`。事实依据：package.json、docs/architecture.md、src 目录结构；路线图与限制部分引用既有设计文档。*
