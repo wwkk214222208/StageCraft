@@ -53,6 +53,18 @@ test('list restores only creator-owned sessions', async () => {
   assert.deepEqual(sessions.map(item => item.id), [creatorId])
 })
 
+test('open resolves workspace before creating session', async () => {
+  const calls: any[] = []
+  const apiProxy = { workspace: { create: async (request: unknown) => { calls.push(['workspace', request]); return { rpcId: 'ws', result: { ok: true, value: { workspace: { workspaceId: 'ws-1', path: 'C:\\tavern', title: 'tavern', sessionIds: [], createdAt: '', updatedAt: '' } } } } } }, sessions: { create: async (request: unknown) => { calls.push(['create', request]); return { rpcId: 'create', result: { ok: true, value: { sessionId: 'creator-abc' } } } } } }
+  const service = new DshStorySessionService(() => structuredClone(story()), undefined, () => apiProxy, 'C:\\tavern')
+  const session = await service.open('owner-a', 'story')
+  const workspaceCall = calls.find(call => call[0] === 'workspace')
+  assert.deepEqual(workspaceCall[1].payload, { path: 'C:\\tavern' })
+  const createCall = calls.find(call => call[0] === 'create')
+  assert.equal(createCall[1].payload.workspaceId, 'ws-1')
+  assert.equal(session.id, 'creator-abc')
+})
+
 test('close rejects further access', async () => {
   const f = fixture(); const session = await f.service.open('owner-a', 'story'); f.service.close('owner-a', session.id)
   assert.throws(() => f.service.get('owner-a', session.id), /未知/)

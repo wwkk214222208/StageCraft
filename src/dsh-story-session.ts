@@ -29,8 +29,11 @@ type NativeSessions = {
 }
 type RpcResponse = { result?: { ok: boolean; value?: unknown; error?: { message?: string } } }
 type NativeApiProxy = {
+  workspace?: {
+    create?: (request: { rpcId: string; payload: { path: string } }) => Promise<RpcResponse>
+  }
   sessions?: {
-    create?: (request: { rpcId: string; payload: { sessionId?: string } }) => Promise<RpcResponse>
+    create?: (request: { rpcId: string; payload: { workspaceId?: string; sessionId?: string } }) => Promise<RpcResponse>
     list?: (request: { rpcId: string; payload: { cursor?: string } }) => Promise<RpcResponse>
     models?: (request: { rpcId: string; payload: { sessionId: string } }) => Promise<RpcResponse>
     selectModel?: (request: { rpcId: string; payload: { sessionId: string; provider: string; model: string; reasoningEffort?: string } }) => Promise<RpcResponse>
@@ -59,9 +62,20 @@ export class DshStorySessionService {
   private readonly readStory: (id: string) => StoryPackage
   private readonly native?: NativeSessions
   private readonly apiProxy?: NativeApiProxy | (() => NativeApiProxy | undefined)
+  private readonly workspacePath?: string
   private readonly now: () => Date
-  constructor(readStory: (id: string) => StoryPackage, native?: NativeSessions, apiProxy?: NativeApiProxy | (() => NativeApiProxy | undefined), now = () => new Date()) { this.readStory = readStory; this.native = native; this.apiProxy = apiProxy; this.now = now }
+  private workspaceId?: string
+  constructor(readStory: (id: string) => StoryPackage, native?: NativeSessions, apiProxy?: NativeApiProxy | (() => NativeApiProxy | undefined), workspacePath?: string, now = () => new Date()) { this.readStory = readStory; this.native = native; this.apiProxy = apiProxy; this.workspacePath = workspacePath; this.now = now }
   private currentApiProxy(): NativeApiProxy | undefined { return typeof this.apiProxy === 'function' ? this.apiProxy() : this.apiProxy }
+  private async resolveWorkspace(apiProxy: NativeApiProxy): Promise<string | undefined> {
+    if (this.workspaceId) return this.workspaceId
+    if (!this.workspacePath || !apiProxy.workspace?.create) return undefined
+    const response = await apiProxy.workspace.create({ rpcId: `creator-workspace-${randomUUID()}`, payload: { path: this.workspacePath } })
+    const value = this.unwrapRpc(response) as { workspace?: { workspaceId?: unknown } }
+    const id = sessionIdOf(value.workspace?.workspaceId ?? value)
+    if (id) this.workspaceId = id
+    return this.workspaceId
+  }
   capability(): DshStoryCapability { const apiProxy = this.currentApiProxy(); return this.native?.create || this.native?.binding ? { available: true, native: true, modelSelection: Boolean(apiProxy?.sessions?.models && apiProxy?.sessions?.selectModel), ...(!apiProxy?.sessions?.models ? { reason: '当前 DSH 宿主未暴露模型目录 API。' } : {}) } : { available: false, native: false, modelSelection: false, reason: '当前 DSH 宿主没有暴露原生会话服务。' } }
   close(owner: string, id: string): void { this.sessions.delete(this.require(owner, id).id) }
   get(owner: string, id: string): DshStorySession { return publicSession(this.require(owner, id)) }
@@ -91,7 +105,8 @@ export class DshStorySessionService {
     let nativeId: string | undefined
     if (apiProxy?.sessions?.create) {
       const requestedId = `creator-${randomUUID()}`
-      const response = await apiProxy.sessions.create({ rpcId: `creator-create-session-${randomUUID()}`, payload: { sessionId: requestedId } })
+      const workspaceId = await this.resolveWorkspace(apiProxy)
+      const response = await apiProxy.sessions.create({ rpcId: `creator-create-session-${randomUUID()}`, payload: { sessionId: requestedId, ...(workspaceId ? { workspaceId } : {}) } })
       const created = this.unwrapRpc(response) as { sessionId?: unknown }
       nativeId = sessionIdOf(created) ?? requestedId
       nativeSession = nativeId ? this.native?.binding?.(nativeId)?.session : undefined

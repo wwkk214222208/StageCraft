@@ -680,9 +680,18 @@ $('#creator-session-model').onclick = async () => {
   try {
     const data = await creatorRequest('/api/agent/models', { owner: creatorOwner, sessionId: creatorSession.id })
     const providers = Array.isArray(data.groups) ? data.groups : Array.isArray(data.providers) ? data.providers : Array.isArray(data.items) ? data.items : []
-    $('#creator-session-provider').innerHTML = providers.map(provider => `<option value="${escape(provider.id ?? provider.provider ?? '')}">${escape(provider.name ?? provider.id ?? provider.provider ?? '供应商')}</option>`).join('')
-    const updateModels = () => { const provider = providers.find(item => (item.id ?? item.provider) === $('#creator-session-provider').value); const models = provider?.models ?? provider?.availableModels ?? []; $('#creator-session-model-select').innerHTML = models.map(model => `<option value="${escape(typeof model === 'string' ? model : model.id)}">${escape(typeof model === 'string' ? model : model.name ?? model.id)}</option>`).join('') }
+    const current = data.current ?? {}
+    const providerId = id => id ?? ''
+    $('#creator-session-provider').innerHTML = providers.map(provider => `<option value="${escape(providerId(provider.id ?? provider.provider))}">${escape(provider.name ?? provider.id ?? provider.provider ?? '供应商')}</option>`).join('')
+    const updateModels = () => {
+      const provider = providers.find(item => providerId(item.id ?? item.provider) === $('#creator-session-provider').value)
+      const models = provider?.models ?? provider?.availableModels ?? []
+      $('#creator-session-model-select').innerHTML = models.map(model => `<option value="${escape(typeof model === 'string' ? model : model.id)}">${escape(typeof model === 'string' ? model : model.name ?? model.id)}</option>`).join('')
+      if (current.provider && current.model && provider && providerId(provider.id ?? provider.provider) === current.provider) $('#creator-session-model-select').value = String(current.model)
+    }
+    if (current.provider && providers.some(item => providerId(item.id ?? item.provider) === current.provider)) $('#creator-session-provider').value = String(current.provider)
     $('#creator-session-provider').onchange = updateModels; updateModels()
+    $('#creator-session-reasoning').value = current.reasoningEffort ?? ''
     if (!providers.length) { const failures = Array.isArray(data.failures) ? data.failures.map(item => `${item.name ?? item.id}: ${item.message ?? '目录读取失败'}`).join('；') : ''; throw new Error(failures || 'DSH 当前没有返回可用模型。') }
     $('#creator-session-model-modal').showModal()
   } catch (error) { alert(error instanceof Error ? error.message : String(error)) }
@@ -691,8 +700,14 @@ $('#creator-session-model-save').onclick = async () => {
   if (!creatorSession) return
   const provider = $('#creator-session-provider').value; const model = $('#creator-session-model-select').value
   if (!provider || !model) return
-  const result = await creatorRequest('/api/agent/model', { owner: creatorOwner, sessionId: creatorSession.id, provider, model, reasoningEffort: $('#creator-session-reasoning').value.trim() || undefined })
-  $('#creator-session-model-modal').close(); $('#creator-agent-preview').innerHTML = `<strong>会话模型已更新</strong><p>${escape(result.selected?.provider ?? provider)} / ${escape(result.selected?.model ?? model)}</p>`
+  const button = $('#creator-session-model-save'); button.disabled = true
+  try {
+    const result = await creatorRequest('/api/agent/model', { owner: creatorOwner, sessionId: creatorSession.id, provider, model, reasoningEffort: $('#creator-session-reasoning').value.trim() || undefined })
+    $('#creator-session-model-modal').close(); $('#creator-agent-preview').innerHTML = `<strong>会话模型已更新</strong><p>${escape(result.selected?.provider ?? provider)} / ${escape(result.selected?.model ?? model)}</p>`
+    const verify = await creatorRequest('/api/agent/models', { owner: creatorOwner, sessionId: creatorSession.id })
+    const now = verify.current ?? {}
+    $('#creator-agent-preview').innerHTML = `<strong>会话模型已保存</strong><p>${escape(now.provider ?? provider)} / ${escape(now.model ?? model)}（DSH 已确认）</p>`
+  } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">模型保存失败：${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false }
 }
 $('#creator-session-new').onclick = async () => { try { const session = await creatorRequest('/api/agent/session', { owner: creatorOwner, storyId: $('#story-edit-id').textContent }); void renderCreatorSession(session); $('#creator-session-modal').close() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
 $('#creator-session-close').onclick = async () => { if (!creatorSession) return; await fetch('/api/agent/session', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ owner: creatorOwner, sessionId: creatorSession.id }) }).catch(() => {}); renderCreatorSession(null) }
