@@ -102,6 +102,9 @@ export class WorkerRpcServer {
     const old = this.composition
     this.composition = undefined
     if (old) await old.close()
+    // Windows 下 server.close() 后端口可能未立即释放（TIME_WAIT / 异步 close），
+    // 等待一小段让 8799 可重新绑定，避免 EADDRINUSE。
+    await new Promise(resolve => setTimeout(resolve, 500))
     const next = await this.createComposition()
     this.composition = next
     this.attachComposition(next)

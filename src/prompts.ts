@@ -134,7 +134,9 @@ function applyIdeology(templates: PromptTemplates, ideology: PromptIdeology): vo
 export function loadPrompts(filePath = process.env.PROMPTS_FILE ?? getPromptsFilePath()): PromptTemplates {
   if (!existsSync(filePath)) throw new Error(`Prompts file not found: ${filePath}`)
   const templates = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<PromptTemplates>
-  const defaults = JSON.parse(readFileSync(defaultPath, 'utf8')) as PromptTemplates
+  // 默认模板与运行时提示词文件同目录（AppData 等）；构建产物里 defaultPath 指向包根可能不存在。
+  const defaultsPath = join(dirname(filePath), 'prompts.json')
+  const defaults = JSON.parse(readFileSync(existsSync(defaultsPath) ? defaultsPath : defaultPath, 'utf8')) as PromptTemplates
   // 兼容旧/部分自定义文件：缺失字段回退默认模板（尤其 chat.directorChatSystem / directorChatUser）
   const merged: PromptTemplates = { ...defaults, ...templates }
   merged.chat = { ...defaults.chat, ...(templates.chat ?? {}) }
