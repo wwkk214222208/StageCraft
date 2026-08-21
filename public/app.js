@@ -737,14 +737,14 @@ async function waitForCreatorReply(sessionId) {
   }
 }
 function renderCreatorSessionMessages(session) {
-  $('#creator-session-messages').innerHTML = (session?.messages ?? []).map(message => `<p class="creator-session-message ${message.role}">${escape(message.text)}</p>`).join('')
+  $('#creator-session-messages').innerHTML = (session?.messages ?? []).map(message => `<div class="creator-session-message ${message.role}"><span class="creator-session-message-author">${message.role === 'user' ? '你' : 'DSH'}</span><p>${escape(message.text)}</p></div>`).join('')
   const messages = $('#creator-session-messages'); messages.scrollTop = messages.scrollHeight
 }
 async function sendCreatorMessage(inputSelector, buttonSelector) {
   if (!creatorSession) return
   const input = $(inputSelector); const text = input.value.trim(); if (!text) return
   const button = $(buttonSelector); const before = await refreshCreatorStory(false); button.disabled = true
-  try { const session = await creatorRequest('/api/agent/message', { owner: creatorOwner, sessionId: creatorSession.id, storyId: $('#story-edit-id').textContent, text }); input.value = ''; await renderCreatorSession(session); $('#creator-agent-preview').innerHTML = '<strong>已发送给 DSH</strong><p>DSH 正在回复，剧本文件变化会另外自动同步。</p>'; void waitForCreatorReply(creatorSession.id); void waitForCreatorAgentFileChange(before) } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false }
+  try { const session = await creatorRequest('/api/agent/message', { owner: creatorOwner, sessionId: creatorSession.id, storyId: $('#story-edit-id').textContent, text }); input.value = ''; await renderCreatorSession(session); $('#creator-agent-preview').innerHTML = '已发送给 DSH：正在回复，剧本文件变化会自动同步。'; void waitForCreatorReply(creatorSession.id); void waitForCreatorAgentFileChange(before) } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false }
 }
 $('#creator-session-send').onclick = () => sendCreatorMessage('#creator-session-input', '#creator-session-send')
 $('#creator-session-input').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $('#creator-session-send').click() } })
@@ -767,12 +767,12 @@ async function waitForCreatorAgentFileChange(before) {
       const current = await refreshCreatorStory(false)
       if (JSON.stringify(current) !== JSON.stringify(before)) {
         $('#creator-save-state').textContent = '已同步 DSH 修改'
-        $('#creator-agent-preview').innerHTML = '<strong>已收到 DSH 修改</strong><p>剧本文件已更新，工作台已自动读取最新内容。</p>'
+        $('#creator-agent-preview').innerHTML = '已收到 DSH 修改：剧本文件已更新，工作台已自动读取。'
         return
       }
     } catch { /* DSH 回合尚未结束，继续等待 */ }
   }
-  $('#creator-agent-preview').innerHTML = '<strong>等待 DSH 修改</strong><p>消息已发送；暂未检测到剧本文件变化，可稍后使用“刷新剧本”。</p>'
+  $('#creator-agent-preview').innerHTML = '等待 DSH 修改：消息已发送，暂未检测到剧本文件变化，可稍后用「刷新剧本」。'
 }
 $('#creator-session-refresh').onclick = async () => {
   const button = $('#creator-session-refresh'); button.disabled = true
