@@ -6,7 +6,7 @@
  *
  * 本模块负责生产组合根：独立入口创建 Cordis Context，DSH 可传入宿主 Context。
  */
-import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, cpSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -145,7 +145,16 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       copyFileSync(from, to)
       console.log(`已初始化用户数据：${to}`)
     }
-    for (const file of readdirSync(join(root, 'stories'))) copyIfMissing(join(root, 'stories', file), join(storiesRoot, file))
+    for (const entry of readdirSync(join(root, 'stories'), { withFileTypes: true })) {
+      const from = join(root, 'stories', entry.name)
+      const to = join(storiesRoot, entry.name)
+      if (entry.isDirectory()) {
+        // 故事包资产目录（自包含肖像）：目录整体拷贝
+        if (!existsSync(to)) { cpSync(from, to, { recursive: true }); console.log(`已初始化用户数据：${to}`) }
+      } else {
+        copyIfMissing(from, to)
+      }
+    }
     copyIfMissing(join(root, 'providers.example.json'), join(dataDir, 'providers.example.json'))
   }
 

@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -44,6 +44,9 @@ for (const file of ['default.svg', 'rowan.svg', 'seraphina.png', 'vex.svg', 'sta
 mkdirSync(join(distRoot, 'stories'), { recursive: true })
 mkdirSync(join(distRoot, 'prompts'), { recursive: true })
 cpSync(join(repositoryRoot, 'stories', 'eldoria.json'), join(distRoot, 'stories', 'eldoria.json'))
+// 默认剧本的示范资产目录（自包含引用 /story-assets/eldoria/... 随包分发）
+const eldoriaAssets = join(repositoryRoot, 'stories', 'eldoria.assets')
+if (existsSync(eldoriaAssets)) cpSync(eldoriaAssets, join(distRoot, 'stories', 'eldoria.assets'), { recursive: true })
 cpSync(join(repositoryRoot, 'prompts', 'prompts.json'), join(distRoot, 'prompts', 'prompts.json'))
 cpSync(join(repositoryRoot, 'providers.example.json'), join(distRoot, 'providers.example.json'))
 cpSync(join(repositoryRoot, 'LICENSE'), join(distRoot, 'LICENSE'))

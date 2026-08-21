@@ -13,7 +13,7 @@
     {
       "id": "seraphina",
       "name": "塞拉菲娜",
-      "portraitRef": "/assets/seraphina.png",
+      "portraitRef": "/story-assets/eldoria/seraphina.png",
       "currentState": "在林间空地的小屋里照料刚醒来的旅人；门口与窗边泛着淡翠色的守护结界。",
       "presence": "present",
       "impressions": {
@@ -48,7 +48,7 @@
     {
       "id": "rowan",
       "name": "罗温",
-      "portraitRef": "/assets/rowan.svg",
+      "portraitRef": "/story-assets/eldoria/rowan.svg",
       "currentState": "坐在小屋角落的阴影里擦拭短刀，警惕地打量着刚醒来的旅人。",
       "presence": "present",
       "impressions": {
@@ -75,7 +75,7 @@
     {
       "id": "vex",
       "name": "影牙·维克斯",
-      "portraitRef": "/assets/vex.svg",
+      "portraitRef": "/story-assets/eldoria/vex.svg",
       "currentState": "在空地结界外的黑暗中徘徊，尚未找到突破结界的方法。",
       "presence": "absent",
       "impressions": {
