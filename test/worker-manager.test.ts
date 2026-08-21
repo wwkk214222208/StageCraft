@@ -80,12 +80,25 @@ test('manager times out and cancels a hung request, then force-kills on shutdown
   assert.equal(supervisor.getStatus().status, 'stopped')
 })
 
-test('manager restart creates a new generation and performs preserve-state recovery', async () => {
+test('manager restart prefers in-process rebuild, then falls back to respawn', async () => {
   const children = [new FakeChild(), new FakeChild()]
   let index = 0
   const supervisor = new WorkerManager({ owner, handshakeTimeoutMs: 100, gracefulShutdownMs: 20, requestTimeoutMs: 30, spawnChild: () => children[index++] })
   await supervisor.start()
   const snapshot = await supervisor.restart('crash recovery')
+  assert.equal(snapshot.status, 'running')
+  // 进程内重建（worker.restart RPC 成功）：不 spawn 新 child，但 generation 递增
+  assert.equal(snapshot.generation, 2)
+  assert.equal(index, 1)
+  await supervisor.shutdown()
+})
+
+test('manager restart respawns when in-process rebuild is unavailable', async () => {
+  const children = [new FakeChild('hang'), new FakeChild()]
+  let index = 0
+  const supervisor = new WorkerManager({ owner, handshakeTimeoutMs: 100, gracefulShutdownMs: 20, requestTimeoutMs: 10, spawnChild: () => children[index++] })
+  await supervisor.start()
+  const snapshot = await supervisor.restart('hang -> respawn')
   assert.equal(snapshot.status, 'running')
   assert.equal(snapshot.generation, 2)
   assert.equal(index, 2)

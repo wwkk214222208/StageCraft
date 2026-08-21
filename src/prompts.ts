@@ -26,11 +26,21 @@ export function getPromptsFilePath(): string { return activePromptsPath ?? defau
 /** 用户自定义提示词目录（AppData，可写）；模板路径与用户数据分离。 */
 let activeUserPromptsDir: string | undefined
 export function setUserPromptsDir(dir: string): void { activeUserPromptsDir = dir }
-function customDir(): string { return activeUserPromptsDir ?? join(dirname(getPromptsFilePath()), 'custom') }
+/**
+ * 自定义提示词目录解析：
+ * - 显式传入 filePath（测试/独立调用）→ 用其所在目录的 custom/ 子目录
+ * - 否则优先 AppData 用户目录（setUserPromptsDir 设置）
+ * - 都没有 → 回退模板文件同目录的 custom/
+ */
+function customDir(filePath?: string): string {
+  if (filePath) return join(dirname(filePath), 'custom')
+  if (activeUserPromptsDir) return activeUserPromptsDir
+  return join(dirname(getPromptsFilePath()), 'custom')
+}
 
 /** 私有理念文件：<用户提示词目录>/ideology.json（默认）；若 active.json 指定了其他文件则用该文件 */
-export function loadIdeology(_filePath = getPromptsFilePath()): PromptIdeology {
-  const dir = customDir()
+export function loadIdeology(filePath?: string): PromptIdeology {
+  const dir = customDir(filePath)
   const active = join(dir, 'active.json')
   if (existsSync(active)) {
     try {
@@ -44,8 +54,8 @@ export function loadIdeology(_filePath = getPromptsFilePath()): PromptIdeology {
 }
 
 /** 激活指定提示词文件：写 active.json；此后 loadPrompts 注入该文件的理念 */
-export function setActiveIdeologyFile(name: string, _filePath = getPromptsFilePath()): void {
-  const dir = customDir()
+export function setActiveIdeologyFile(name: string, filePath?: string): void {
+  const dir = customDir(filePath)
   mkdirSync(dir, { recursive: true })
   const safe = name.endsWith('.json') ? name : `${name}.json`
   writeFileSync(join(dir, 'active.json'), `${JSON.stringify({ file: safe }, null, 2)}\n`, 'utf8')
@@ -61,22 +71,22 @@ function isProtected(file: string): boolean {
   return file === 'active.json' || file === 'ideology.json'
 }
 
-function ideologyDir(_filePath: string): string {
-  return customDir()
+function ideologyDir(filePath?: string): string {
+  return customDir(filePath)
 }
 
 /** 删除提示词文件；受保护文件（active.json / ideology.json）返回 false */
-export function removeIdeologyFile(name: string, _filePath = defaultPath): boolean {
+export function removeIdeologyFile(name: string, filePath?: string): boolean {
   const file = name.endsWith('.json') ? name : `${name}.json`
   if (!isValidIdeologyFileName(file) || isProtected(file)) return false
-  const target = join(ideologyDir(_filePath), file)
+  const target = join(ideologyDir(filePath), file)
   if (!existsSync(target)) return false
   rmSync(target)
   return true
 }
 
 /** 重命名提示词文件；受保护文件返回 false；若重命名的是激活文件则同步 active.json */
-export function renameIdeologyFile(from: string, to: string, filePath = defaultPath): boolean {
+export function renameIdeologyFile(from: string, to: string, filePath?: string): boolean {
   const fromFile = from.endsWith('.json') ? from : `${from}.json`
   const toFile = to.endsWith('.json') ? to : `${to}.json`
   if (!isValidIdeologyFileName(fromFile) || !isValidIdeologyFileName(toFile) || isProtected(fromFile)) return false
@@ -95,16 +105,16 @@ export function renameIdeologyFile(from: string, to: string, filePath = defaultP
 }
 
 /** 保存创作理念到 <用户提示词目录>/{name}.json（私有，不进仓库） */
-export function saveIdeologyFile(name: string, ideology: PromptIdeology, _filePath = defaultPath): void {
+export function saveIdeologyFile(name: string, ideology: PromptIdeology, filePath?: string): void {
   const safe = name.endsWith('.json') ? name : `${name}.json`
-  const dir = customDir()
+  const dir = customDir(filePath)
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, safe), `${JSON.stringify(ideology, null, 2)}\n`, 'utf8')
 }
 
 /** 列出 <用户提示词目录>/ 下的全部提示词文件（含各自内容），供编辑页下拉选择 */
-export function listIdeologyFiles(_filePath = defaultPath): Array<{ name: string; roleIdeals: string; directorIdeals: string }> {
-  const dir = customDir()
+export function listIdeologyFiles(filePath?: string): Array<{ name: string; roleIdeals: string; directorIdeals: string }> {
+  const dir = customDir(filePath)
   if (!existsSync(dir)) return []
   return readdirSync(dir)
     .filter(name => name.endsWith('.json') && name !== 'active.json')
@@ -139,9 +149,16 @@ function applyIdeology(templates: PromptTemplates, ideology: PromptIdeology): vo
 export function loadPrompts(filePath = process.env.PROMPTS_FILE ?? getPromptsFilePath()): PromptTemplates {
   if (!existsSync(filePath)) throw new Error(`Prompts file not found: ${filePath}`)
   const templates = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<PromptTemplates>
-  // 默认模板与运行时提示词文件同目录（AppData 等）；构建产物里 defaultPath 指向包根可能不存在。
-  const defaultsPath = join(dirname(filePath), 'prompts.json')
-  const defaults = JSON.parse(readFileSync(existsSync(defaultsPath) ? defaultsPath : defaultPath, 'utf8')) as PromptTemplates
+  // 默认模板：AppData 用户数据下已有 prompts.json 时优先（可被用户编辑覆盖）；
+  // 否则回退包内 defaultPath（构建产物里 defaultPath 指向包根，可能不存在时用模板文件同目录）。
+  const siblingDefaults = join(dirname(filePath), 'prompts.json')
+  let defaults: PromptTemplates
+  if (filePath !== siblingDefaults && existsSync(siblingDefaults)) {
+    defaults = JSON.parse(readFileSync(siblingDefaults, 'utf8')) as PromptTemplates
+  } else {
+    const bundled = existsSync(defaultPath) ? defaultPath : join(dirname(filePath), 'prompts.json')
+    defaults = JSON.parse(readFileSync(bundled, 'utf8')) as PromptTemplates
+  }
   // 兼容旧/部分自定义文件：缺失字段回退默认模板（尤其 chat.directorChatSystem / directorChatUser）
   const merged: PromptTemplates = { ...defaults, ...templates }
   merged.chat = { ...defaults.chat, ...(templates.chat ?? {}) }

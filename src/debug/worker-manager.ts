@@ -184,6 +184,8 @@ export class WorkerManager {
     if (this.status === 'running' && this.ready) {
       try {
         await this.request('worker.restart', { reason }, this.options.requestTimeoutMs)
+        this.restartCount++
+        this.generation++
         return this.snapshot()
       } catch { /* fall through to process-level restart */ }
     }
