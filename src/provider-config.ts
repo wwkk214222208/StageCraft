@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+/** 示例模板里的占位 API Key（视为未配置） */
+const PLACEHOLDER_API_KEY = /在这里填写|你的_API_Key|你的_Key/i
+
 export interface ProviderConfig {
   id: string
   name: string
@@ -52,7 +55,7 @@ export class ProviderConfigStore {
   }
 
   list(): PublicProviderConfig[] {
-    return this.configs.map(config => ({ id: config.id, name: config.name, baseUrl: config.baseUrl, models: config.models, selectedModel: config.selectedModel, hasApiKey: Boolean(config.apiKey), responseFormat: config.responseFormat }))
+    return this.configs.map(config => ({ id: config.id, name: config.name, baseUrl: config.baseUrl, models: config.models, selectedModel: config.selectedModel, hasApiKey: Boolean(config.apiKey) && !PLACEHOLDER_API_KEY.test(config.apiKey), responseFormat: config.responseFormat }))
   }
 
   defaults(): Omit<ProviderConfigFile, 'providers'> {

@@ -62,6 +62,8 @@
 .role-proposals small{color:#679efe;font-size:11px}
 .role-proposals p{margin:4px 0 0;color:#a9b8dd;font-size:12px;line-height:1.45}
 /* 供应商管理 */
+.provider-unconfigured-hint{background:#4a2a2a;border:1px solid #a35555;color:#ffc9b8;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.5;margin:0 0 10px}
+.provider-unconfigured-hint[hidden]{display:none}
 .provider-manager-panel{display:flex;flex-direction:column;gap:10px;min-width:420px}
 .provider-manager-panel header{height:auto;padding:0 0 8px;border-bottom:1px solid #34415b;display:flex;align-items:center;justify-content:space-between;background:none}
 .provider-manager-panel header h3{margin:0}

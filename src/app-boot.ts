@@ -169,10 +169,6 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   let envRoute: ReturnType<typeof routeFromEnvironment>
   try {
     const providerFilePath = join(dataDir, 'providers.json')
-    if (!existsSync(providerFilePath)) {
-      const example = join(root, 'providers.example.json')
-      if (existsSync(example)) copyFileSync(example, providerFilePath)
-    }
     providerStore = new ProviderConfigStore(providerFilePath)
     envRoute = routeFromEnvironment()
     if (providerStore.list().length === 0 && envRoute.apiKey) providerStore.save({ id: 'environment', name: '环境变量', baseUrl: envRoute.baseUrl, apiKey: envRoute.apiKey, models: [envRoute.model], selectedModel: envRoute.model, responseFormat: envRoute.responseFormat })
