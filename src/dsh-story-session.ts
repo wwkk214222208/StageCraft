@@ -75,6 +75,7 @@ export class DshStorySessionService {
     for (const item of result.items ?? []) {
       const id = sessionIdOf(item.sessionId)
       if (!id || known.has(id)) continue
+      if (!id.startsWith('creator-')) continue
       const timestamp = new Date(item.updatedAt ?? Date.now()).toISOString()
       const restored = { id, owner, storyId: storyId ?? 'eldoria', storyTitle: storyId ?? 'DSH 会话', createdAt: timestamp, updatedAt: timestamp, nativeId: id, messages: [] }
       this.sessions.set(id, restored)
@@ -89,9 +90,10 @@ export class DshStorySessionService {
     let nativeSession: NativeSession | undefined
     let nativeId: string | undefined
     if (apiProxy?.sessions?.create) {
-      const response = await apiProxy.sessions.create({ rpcId: `creator-create-session-${randomUUID()}`, payload: {} })
+      const requestedId = `creator-${randomUUID()}`
+      const response = await apiProxy.sessions.create({ rpcId: `creator-create-session-${randomUUID()}`, payload: { sessionId: requestedId } })
       const created = this.unwrapRpc(response) as { sessionId?: unknown }
-      nativeId = sessionIdOf(created)
+      nativeId = sessionIdOf(created) ?? requestedId
       nativeSession = nativeId ? this.native?.binding?.(nativeId)?.session : undefined
     } else {
       nativeSession = this.native?.create?.(undefined, {}) as NativeSession | undefined

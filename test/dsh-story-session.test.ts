@@ -42,6 +42,17 @@ test('history shows only chat body, not injected system context', async () => {
   ])
 })
 
+test('list restores only creator-owned sessions', async () => {
+  const f = fixture(); const session = await f.service.open('owner-a', 'story')
+  const createCall = f.calls.find(call => call[0] === 'create')
+  assert.ok(createCall[1].payload.sessionId.startsWith('creator-'))
+  const creatorId = createCall[1].payload.sessionId
+  const apiProxy = { sessions: { list: async () => ({ rpcId: 'list', result: { ok: true, value: { items: [{ sessionId: creatorId, updatedAt: Date.now() }, { sessionId: 'engine-internal-session', updatedAt: Date.now() }] } } }) } }
+  const service = new DshStorySessionService(() => structuredClone(f.current), undefined, () => apiProxy)
+  const sessions = await service.list('owner-a', 'story')
+  assert.deepEqual(sessions.map(item => item.id), [creatorId])
+})
+
 test('close rejects further access', async () => {
   const f = fixture(); const session = await f.service.open('owner-a', 'story'); f.service.close('owner-a', session.id)
   assert.throws(() => f.service.get('owner-a', session.id), /未知/)
