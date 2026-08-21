@@ -19,14 +19,21 @@ function fixture() {
 
 test('rollback truncates scenes, turns, memories, and snapshots beyond the revision', () => {
   const { store, runtime, roomId } = fixture()
-  // 模拟两轮正文发布（每个 addPlayerScene 递增 revision）
+  // 玩家消息不构成状态记录点：不递增 revision
   const before = store.currentRevision(roomId)
-  store.addPlayerScene(roomId, '第一轮行动。')
-  const rev1 = store.currentRevision(roomId)
-  assert.equal(rev1, before + 1)
-  store.addPlayerScene(roomId, '第二轮行动。')
-  const rev2 = store.currentRevision(roomId)
-  assert.equal(rev2, before + 2)
+  store.addPlayerScene(roomId, '玩家消息。')
+  assert.equal(store.currentRevision(roomId), before, '玩家消息不递增 revision')
+  // 两轮真实发布（群聊链：贡献 → 台词 → 批准发布）
+  store.setContribution(roomId, '第一轮行动。')
+  store.saveSpeech(roomId, { roleId: 'aria', text: '第一轮台词。', turnId: 't1' })
+  store.approveSpeech(roomId, '第一轮台词。')
+  const firstRoundScene = runtime.get(roomId).scenes.find(s => s.text.includes('第一轮'))
+  assert.ok(firstRoundScene)
+  const rev1 = store.sceneRevisionOf(roomId, firstRoundScene.id)
+  assert.equal(typeof rev1, 'number', '第一轮发布点有 revision')
+  store.setContribution(roomId, '第二轮行动。')
+  store.saveSpeech(roomId, { roleId: 'aria', text: '第二轮台词。', turnId: 't2' })
+  store.approveSpeech(roomId, '第二轮台词。')
   // 记忆关联第二轮场景
   const scenes = runtime.get(roomId).scenes
   const scene2 = scenes.find(s => s.text.includes('第二轮'))
@@ -39,7 +46,7 @@ test('rollback truncates scenes, turns, memories, and snapshots beyond the revis
   // 回滚到第一轮（revision rev1）
   store.rollbackToRevision(roomId, rev1)
   const after = runtime.get(roomId)
-  assert.equal(after.scenes.length, 2, '回滚后只剩 seed 开场 + 第一轮正文')
+  assert.equal(after.scenes.length, 3, '回滚后只剩 seed 开场 + 玩家消息 + 第一轮正文')
   assert.ok(after.scenes.every(s => !s.text.includes('第二轮')), '第二轮正文被删除')
   assert.equal(after.phase, 'awaiting-player-input')
   assert.equal(store.currentRevision(roomId), rev1)

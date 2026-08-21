@@ -776,7 +776,8 @@ export class Store implements MemoryStore {
     const room = this.db.prepare('SELECT phase FROM rooms WHERE id = ?').get(roomId) as { phase: string } | undefined
     if (!room) throw new Error('Room not found.')
     if (room.phase !== 'awaiting-player-input') throw new Error('当前无法提交贡献。')
-    this.db.prepare('UPDATE rooms SET player_contribution = ?, revision = revision + 1 WHERE id = ?').run(String(text ?? ''), roomId)
+    // 玩家输入不构成状态记录点：只记录贡献文本，不递增 revision。
+    this.db.prepare('UPDATE rooms SET player_contribution = ? WHERE id = ?').run(String(text ?? ''), roomId)
   }
 
   /** 群聊模式：设置待审批台词（rooms.speech），房间进入 awaiting-approval；若附带世界变更申请则进入 world-change-approval */
@@ -806,10 +807,10 @@ export class Store implements MemoryStore {
     const turnId = randomUUID()
     const effectiveTime = room.scene_time?.trim() || '过去'
     const effectiveLocation = room.scene_location?.trim() || ''
-    const sceneRevision = Number((this.db.prepare('SELECT revision FROM rooms WHERE id = ?').get(roomId) as { revision: number }).revision ?? 0) + 1
+    // 玩家消息只是输入回显，不构成状态记录点：写入当前 revision（不 +1），也不递增 rooms.revision。
+    const sceneRevision = Number((this.db.prepare('SELECT revision FROM rooms WHERE id = ?').get(roomId) as { revision: number }).revision ?? 0)
     this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, revision, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)')
       .run(`scene-${Date.now()}`, roomId, turnId, trimmed, effectiveTime || null, effectiveLocation || null, sceneRevision, new Date().toISOString(), 'player')
-    this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
   /**

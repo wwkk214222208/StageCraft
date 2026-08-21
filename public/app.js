@@ -223,8 +223,12 @@ function render(next) {
   $('#scenes').innerHTML = room.scenes.length ? room.scenes.map(scene => {
     const snapshot = [scene.sceneTime ? `🕐 ${escape(scene.sceneTime)}` : '', scene.sceneLocation ? `📍 ${escape(scene.sceneLocation)}` : ''].filter(Boolean).join('　')
     const meta = snapshot ? `<time class="scene-snapshot">${snapshot}</time>` : `<time>${new Date(scene.createdAt).toLocaleString()}</time>`
-    // 回滚/分支图标（仅对已发布的正文记录；seed 开场 revision=0 也可回滚到它）
-    const stateActions = `<span class="scene-state-actions"><button type="button" class="icon-btn scene-rollback" data-scene-id="${escape(scene.id)}" title="回滚到此处（删除之后的所有记录）">↩</button><button type="button" class="icon-btn scene-branch" data-scene-id="${escape(scene.id)}" title="分支（先存档当前，再回滚到此处）">⑂</button></span>`
+    // 回滚/分支图标：仅对「状态记录点」显示——群聊的 LLM/角色发言、导演的正文/旁白；
+    // 玩家消息只是输入回显，不构成记录点。
+    const isPlayerMsg = scene.speaker === 'player'
+    const stateActions = isPlayerMsg
+      ? ''
+      : `<span class="scene-state-actions"><button type="button" class="icon-btn scene-rollback" data-scene-id="${escape(scene.id)}" title="回滚到此处（删除之后的所有记录）">↩</button><button type="button" class="icon-btn scene-branch" data-scene-id="${escape(scene.id)}" title="分支（先存档当前，再回滚到此处）">⑂</button></span>`
     if (scene.speaker) {
       const isPlayer = scene.speaker === 'player'
       const role = isPlayer ? null : room.roles.find(item => item.id === scene.speaker)
