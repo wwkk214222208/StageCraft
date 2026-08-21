@@ -200,7 +200,8 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     return new ModelGateway({ name: config.name, baseUrl: config.baseUrl, apiKey: config.apiKey, model, timeoutMs: envRoute.timeoutMs, responseFormat: config.responseFormat, toolCalling: config.toolCalling !== false }, { onSummary: emitDebug, logRawFinalContent: process.env.RP_LOG_MODEL_FINAL_CONTENT === '1' })
   }
   async function installProvider(config: ProviderConfig | undefined): Promise<void> {
-    if (!config?.apiKey) { gateway = undefined; return }
+    // 占位符 apiKey（示例模板）视为未配置，避免用假密钥发起真实模型请求。
+    if (!config?.apiKey || /在这里填写|你的_API_Key|你的_Key/i.test(config.apiKey)) { gateway = undefined; return }
     const defaults = providerStore.defaults()
     const directorModel = defaults.directorModel ?? config.selectedModel ?? config.models[0] ?? envRoute.model
     const nextGateway = gatewayFromProvider(config, directorModel)
