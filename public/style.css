@@ -262,6 +262,11 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 .chat-msg.me .bubble-name{text-align:right;color:#d3e2ff}
 .bubble-text{color:#e4edfd;line-height:1.7;white-space:pre-wrap;word-break:break-word}
 .scene-msg{margin:6px 0}
+/* 正文记录右下角的回滚 / 分支图标按钮 */
+.scene-state-actions{display:flex;justify-content:flex-end;gap:4px;margin-top:2px;opacity:0;transition:opacity .15s}
+.scene:hover .scene-state-actions,.scene:focus-within .scene-state-actions{opacity:1}
+.icon-btn{background:none;border:1px solid #3a4a6e;border-radius:4px;color:#8fa1c9;padding:1px 6px;font-size:12px;line-height:1.4;cursor:pointer}
+.icon-btn:hover{background:#2e3a55;color:#d3e2ff;border-color:#5686fe}
 /* 旁白（开场 / 导演正文）：保留原本的整段叙述样式 */
 .scene.narration .scene-text{white-space:pre-wrap;line-height:1.8}
 /* 待审批台词：气泡头 + 可编辑正文 + 操作 */

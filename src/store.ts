@@ -121,6 +121,7 @@ export class Store implements MemoryStore {
         usage TEXT,
         scene_kind TEXT NOT NULL DEFAULT 'system',
         world_change_id TEXT,
+        revision INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS world_changes (
@@ -218,6 +219,13 @@ export class Store implements MemoryStore {
     this.ensureMemorySortOrder()
     this.normalizePastMemoryLabels()
     this.ensureStateSnapshotHistory()
+    this.ensureSceneRevisionColumn()
+  }
+
+  /** 旧库迁移：scenes 表加 revision 列（正文回滚需要按 revision 截断） */
+  private ensureSceneRevisionColumn(): void {
+    const columns = new Set(this.db.prepare('PRAGMA table_info(scenes)').all().map((row: any) => row.name as string))
+    if (!columns.has('revision')) this.db.exec("ALTER TABLE scenes ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
   }
 
   /**
@@ -558,8 +566,50 @@ export class Store implements MemoryStore {
     })
   }
 
-  restartRoom(roomId: string, story: StoryPackage, options: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean } = {}): void {
+  /** 某条正文记录所属的修订号（回滚定位用）；找不到返回 undefined */
+  sceneRevisionOf(roomId: string, sceneId: string): number | undefined {
+    const row = this.db.prepare('SELECT revision FROM scenes WHERE room_id = ? AND id = ?').get(roomId, sceneId) as { revision: number } | undefined
+    return row ? Number(row.revision) : undefined
+  }
+
+  /** 当前房间的修订号 */
+  currentRevision(roomId: string): number {
+    const row = this.db.prepare('SELECT revision FROM rooms WHERE id = ?').get(roomId) as { revision: number } | undefined
+    return row ? Number(row.revision) : 0
+  }
+
+  /**
+   * 回滚到指定修订号 N：删除修订 > N 的正文、回合、决策、记忆，并把房间状态重置到回滚点。
+   * 分支（branch）：调用方先用 exportRoom 存档当前状态，再回滚。
+   */
+  rollbackToRevision(roomId: string, revision: number): void {
+    const room = this.db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId)
+    if (!room) throw new Error('Room not found.')
     this.withTransaction(() => {
+      // 1) 删除修订号 > N 的正文（revision=0 的 seed 场景保留）
+      this.db.prepare('DELETE FROM scenes WHERE room_id = ? AND revision > ?').run(roomId, revision)
+      // 2) 删除已删正文之外回合的决策/回合数据（保留 revision ≤ N 的正文所属回合）
+      this.db.prepare(`DELETE FROM decisions WHERE turn_id IN (SELECT turn_id FROM turns WHERE room_id = ? AND turn_id NOT IN (SELECT DISTINCT turn_id FROM scenes WHERE room_id = ?))`).run(roomId, roomId)
+      this.db.prepare(`DELETE FROM turns WHERE room_id = ? AND id NOT IN (SELECT DISTINCT turn_id FROM scenes WHERE room_id = ?)`).run(roomId, roomId)
+      // 3) 删除已删正文/回合关联的记忆（scene_id 指向被删正文，或 turn_id 属于被删回合）
+      this.db.prepare(`DELETE FROM npc_memories WHERE room_id = ? AND (
+        (scene_id IS NOT NULL AND scene_id NOT IN (SELECT id FROM scenes WHERE room_id = ?))
+        OR (turn_id IS NOT NULL AND turn_id NOT IN (SELECT DISTINCT turn_id FROM scenes WHERE room_id = ?))
+      )`).run(roomId, roomId, roomId)
+      // 4) 删除更晚的草稿/审批残留
+      this.db.prepare('DELETE FROM drafts WHERE room_id = ?').run(roomId)
+      this.db.prepare('DELETE FROM reaction_previews WHERE room_id = ?').run(roomId)
+      this.db.prepare('DELETE FROM pending_mind_updates WHERE room_id = ?').run(roomId)
+      // 5) 房间回到空闲态；场景时间/地点取回滚点后的最新一条正文
+      const latest = this.db.prepare('SELECT scene_time, scene_location FROM scenes WHERE room_id = ? ORDER BY revision DESC, created_at DESC LIMIT 1').get(roomId) as { scene_time: string | null; scene_location: string | null } | undefined
+      this.db.prepare("UPDATE rooms SET phase = 'awaiting-player-input', revision = ?, scene_time = ?, scene_location = ?, speech = NULL, pending_world_change = NULL, pending_narration = NULL, last_error = NULL, player_contribution = NULL WHERE id = ?")
+        .run(revision, latest?.scene_time ?? null, latest?.scene_location ?? null, roomId)
+      // 6) 截断状态快照历史：仅保留 ≤ N 的快照
+      this.db.prepare('DELETE FROM core_state_snapshots WHERE room_id = ? AND revision > ?').run(roomId, revision)
+    })
+  }
+
+  restartRoom(roomId: string, story: StoryPackage, options: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean } = {}): void {    this.withTransaction(() => {
       const room = this.db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId)
       if (!room) throw new Error('Room not found.')
       this.db.prepare('DELETE FROM decisions WHERE turn_id IN (SELECT id FROM turns WHERE room_id = ?)').run(roomId)
@@ -756,8 +806,9 @@ export class Store implements MemoryStore {
     const turnId = randomUUID()
     const effectiveTime = room.scene_time?.trim() || '过去'
     const effectiveLocation = room.scene_location?.trim() || ''
-    this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)')
-      .run(`scene-${Date.now()}`, roomId, turnId, trimmed, effectiveTime || null, effectiveLocation || null, new Date().toISOString(), 'player')
+    const sceneRevision = Number((this.db.prepare('SELECT revision FROM rooms WHERE id = ?').get(roomId) as { revision: number }).revision ?? 0) + 1
+    this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, revision, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)')
+      .run(`scene-${Date.now()}`, roomId, turnId, trimmed, effectiveTime || null, effectiveLocation || null, sceneRevision, new Date().toISOString(), 'player')
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
@@ -798,8 +849,9 @@ export class Store implements MemoryStore {
       const effectiveTime = current.scene_time?.trim() || '过去'
       const effectiveLocation = current.scene_location?.trim() || ''
       const sceneId = `scene-${randomUUID()}`
-      this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, scene_kind, world_change_id, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(sceneId, roomId, speech.turnId, trimmed, effectiveTime || null, effectiveLocation || null, JSON.stringify(usage ?? speech.usage ?? { promptTokens: 0, completionTokens: 0 }), 'dialogue', worldChangeId ?? null, new Date().toISOString(), speech.roleId)
+      const sceneRevision = Number((this.db.prepare('SELECT revision FROM rooms WHERE id = ?').get(roomId) as { revision: number }).revision ?? 0) + 1
+      this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, scene_kind, world_change_id, revision, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(sceneId, roomId, speech.turnId, trimmed, effectiveTime || null, effectiveLocation || null, JSON.stringify(usage ?? speech.usage ?? { promptTokens: 0, completionTokens: 0 }), 'dialogue', worldChangeId ?? null, sceneRevision, new Date().toISOString(), speech.roleId)
       this.db.prepare("UPDATE rooms SET speech = NULL, pending_world_change = NULL, pending_world_change_id = NULL, phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL WHERE id = ?").run(roomId)
       return worldChangeId ?? undefined
     })
@@ -931,8 +983,9 @@ export class Store implements MemoryStore {
     const effectiveTime = room.scene_time?.trim() || '过去'
     const effectiveLocation = room.scene_location?.trim() || ''
     const sceneId = `narration-${randomUUID()}`
-    this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, scene_kind, world_change_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(sceneId, roomId, 'world-change', trimmed, effectiveTime || null, effectiveLocation || null, usage ? JSON.stringify(usage) : null, 'narration', worldChangeId ?? null, new Date().toISOString())
+    const sceneRevision = Number((this.db.prepare('SELECT revision FROM rooms WHERE id = ?').get(roomId) as { revision: number }).revision ?? 0) + 1
+    this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, scene_kind, world_change_id, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(sceneId, roomId, 'world-change', trimmed, effectiveTime || null, effectiveLocation || null, usage ? JSON.stringify(usage) : null, 'narration', worldChangeId ?? null, sceneRevision, new Date().toISOString())
     if (worldChangeId) this.db.prepare('UPDATE world_changes SET narration_scene_id = ? WHERE id = ? AND room_id = ?').run(sceneId, worldChangeId, roomId)
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
     return sceneId
@@ -1044,8 +1097,9 @@ export class Store implements MemoryStore {
       }
       this.db.prepare('DELETE FROM pending_mind_updates WHERE room_id = ? AND turn_id = ?').run(roomId, draft.turn_id)
       this.db.prepare('DELETE FROM reaction_previews WHERE room_id = ? AND turn_id = ?').run(roomId, draft.turn_id)
-      this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, scene_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(sceneId, roomId, draft.turn_id, text, effectiveTime || null, effectiveLocation || null, draft.usage ?? null, 'narration', new Date().toISOString())
+      const sceneRevision = Number((this.db.prepare('SELECT revision FROM rooms WHERE id = ?').get(roomId) as { revision: number }).revision ?? 0) + 1
+      this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, scene_kind, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(sceneId, roomId, draft.turn_id, text, effectiveTime || null, effectiveLocation || null, draft.usage ?? null, 'narration', sceneRevision, new Date().toISOString())
       this.db.prepare('DELETE FROM drafts WHERE room_id = ?').run(roomId)
       this.db.prepare('UPDATE rooms SET phase = ?, revision = revision + 1, player_contribution = NULL WHERE id = ?')
         .run('awaiting-player-input', roomId)

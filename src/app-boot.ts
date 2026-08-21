@@ -377,6 +377,37 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         rmSync(path)
         return json(response, 200, { ok: true, files: listSaves() })
       }
+      // ── 状态回滚 / 分支（点击正文记录触发）──
+      if (url.pathname === '/api/state/scene-revision' && request.method === 'POST') {
+        const body = await readJson(request)
+        const revision = store.sceneRevisionOf(roomId, String(body.sceneId ?? ''))
+        if (revision === undefined) throw new Error('正文记录不存在。')
+        return json(response, 200, { ok: true, revision, current: store.currentRevision(roomId) })
+      }
+      if (url.pathname === '/api/state/rollback' && request.method === 'POST') {
+        const body = await readJson(request)
+        const revision = typeof body.revision === 'number' ? body.revision : store.sceneRevisionOf(roomId, String(body.sceneId ?? ''))
+        if (typeof revision !== 'number') throw new Error('回滚点无效。')
+        if (runtime.get(roomId).phase !== 'awaiting-player-input') throw new Error('回合进行中无法回滚；请先取消当前回合。')
+        // 通过 Core 事件流重置（仅审计）；业务数据直接按 revision 截断
+        store.rollbackToRevision(roomId, revision)
+        core.projectRoom(runtime.get(roomId)!, 'rollback')
+        return json(response, 200, { ok: true, revision })
+      }
+      if (url.pathname === '/api/state/branch' && request.method === 'POST') {
+        const body = await readJson(request)
+        const revision = typeof body.revision === 'number' ? body.revision : store.sceneRevisionOf(roomId, String(body.sceneId ?? ''))
+        if (typeof revision !== 'number') throw new Error('分支点无效。')
+        if (runtime.get(roomId).phase !== 'awaiting-player-input') throw new Error('回合进行中无法分支；请先取消当前回合。')
+        // 1) 先存档当前状态（分支存档）
+        const archive = runtime.exportArchive(roomId)
+        const name = `分支-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`
+        writeFileSync(join(saveRoot, `${name}.json`), `${JSON.stringify(archive, null, 2)}\n`, 'utf8')
+        // 2) 再回滚
+        store.rollbackToRevision(roomId, revision)
+        core.projectRoom(runtime.get(roomId)!, 'branch')
+        return json(response, 200, { ok: true, revision, branch: name, files: listSaves() })
+      }
       if (url.pathname === '/api/story/get' && request.method === 'GET') return json(response, 200, loadStoryPackage(storiesRoot, String(url.searchParams.get('id') ?? ''), bundleStoriesDirs))
       if (url.pathname === '/api/agent/capability' && request.method === 'GET') return json(response, 200, dshStorySessions.capability())
       if (url.pathname === '/api/agent/session' && request.method === 'GET') {
