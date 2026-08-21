@@ -77,6 +77,8 @@ export interface TavernOptions {
   host?: string
   /** Development-only LAN transport; disabled by default and does not provide TLS. */
   remoteAccess?: RemoteAccessOptions | boolean
+  /** 可插拔记忆数据源；缺省用 SQLite（npc_memories 表）。注入自定义实现即可替换记忆引擎。 */
+  memoryStore?: import('./memory-store.ts').MemoryStore
 }
 
 export interface TavernApp {
@@ -153,7 +155,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     }
     console.log('检测到旧数据库，已迁移到 stagecraft.sqlite。')
   }
-  const store = new NodeSqliteRepository(dbPath)
+  const store = new NodeSqliteRepository(dbPath, options.memoryStore ? { memoryStore: options.memoryStore } : {})
   // 提示词文件路径（AppData 等）注入模块级单例，ModelGateway 装配前必须设置。
   setPromptsFilePath(promptsFilePath)
 

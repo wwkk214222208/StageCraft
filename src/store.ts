@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import type { ConsultationMessage, Decision, Draft, PendingMindUpdate, Role, RoomPhase, RoomSnapshot, Scene } from './types.ts'
 import type { StoryPackage } from './story-packages.ts'
+import type { MemoryStore } from './memory-store.ts'
 import { normalizeStateUpdateKeys } from './model-gateway.ts'
 import type { StateEvent } from './core/protocol.ts'
 import { isDomainEvent, type DomainEvent } from './core/domain-events.ts'
@@ -15,12 +16,19 @@ const normalizeMemoryTimeLabel = (value: string | undefined): string => {
   return !label || label === '未标注时间' ? '过去' : label
 }
 
-export class Store {
+export interface StoreOptions {
+  /** 可插拔记忆数据源；缺省用 Store 自身的 SQLite 实现（npc_memories 表）。 */
+  memoryStore?: MemoryStore
+}
+
+export class Store implements MemoryStore {
   private readonly db: DatabaseSync
   private closed = false
+  private readonly memoryStore: MemoryStore
 
-  constructor(filePath: string) {
+  constructor(filePath: string, options: StoreOptions = {}) {
     mkdirSync(dirname(filePath), { recursive: true })
+    this.memoryStore = options.memoryStore ?? this
     this.db = new DatabaseSync(filePath)
     this.db.exec('PRAGMA journal_mode = WAL;')
     this.db.exec(`
@@ -166,11 +174,13 @@ export class Store {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS core_events_room_sequence ON core_events(room_id, sequence DESC);
       CREATE TABLE IF NOT EXISTS core_state_snapshots (
-        room_id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
         revision INTEGER NOT NULL,
         state TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (room_id, revision)
       ) STRICT;
+      CREATE INDEX IF NOT EXISTS core_state_snapshots_room ON core_state_snapshots(room_id, revision);
       CREATE TABLE IF NOT EXISTS workflow_instances (
         id TEXT PRIMARY KEY,
         room_id TEXT NOT NULL,
@@ -207,6 +217,32 @@ export class Store {
     this.ensureSceneWorldChangeColumns()
     this.ensureMemorySortOrder()
     this.normalizePastMemoryLabels()
+    this.ensureStateSnapshotHistory()
+  }
+
+  /**
+   * 状态序列迁移：旧 core_state_snapshots 以 room_id 为主键（只保留最新一份）。
+   * 若检测到旧结构（主键列数 = 1），重建为 (room_id, revision) 复合主键，
+   * 并把旧的最新快照保留为历史第一份。
+   */
+  private ensureStateSnapshotHistory(): void {
+    const pk = this.db.prepare('PRAGMA table_info(core_state_snapshots)').all() as Array<{ name: string; pk: number }>
+    const pkColumns = pk.filter(column => column.pk > 0).length
+    if (pkColumns <= 1) {
+      this.withTransaction(() => {
+        this.db.exec('ALTER TABLE core_state_snapshots RENAME TO core_state_snapshots_legacy')
+        this.db.exec(`CREATE TABLE core_state_snapshots (
+          room_id TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          state TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (room_id, revision)
+        ) STRICT`)
+        this.db.exec('CREATE INDEX IF NOT EXISTS core_state_snapshots_room ON core_state_snapshots(room_id, revision)')
+        this.db.exec('INSERT INTO core_state_snapshots (room_id, revision, state, updated_at) SELECT room_id, revision, state, updated_at FROM core_state_snapshots_legacy')
+        this.db.exec('DROP TABLE core_state_snapshots_legacy')
+      })
+    }
   }
 
   /** 关闭数据库连接（幂等；供宿主卸载/退出前的资源回收） */
@@ -216,11 +252,11 @@ export class Store {
     this.db.close()
   }
 
-  /** Core 状态、投影事件和 WorkflowInstance 的统一事务提交。 */
+  /** Core 状态、投影事件和 WorkflowInstance 的统一事务提交。快照按 revision 追加保留（状态序列）。 */
   saveCoreStateTransaction(snapshot: CoreStateCommit): void {
     this.withTransaction(() => {
       this.db.prepare(`INSERT INTO core_state_snapshots (room_id, revision, state, updated_at) VALUES (?, ?, ?, ?)
-        ON CONFLICT(room_id) DO UPDATE SET revision = excluded.revision, state = excluded.state, updated_at = excluded.updated_at`)
+        ON CONFLICT(room_id, revision) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`)
         .run(snapshot.roomId, snapshot.revision, JSON.stringify(snapshot.state), new Date().toISOString())
       const insertEvent = this.db.prepare('INSERT OR IGNORE INTO core_events (room_id, revision, event_id, event_type, event_source, caused_by, workflow_id, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
       for (const event of snapshot.events) {
@@ -232,7 +268,7 @@ export class Store {
   }
 
   loadCoreState(roomId: string, eventLimit = 100): CoreStateRestore | undefined {
-    const row = this.db.prepare('SELECT revision, state FROM core_state_snapshots WHERE room_id = ?').get(roomId) as { revision: number; state: string } | undefined
+    const row = this.db.prepare('SELECT revision, state FROM core_state_snapshots WHERE room_id = ? ORDER BY revision DESC LIMIT 1').get(roomId) as { revision: number; state: string } | undefined
     if (!row) return undefined
     return { roomId, revision: Number(row.revision), state: JSON.parse(row.state), events: this.listCoreEvents(roomId, eventLimit), workflows: this.listWorkflowInstances(roomId) }
   }
@@ -541,12 +577,13 @@ export class Store {
     })
   }
 
+  // ── 可插拔记忆：公共方法统一委托 memoryStore（默认 = 自身 SQLite 实现）──
   listNpcMemories(roomId: string, roleId: string, includeInactive = false): import('./types.ts').NpcMemory[] {
-    const rows = this.db.prepare(`SELECT * FROM npc_memories WHERE room_id = ? AND role_id = ?${includeInactive ? '' : " AND status = 'active'"} ORDER BY sort_order, created_at`).all(roomId, roleId) as any[]
-    return rows.map(rowToNpcMemory)
+    return this.memoryStore === this ? this.sqliteListNpcMemories(roomId, roleId, includeInactive) : this.memoryStore.listNpcMemories(roomId, roleId, includeInactive)
   }
 
   insertNpcMemories(roomId: string, roleId: string, entries: Array<{ id: string; sceneId?: string; turnId?: string; worldChangeId?: string; occurredAt: string; occurredLocation?: string; source: import('./types.ts').MemorySource; text: string }>): void {
+    if (this.memoryStore !== this) { this.memoryStore.insertNpcMemories(roomId, roleId, entries); return }
     const now = new Date().toISOString()
     const insert = this.db.prepare(`INSERT OR IGNORE INTO npc_memories (id, room_id, role_id, scene_id, turn_id, world_change_id, occurred_at, occurred_location, source, kind, text, subjects, salience, confidence, dedupe_key, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     let sortOrder = Number((this.db.prepare('SELECT MAX(sort_order) AS value FROM npc_memories WHERE room_id = ? AND role_id = ?').get(roomId, roleId) as { value?: number | null }).value ?? -1) + 1
@@ -554,9 +591,13 @@ export class Store {
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
-  retractNpcMemory(roomId: string, memoryId: string): void { this.db.prepare("UPDATE npc_memories SET status = 'retracted', updated_at = ? WHERE room_id = ? AND id = ?").run(new Date().toISOString(), roomId, memoryId) }
+  retractNpcMemory(roomId: string, memoryId: string): void {
+    if (this.memoryStore !== this) { this.memoryStore.retractNpcMemory(roomId, memoryId); return }
+    this.db.prepare("UPDATE npc_memories SET status = 'retracted', updated_at = ? WHERE room_id = ? AND id = ?").run(new Date().toISOString(), roomId, memoryId)
+  }
 
   updateNpcMemory(roomId: string, memoryId: string, entry: { text?: string; occurredAt?: string }): void {
+    if (this.memoryStore !== this) { this.memoryStore.updateNpcMemory(roomId, memoryId, entry); return }
     const current = this.db.prepare('SELECT id FROM npc_memories WHERE room_id = ? AND id = ?').get(roomId, memoryId)
     if (!current) throw new Error('记忆不存在。')
     const text = String(entry.text ?? '').trim()
@@ -568,6 +609,7 @@ export class Store {
 
   /** 调整同一角色所有有效记忆的顺序（memoryIds 必须是完整列表）。 */
   reorderNpcMemories(roomId: string, roleId: string, memoryIds: string[]): void {
+    if (this.memoryStore !== this) { this.memoryStore.reorderNpcMemories(roomId, roleId, memoryIds); return }
     const known = new Set(this.db.prepare("SELECT id FROM npc_memories WHERE room_id = ? AND role_id = ? AND status = 'active'").all(roomId, roleId).map((row: any) => row.id as string))
     if (memoryIds.length !== known.size || new Set(memoryIds).size !== known.size || memoryIds.some(id => !known.has(id))) throw new Error('记忆顺序列表与现有记忆不一致。')
     const update = this.db.prepare('UPDATE npc_memories SET sort_order = ?, updated_at = ? WHERE room_id = ? AND id = ?')
@@ -577,15 +619,23 @@ export class Store {
   }
 
   seedNpcMemories(roomId: string, roleId: string, memories?: import('./types.ts').InitialMemory[]): void {
+    if (this.memoryStore !== this) { this.memoryStore.seedNpcMemories(roomId, roleId, memories); return }
     const entries = (memories ?? []).map((memory, index) => ({ id: `story-${roomId}-${roleId}-${index}`, occurredAt: normalizeMemoryTimeLabel(memory.occurredAt), source: 'story' as const, text: String(memory.text ?? '') })).filter(entry => entry.text).sort((left, right) => Number(left.occurredAt !== '过去') - Number(right.occurredAt !== '过去'))
     this.insertNpcMemories(roomId, roleId, entries)
   }
 
   supersedeNpcMemory(roomId: string, memoryId: string, replacement: { id: string; text: string; occurredAt: string }): void {
+    if (this.memoryStore !== this) { this.memoryStore.supersedeNpcMemory(roomId, memoryId, replacement); return }
     const prior = this.db.prepare("SELECT role_id FROM npc_memories WHERE room_id = ? AND id = ? AND status = 'active'").get(roomId, memoryId) as { role_id: string } | undefined
     if (!prior) throw new Error('可替代的记忆不存在。')
     this.insertNpcMemories(roomId, prior.role_id, [{ ...replacement, source: 'manual' }])
     this.db.prepare("UPDATE npc_memories SET status = 'superseded', superseded_by = ?, updated_at = ? WHERE room_id = ? AND id = ?").run(replacement.id, new Date().toISOString(), roomId, memoryId)
+  }
+
+  /** SQLite 默认实现的 list（memoryStore === this 时走这里，避免递归） */
+  private sqliteListNpcMemories(roomId: string, roleId: string, includeInactive = false): import('./types.ts').NpcMemory[] {
+    const rows = this.db.prepare(`SELECT * FROM npc_memories WHERE room_id = ? AND role_id = ?${includeInactive ? '' : " AND status = 'active'"} ORDER BY sort_order, created_at`).all(roomId, roleId) as any[]
+    return rows.map(rowToNpcMemory)
   }
 
   getRoom(roomId: string): RoomSnapshot | undefined {
@@ -593,7 +643,7 @@ export class Store {
       id: string; title: string; player_name: string; player_persona: string; player_state: string; player_portrait_ref: string; scene_time: string | null; scene_location: string | null; phase: RoomPhase; revision: number; player_contribution: string | null; last_error: string | null; mode: string; auto_publish: number; speech: string | null; pending_world_change: string | null; pending_narration: string | null
     } | undefined
     if (!room) return undefined
-    const roles = this.db.prepare('SELECT * FROM roles WHERE room_id = ? ORDER BY sort_order, rowid').all(roomId).map((row: any) => ({ ...rowToRole(row), memories: this.listNpcMemories(roomId, String(row.id)) }))
+    const roles = this.db.prepare('SELECT * FROM roles WHERE room_id = ? ORDER BY sort_order, rowid').all(roomId).map((row: any) => ({ ...rowToRole(row), memories: this.memoryStore.listNpcMemories(roomId, String(row.id)) }))
     const turn = this.db.prepare('SELECT id FROM turns WHERE room_id = ? ORDER BY created_at DESC LIMIT 1').get(roomId) as { id: string } | undefined
     const decisions = turn ? this.db.prepare('SELECT * FROM decisions WHERE turn_id = ? ORDER BY rowid').all(turn.id).map(rowToDecision) : []
     const reactions = turn ? this.db.prepare('SELECT turn_id, role_id, text, created_at FROM reaction_previews WHERE turn_id = ? ORDER BY id').all(turn.id).map((row: any) => ({ turnId: row.turn_id, roleId: row.role_id, text: row.text, createdAt: row.created_at })) : []
