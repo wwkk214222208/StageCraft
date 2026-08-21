@@ -234,6 +234,20 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const stagecraft = createStageCraftService(core, roomId, container, repository => core.attachStateRepository(repository))
   const nativeSessions = ctx.get('sessions', false) as any
   const dshStorySessions = new DshStorySessionService(id => loadStoryPackage(storiesRoot, id), nativeSessions, () => ctx.get('apiProxy', false) as any, storiesRoot)
+  const systemPrompt = ctx.get('systemPrompt', false) as { section?: (section: { name: string; order: number; text: string | ((context: { agent?: { id?: string } }) => string) }) => void } | undefined
+  if (systemPrompt?.section) {
+    try {
+      systemPrompt.section({
+        name: 'stagecraft:story-context',
+        order: 150,
+        text: assemble => {
+          const agentId = assemble.agent?.id ?? ''
+          if (!agentId.startsWith('creator-')) return ''
+          return dshStorySessions.storyContext(agentId)
+        },
+      })
+    } catch { /* 系统提示服务不可用时，剧本上下文回退为用户消息内联 */ }
+  }
   const solution = new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), management: runtime.getManagementService(), defaultRoomId: roomId })
   async function compensateStartFailure(): Promise<void> {
     for (const fiber of [...appFibers].reverse()) {

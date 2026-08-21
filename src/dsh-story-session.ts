@@ -133,6 +133,13 @@ export class DshStorySessionService {
     const session: DshStorySession = { id: nativeId, owner: owner.slice(0, 128), storyId, storyTitle: story.title, createdAt: timestamp, updatedAt: timestamp, nativeId, ...(nativeSession ? { nativeHandle: nativeSession } : {}), messages: [] }
     this.sessions.set(session.id, session); return publicSession(session)
   }
+  /** 剧本编辑上下文，注册进 DSH 系统提示（与工具说明同层组装）。 */
+  storyContext(nativeId: string): string {
+    const session = [...this.sessions.values()].find(item => (item.nativeId ?? item.id) === nativeId)
+    if (!session) return ''
+    const story = this.readStory(session.storyId)
+    return `你正在协助编辑剧本文件。当前剧本 ID：${session.storyId}\n当前剧本标题：${story.title}\n剧本文件由 DSH 原生工作区工具负责读写。请直接使用 DSH 原生机制完成用户请求，不要伪造已完成的修改。`
+  }
   async history(owner: string, id: string): Promise<DshStoryMessage[]> {
     const session = this.require(owner, id); const apiProxy = this.currentApiProxy()
     if (!apiProxy?.sessions?.history) return session.messages.slice(-MAX_MESSAGES)
@@ -143,12 +150,13 @@ export class DshStorySessionService {
       const event = entry.event ?? (entry as unknown as { type?: string; data?: Record<string, unknown> })
       const type = event.type ?? ''; const data = event.data ?? {}
       if (type !== 'user/message' && type !== 'assistant/message') continue
+      // DSH 注入的运行时上下文（system-reminder 等）是 source.kind='plugin'；真实用户消息是 'user'
+      if (type === 'user/message' && (data as { source?: { kind?: unknown } }).source?.kind !== 'user') continue
       const content = (data as { content?: unknown }).content ?? (data as { message?: { content?: unknown } }).message?.content
       const text = Array.isArray(content) ? content.map(item => typeof item === 'string' ? item : (item as Record<string, unknown>)?.type === 'text' ? String((item as Record<string, unknown>)?.text ?? '') : '').join('') : typeof content === 'string' ? content : ''
       if (!text) continue
       if (type === 'user/message') {
-        const cleaned = stripSystemContext(text)
-        if (cleaned) messages.push({ role: 'user', text: cleaned, createdAt: this.now().toISOString() })
+        messages.push({ role: 'user', text: stripSystemContext(text) ?? text, createdAt: this.now().toISOString() })
       } else {
         messages.push({ role: 'system', text, createdAt: this.now().toISOString() })
       }
@@ -174,16 +182,14 @@ export class DshStorySessionService {
   }
   async prompt(owner: string, id: string, text: string, storyId?: string): Promise<DshStorySession> {
     const session = this.require(owner, id); const message = bounded(text.trim()); if (!message) throw new Error('请输入要发送给 DSH 的内容。')
-    const story = this.readStory(session.storyId)
-    const context = `你正在协助编辑剧本文件。当前剧本 ID：${session.storyId}\n当前剧本标题：${story.title}\n剧本文件由 DSH 原生工作区工具负责读写。请直接使用 DSH 原生机制完成用户请求，不要伪造已完成的修改。\n\n用户请求：${message}`
     const apiProxy = this.currentApiProxy()
     if (apiProxy?.sessions?.prompt) {
-      const response = await apiProxy.sessions.prompt({ rpcId: `creator-prompt-${randomUUID()}`, payload: { sessionId: session.nativeId ?? id, mode: 'queue', content: [{ type: 'text', text: context }] } })
+      const response = await apiProxy.sessions.prompt({ rpcId: `creator-prompt-${randomUUID()}`, payload: { sessionId: session.nativeId ?? id, mode: 'queue', content: [{ type: 'text', text: message }] } })
       this.unwrapRpc(response)
     } else {
       const native = this.nativeFor(session)
       if (!native?.prompt) throw new Error('当前 DSH 会话不可用。')
-      await native.prompt([{ type: 'text', text: context }], 'queue')
+      await native.prompt([{ type: 'text', text: message }], 'queue')
     }
     const timestamp = this.now().toISOString(); session.messages.push({ role: 'user', text: message, createdAt: timestamp }); session.messages = session.messages.slice(-MAX_MESSAGES); session.updatedAt = timestamp
     return publicSession(session)

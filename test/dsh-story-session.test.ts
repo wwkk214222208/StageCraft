@@ -8,7 +8,7 @@ function fixture() {
   const calls: any[] = []; let current = story()
   const nativeSession = { id: 'native-1', prompt: async (content: unknown) => { calls.push(['prompt', content]) } }
   const native = { create: () => nativeSession, binding: (id: string) => id === 'native-1' ? { session: nativeSession } : undefined }
-  const apiProxy = { sessions: { create: async (request: unknown) => { calls.push(['create', request]); return { rpcId: 'create', result: { ok: true, value: { sessionId: 'native-1' } } } }, history: async (request: unknown) => { calls.push(['history', request]); return { rpcId: 'history', result: { ok: true, value: { events: [{ event: { type: 'user/message', data: { content: [{ type: 'text', text: '你正在协助编辑剧本文件。当前剧本 ID：story\n用户请求：帮我改一下场景时间' }] } } }, { event: { type: 'user/message', data: { content: [{ type: 'text', text: '<system-reminder>\nA skill is a reusable set of task-specific instructions…' }] } } }, { event: { type: 'assistant/message', data: { turn: 1, step: 0, message: { content: [{ type: 'reasoning', text: '思维链内容不应显示' }, { type: 'text', text: '好的，已改好。' }, { type: 'tool-call', text: '{"name":"edit"}' }] } } } }] } } } }, models: async (request: unknown) => { calls.push(['models', request]); return { rpcId: 'models', result: { ok: true, value: { providers: [{ id: 'provider-a', models: ['model-a'] }] } } } }, selectModel: async (selection: unknown) => { calls.push(['select-model', selection]); return { rpcId: 'select', result: { ok: true, value: { selected: selection } } } } } }
+  const apiProxy = { sessions: { create: async (request: unknown) => { calls.push(['create', request]); return { rpcId: 'create', result: { ok: true, value: { sessionId: 'native-1' } } } }, history: async (request: unknown) => { calls.push(['history', request]); return { rpcId: 'history', result: { ok: true, value: { events: [{ event: { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '帮我改一下场景时间' }] } } }, { event: { type: 'user/message', data: { source: { kind: 'plugin', plugin: 'runtime' }, content: [{ type: 'text', text: '<system-reminder>\nA skill is a reusable set of task-specific instructions…' }] } } }, { event: { type: 'assistant/message', data: { turn: 1, step: 0, message: { content: [{ type: 'reasoning', text: '思维链内容不应显示' }, { type: 'text', text: '好的，已改好。' }, { type: 'tool-call', text: '{"name":"edit"}' }] } } } }] } } } }, models: async (request: unknown) => { calls.push(['models', request]); return { rpcId: 'models', result: { ok: true, value: { providers: [{ id: 'provider-a', models: ['model-a'] }] } } } }, selectModel: async (selection: unknown) => { calls.push(['select-model', selection]); return { rpcId: 'select', result: { ok: true, value: { selected: selection } } } } } }
   let currentApiProxy: any
   const service = new DshStorySessionService(() => structuredClone(current), native, () => currentApiProxy)
   currentApiProxy = apiProxy
@@ -20,8 +20,15 @@ test('native sessions isolate owners and carry current story context', async () 
   assert.throws(() => f.service.get('owner-b', session.id), /不属于/)
   await f.service.prompt('owner-a', session.id, '请修改开场')
   const promptCall = f.calls.find(call => call[0] === 'prompt')
-  assert.ok(promptCall); assert.match(promptCall[1][0].text, /当前剧本 ID：story/)
+  assert.ok(promptCall); assert.equal(promptCall[1][0].text, '请修改开场')
   assert.equal(f.current.title, 'Original')
+})
+
+test('story context feeds DSH system prompt section', async () => {
+  const f = fixture(); const session = await f.service.open('owner-a', 'story')
+  const context = f.service.storyContext(session.id)
+  assert.match(context, /当前剧本 ID：story/)
+  assert.match(context, /不要伪造已完成的修改/)
 })
 
 test('native model directory and selection stay on the DSH session', async () => {
