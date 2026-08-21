@@ -671,8 +671,9 @@ async function loadCreatorSessions() {
   const response = await fetch(`/api/agent/session?owner=${encodeURIComponent(creatorOwner)}&storyId=${encodeURIComponent(storyId)}`)
   if (!response.ok) throw new Error('无法读取 DSH 会话。')
   const sessions = await response.json(); const list = $('#creator-session-list')
-  list.innerHTML = sessions.length ? sessions.map(session => `<button type="button" class="creator-session-choice" data-session-id="${escape(session.id)}">${escape(session.storyTitle)} · ${escape(String(session.id).slice(-8))}</button>`).join('') : '<p class="hint">当前剧本没有已有会话。</p>'
+  list.innerHTML = sessions.length ? sessions.map(session => `<div class="creator-session-row"><button type="button" class="creator-session-choice" data-session-id="${escape(session.id)}">${escape(session.storyTitle)} · ${escape(String(session.id).slice(-8))}</button><button type="button" class="creator-session-archive" data-archive-id="${escape(session.id)}" title="归档此会话">归档</button></div>`).join('') : '<p class="hint">当前剧本没有已有会话。</p>'
   list.querySelectorAll('[data-session-id]').forEach(button => button.onclick = () => { const session = sessions.find(item => item.id === button.dataset.sessionId); void renderCreatorSession(session); $('#creator-session-modal').close() })
+  list.querySelectorAll('[data-archive-id]').forEach(button => button.onclick = async event => { event.stopPropagation(); const id = button.dataset.archiveId; if (!confirm(`归档会话 ${String(id).slice(-8)}？归档后从列表中隐藏。`)) return; try { await creatorRequest('/api/agent/archive', { owner: creatorOwner, sessionId: id }); if (creatorSession?.id === id) renderCreatorSession(null); button.closest('.creator-session-row')?.remove(); if (!list.querySelector('.creator-session-row')) list.innerHTML = '<p class="hint">当前剧本没有已有会话。</p>' } catch (error) { alert(error instanceof Error ? error.message : String(error)) } })
 }
 $('#creator-session-open').onclick = async () => { try { await loadCreatorSessions(); $('#creator-session-modal').showModal() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
 $('#creator-session-model').onclick = async () => {

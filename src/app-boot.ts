@@ -233,7 +233,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const creatorWorkbench = new CreatorWorkbenchService({ read: () => loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'), write: (next, previous) => { if (JSON.stringify(loadStoryPackage(storiesRoot, next.id)) !== JSON.stringify(previous)) throw new Error('Creator preview conflict: StoryPackage changed since preview.'); saveStoryPackage(storiesRoot, next) } }, roomId)
   const stagecraft = createStageCraftService(core, roomId, container, repository => core.attachStateRepository(repository))
   const nativeSessions = ctx.get('sessions', false) as any
-  const dshStorySessions = new DshStorySessionService(id => loadStoryPackage(storiesRoot, id), nativeSessions, () => ctx.get('apiProxy', false) as any, root)
+  const dshStorySessions = new DshStorySessionService(id => loadStoryPackage(storiesRoot, id), nativeSessions, () => ctx.get('apiProxy', false) as any, storiesRoot)
   const solution = new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), management: runtime.getManagementService(), defaultRoomId: roomId })
   async function compensateStartFailure(): Promise<void> {
     for (const fiber of [...appFibers].reverse()) {
@@ -342,6 +342,9 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       }
       if (url.pathname === '/api/agent/session' && request.method === 'DELETE') {
         const body = await readJson(request); dshStorySessions.close(String(body.owner ?? ''), String(body.sessionId ?? '')); return json(response, 200, { ok: true })
+      }
+      if (url.pathname === '/api/agent/archive' && request.method === 'POST') {
+        const body = await readJson(request); await dshStorySessions.archive(String(body.owner ?? ''), String(body.sessionId ?? '')); return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/agent/history' && request.method === 'POST') {
         const body = await readJson(request); return json(response, 200, await dshStorySessions.history(String(body.owner ?? ''), String(body.sessionId ?? '')))

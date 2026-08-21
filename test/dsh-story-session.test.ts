@@ -65,6 +65,16 @@ test('open resolves workspace before creating session', async () => {
   assert.equal(session.id, 'creator-abc')
 })
 
+test('archive removes session and hides archived from list', async () => {
+  const calls: any[] = []
+  const apiProxy = { workspace: { create: async (request: unknown) => { calls.push(['workspace', request]); return { rpcId: 'ws', result: { ok: true, value: { workspace: { workspaceId: 'ws-1', path: 'C:\\tavern\\stories', title: 'stories', sessionIds: [], createdAt: '', updatedAt: '' } } } } }, archiveSession: async (request: unknown) => { calls.push(['archive', request]); return { rpcId: 'archive', result: { ok: true, value: { archivedSessionIds: ['creator-abc'] } } } }, list: async () => ({ rpcId: 'wslist', result: { ok: true, value: { items: [], archivedSessionIds: ['creator-abc'] } } }) }, sessions: { create: async (request: unknown) => { calls.push(['create', request]); return { rpcId: 'create', result: { ok: true, value: { sessionId: 'creator-abc' } } } }, list: async () => ({ rpcId: 'list', result: { ok: true, value: { items: [{ sessionId: 'creator-abc', updatedAt: Date.now() }] } } }) } }
+  const service = new DshStorySessionService(() => structuredClone(story()), undefined, () => apiProxy, 'C:\\tavern\\stories')
+  await service.open('owner-a', 'story')
+  await service.archive('owner-a', 'creator-abc')
+  assert.throws(() => service.get('owner-a', 'creator-abc'), /未知/)
+  assert.deepEqual((await service.list('owner-a', 'story')).map(item => item.id), [])
+})
+
 test('close rejects further access', async () => {
   const f = fixture(); const session = await f.service.open('owner-a', 'story'); f.service.close('owner-a', session.id)
   assert.throws(() => f.service.get('owner-a', session.id), /未知/)

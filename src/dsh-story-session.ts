@@ -31,6 +31,8 @@ type RpcResponse = { result?: { ok: boolean; value?: unknown; error?: { message?
 type NativeApiProxy = {
   workspace?: {
     create?: (request: { rpcId: string; payload: { path: string } }) => Promise<RpcResponse>
+    list?: (request: { rpcId: string; payload: Record<string, never> }) => Promise<RpcResponse>
+    archiveSession?: (request: { rpcId: string; payload: { sessionId: string } }) => Promise<RpcResponse>
   }
   sessions?: {
     create?: (request: { rpcId: string; payload: { workspaceId?: string; sessionId?: string } }) => Promise<RpcResponse>
@@ -79,16 +81,29 @@ export class DshStorySessionService {
   capability(): DshStoryCapability { const apiProxy = this.currentApiProxy(); return this.native?.create || this.native?.binding ? { available: true, native: true, modelSelection: Boolean(apiProxy?.sessions?.models && apiProxy?.sessions?.selectModel), ...(!apiProxy?.sessions?.models ? { reason: '当前 DSH 宿主未暴露模型目录 API。' } : {}) } : { available: false, native: false, modelSelection: false, reason: '当前 DSH 宿主没有暴露原生会话服务。' } }
   close(owner: string, id: string): void { this.sessions.delete(this.require(owner, id).id) }
   get(owner: string, id: string): DshStorySession { return publicSession(this.require(owner, id)) }
+  async archive(owner: string, id: string): Promise<void> {
+    const session = this.require(owner, id); const apiProxy = this.currentApiProxy()
+    if (!apiProxy?.workspace?.archiveSession) throw new Error('当前 DSH 宿主未提供会话归档 API。')
+    await this.unwrapRpc(await apiProxy.workspace.archiveSession({ rpcId: `creator-archive-${randomUUID()}`, payload: { sessionId: session.nativeId ?? id } }))
+    this.sessions.delete(session.id)
+  }
   async list(owner: string, storyId?: string): Promise<DshStorySession[]> {
     const local = [...this.sessions.values()].filter(session => session.owner === owner && (!storyId || session.storyId === storyId))
     const apiProxy = this.currentApiProxy()
     if (!apiProxy?.sessions?.list) return local.map(publicSession)
     const response = await apiProxy.sessions.list({ rpcId: `creator-list-sessions-${randomUUID()}`, payload: {} })
     const result = this.unwrapRpc(response) as { items?: Array<{ sessionId?: unknown; updatedAt?: number }> }
+    let archived = new Set<string>()
+    if (apiProxy.workspace?.list) {
+      try {
+        const ws = this.unwrapRpc(await apiProxy.workspace.list({ rpcId: `creator-workspaces-${randomUUID()}`, payload: {} })) as { archivedSessionIds?: unknown[] }
+        archived = new Set((ws.archivedSessionIds ?? []).map(id => sessionIdOf(id)).filter((id): id is string => Boolean(id)))
+      } catch { /* 归档集读取失败时保留本地列表 */ }
+    }
     const known = new Set(local.map(session => session.id))
     for (const item of result.items ?? []) {
       const id = sessionIdOf(item.sessionId)
-      if (!id || known.has(id)) continue
+      if (!id || known.has(id) || archived.has(id)) continue
       if (!id.startsWith('creator-')) continue
       const timestamp = new Date(item.updatedAt ?? Date.now()).toISOString()
       const restored = { id, owner, storyId: storyId ?? 'eldoria', storyTitle: storyId ?? 'DSH 会话', createdAt: timestamp, updatedAt: timestamp, nativeId: id, messages: [] }
