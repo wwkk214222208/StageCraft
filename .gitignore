@@ -7,6 +7,9 @@ providers.json
 node_modules/
 *.log
 
+# ── 发布产物（不入库，GitHub Release 附件） ──
+release/
+
 # ── 用户自建内容：保留目录、忽略内容（仓库内保留 .gitkeep） ──
 custom/*
 !custom/.gitkeep
