@@ -106,6 +106,21 @@ prompts/prompts.json         提示词分组（role / director / consult / skill
 scripts/build-android-core.mjs
 ```
 
+## 剧本覆盖顺序
+
+剧本检索同时合并 **bundle 默认**（`dist/stories/`，来自仓库 `stories/`）与 **用户数据**（`<userDataRoot>/stories/`，DSH 插件形态下为 AppData `%APPDATA%\stagecraft\stories\`）。同一剧本 id 出现多份时，按以下优先级覆盖（高 → 低）：
+
+1. 用户数据 `stories/custom/`（玩家自建/编辑的剧本）
+2. 用户数据 `stories/`（首次启动从 bundle 拷贝的默认剧本，可被编辑）
+3. bundle `dist/stories/custom/`
+4. bundle `dist/stories/`（发布默认剧本，兜底）
+
+加载剧本时若用户数据缺失，自动回退到 bundle 默认（`loadStoryPackage` 多目录查找）。把插件侧/用户数据侧的剧本固化回仓库，可用：
+
+```bash
+npm run sync:stories   # scripts/sync-stories-back.mjs：dist/stories + AppData stories → 仓库 stories/
+```
+
 ## 安装与运行
 
 **要求**：Node.js **≥ 24**（低于 22.6 不支持类型剥离）。
