@@ -112,7 +112,7 @@ export class DshStorySessionService {
       const type = event.type ?? ''; const data = event.data ?? {}
       if (type !== 'user/message' && type !== 'assistant/message') continue
       const content = data.content
-      const text = Array.isArray(content) ? content.map(item => typeof item === 'string' ? item : (item as Record<string, unknown>)?.text ?? '').join('') : typeof content === 'string' ? content : ''
+      const text = Array.isArray(content) ? content.map(item => typeof item === 'string' ? item : (item as Record<string, unknown>)?.type === 'text' ? String((item as Record<string, unknown>)?.text ?? '') : '').join('') : typeof content === 'string' ? content : ''
       if (text) messages.push({ role: type === 'user/message' ? 'user' : 'system', text: type === 'user/message' ? stripSystemContext(text) : text, createdAt: this.now().toISOString() })
     }
     session.messages = messages.slice(-MAX_MESSAGES); return clone(session.messages)
