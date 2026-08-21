@@ -178,7 +178,6 @@ export function mapStCardToRole(card: StCardParsed, options: { roleId?: string }
     portraitRef: '/assets/default.svg',
     currentState: '刚刚进入当前场景。',
     presence: 'present',
-    memoryTimeline: {},
     selfModel,
   }
   if (card.creatorNotes?.trim()) warnings.push(`creator_notes 未导入（${card.creatorNotes.trim().slice(0, 40)}…）——那是作者备注，不是角色人设。`)

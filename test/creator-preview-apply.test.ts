@@ -6,7 +6,7 @@ import { CREATOR_CONTRACT_VERSION, CREATOR_EXTRACTION_VERSION, diffStoryPackages
 import type { StoryPackage } from '../src/story-packages.ts'
 
 function story(overrides: Partial<StoryPackage> = {}): StoryPackage {
-  return { id: 'story', title: 'Original', opening: 'Opening', playerCharacter: { name: 'Player', persona: 'Persona', currentState: 'Ready' }, roles: [{ id: 'role', name: 'Role', portraitRef: '/assets/default.svg', currentState: 'Waiting', presence: 'present', memoryTimeline: {}, selfModel: 'Model' }], ...overrides }
+  return { id: 'story', title: 'Original', opening: 'Opening', playerCharacter: { name: 'Player', persona: 'Persona', currentState: 'Ready' }, roles: [{ id: 'role', name: 'Role', portraitRef: '/assets/default.svg', currentState: 'Waiting', presence: 'present', selfModel: 'Model' }], ...overrides }
 }
 function preview(candidate: StoryPackage, id = 'preview-1'): CreatorExtractionPreview {
   return { contractVersion: CREATOR_CONTRACT_VERSION, extractionVersion: CREATOR_EXTRACTION_VERSION, id, createdAt: '2026-01-01T00:00:00.000Z', expiresAt: '2099-01-01T00:00:00.000Z', source: { kind: 'text', summary: 'metadata-only test source' }, candidate, diffs: diffStoryPackages(story(), candidate), warnings: [], diagnostics: [], valid: true }
@@ -57,7 +57,7 @@ test('conflicts and invalid accepted paths do not mutate the package', () => {
 
 test('reject and no-op paths do not apply, while Role/Lore/stat data remain namespaced', () => {
   const f = fixture()
-  const candidate = story({ title: 'Changed', roles: [{ id: 'role', name: 'Role', portraitRef: '/assets/default.svg', currentState: 'Changed', presence: 'present', memoryTimeline: {}, selfModel: 'Model' }], lore: [{ name: 'Lore', content: 'Content' }], sceneTime: 'night' })
+  const candidate = story({ title: 'Changed', roles: [{ id: 'role', name: 'Role', portraitRef: '/assets/default.svg', currentState: 'Changed', presence: 'present', selfModel: 'Model' }], lore: [{ name: 'Lore', content: 'Content' }], sceneTime: 'night' })
   f.adapter.preview(preview(candidate))
   const result = f.adapter.request({ previewId: 'preview-1', requestedAt: '2026-01-01T00:00:00.000Z', accept: [{ path: '/title', decision: 'reject' }] })
   assert.equal(result.status, 'rejected')

@@ -12,8 +12,8 @@ const story: StoryPackage = {
   id: 'contract-story', title: 'Contract story', opening: 'The opening.', sceneTime: 'Dawn', sceneLocation: 'Hall',
   playerCharacter: { name: 'Player', persona: 'Observer', currentState: 'Ready' },
   roles: [
-    { id: 'aria', name: 'Aria', portraitRef: '/aria.svg', currentState: 'Watching.', presence: 'present', memoryTimeline: { Past: ['The festival began.'] }, selfModel: 'Careful.', impressions: {}, goals: ['Find the truth.'] },
-    { id: 'mira', name: 'Mira', portraitRef: '/mira.svg', currentState: 'Waiting.', presence: 'absent', memoryTimeline: { Past: ['She is waiting.'] }, selfModel: 'Curious.' },
+    { id: 'aria', name: 'Aria', portraitRef: '/aria.svg', currentState: 'Watching.', presence: 'present', memories: [{ text: 'The festival began.', occurredAt: 'Past' }], selfModel: 'Careful.', impressions: {}, goals: ['Find the truth.'] },
+    { id: 'mira', name: 'Mira', portraitRef: '/mira.svg', currentState: 'Waiting.', presence: 'absent', memories: [{ text: 'She is waiting.', occurredAt: 'Past' }], selfModel: 'Curious.' },
   ],
   lore: [{ name: 'Rule', content: 'Be honest.' }],
 }
@@ -67,7 +67,7 @@ test('role, config, scene, memory, turn, draft, speech, world-change, and consul
   store.setRoleAvatar(roomId, role.id, '/new.png')
   store.setRoleCurrentState(roomId, role.id, 'Speaking.')
   store.setRoleThinking(roomId, role.id, 'deep')
-  store.updateRolePrivateState(roomId, role.id, 'Updated self.', { Past: ['Updated memory.'] }, { impressions: { Mira: 'Trusted' }, goals: ['Escape'], thinkingStrength: 'brief' })
+  store.updateRolePrivateState(roomId, role.id, 'Updated self.', [{ text: 'Updated memory.', occurredAt: 'Past' }], { impressions: { Mira: 'Trusted' }, goals: ['Escape'], thinkingStrength: 'brief' })
   store.applyRoleImpressions(roomId, role.id, { Mira: 'Ally' })
   store.insertNpcMemories(roomId, role.id, [{ id: 'memory-new', occurredAt: 'Noon', source: 'manual', text: 'A new fact.' }])
   store.updateNpcMemory(roomId, 'memory-new', { text: 'An edited fact.' })

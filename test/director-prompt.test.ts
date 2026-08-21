@@ -30,12 +30,12 @@ test('director request: 公开人设注入且私有段剥离、固定头在前�
   const roles: Role[] = [
     {
       id: 'seraphina', name: '塞拉菲娜', portraitRef: '/x.png', currentState: '在木屋里照料旅人。', presence: 'present',
-      memoryTimeline: { '今日': ['救回旅人。'] }, impressions: { '旅人': '刚救回的伤者。', '罗温': '谨慎的猎人。' },
+      memories: [{ text: '救回旅人。', occurredAt: '今日' }], impressions: { '旅人': '刚救回的伤者。', '罗温': '谨慎的猎人。' },
       selfModel: '名字：塞拉菲娜\n身份：守护者\n\n性格定义：\n1. 温柔但不软弱。\n\n===== 长期目标 =====\n- 守住空地。',
     },
     {
       id: 'vex', name: '影牙', portraitRef: '/v.svg', currentState: '在结界外徘徊。', presence: 'absent',
-      memoryTimeline: {}, selfModel: '名字：影牙\n身份：兽群首领\n===== 长期目标 =====\n- 让森林统一在黑暗之下。',
+      selfModel: '名字：影牙\n身份：兽群首领\n===== 长期目标 =====\n- 让森林统一在黑暗之下。',
     },
   ]
   const decisions: Decision[] = [{ roleId: 'seraphina', participation: 'required', status: 'completed', brief: '她会先确认旅人的伤势。', publicIdentity: '以普通旅人身份示人，隐瞒守护者身份。' }]
@@ -80,7 +80,7 @@ test('角色决策的 identity 字段经 normalize 进入 Decision', async () =>
     fetchImpl: async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ brief: '公开意图。', privateReaction: '私有反应。', identity: '伪装成平民，隐瞒身份。' }) } }] }), { status: 200 }),
   })
   const workers = createRealWorkers(gateway)
-  const role: Role = { id: 'aria', name: 'Aria', portraitRef: '/aria.svg', currentState: '位于主厅。', presence: 'present', memoryTimeline: {}, selfModel: '克制、敏锐。' }
+  const role: Role = { id: 'aria', name: 'Aria', portraitRef: '/aria.svg', currentState: '位于主厅。', presence: 'present', selfModel: '克制、敏锐。' }
   const decision = await workers.decide(role, 'optional', '玩家行动。', [])
   assert.equal(decision.status, 'completed')
   assert.equal(decision.brief, '公开意图。')

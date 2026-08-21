@@ -33,12 +33,8 @@ export interface Role {
   portraitRef: string
   currentState: string
   presence: 'present' | 'absent' | 'unavailable'
-  /** 按时间标签组织的剧情记忆时间线（Heptalon 风格）：时间标签 → 事件列表；初始记忆存于「过去」桶 */
-  memoryTimeline: Record<string, string[]>
-  /** 结构化私有记忆；新存档的 canonical 记忆来源。 */
-  memories?: NpcMemory[]
-  /** 剧本阶段配置的初始记忆；开局时写入结构化记忆记录。 */
-  initialMemories?: InitialMemory[]
+  /** 结构化私有记忆；canonical 记忆来源。story 阶段为 {text, occurredAt} 初始记录，运行时为 NpcMemory[]。 */
+  memories?: NpcMemory[] | InitialMemory[]
   /** 该角色对其他角色的印象（姓名 → 文字）；随剧情可被角色自己更新，也可在角色设置中修改 */
   impressions?: Record<string, string>
   /** 长期目标（独立字段，私密：Director 看不到，仅供角色自己）；替代旧版写在 selfModel 私有段的文本解析 */
@@ -103,7 +99,7 @@ export interface RoleProposal {
   currentState: string
   presence: 'present' | 'absent' | 'unavailable'
   selfModel: string
-  memoryTimeline: Record<string, string[]>
+  memories?: InitialMemory[]
   goals?: string[]
 }
 

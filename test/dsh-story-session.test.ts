@@ -3,7 +3,7 @@ import test from 'node:test'
 import { DshStorySessionService } from '../src/dsh-story-session.ts'
 import type { StoryPackage } from '../src/story-packages.ts'
 
-const story = (title = 'Original'): StoryPackage => ({ id: 'story', title, opening: 'Opening', playerCharacter: { name: 'Player', persona: 'Persona', currentState: 'Ready' }, roles: [{ id: 'role', name: 'Role', portraitRef: '/assets/default.svg', currentState: 'Waiting', presence: 'present', memoryTimeline: {}, selfModel: 'Model' }] })
+const story = (title = 'Original'): StoryPackage => ({ id: 'story', title, opening: 'Opening', playerCharacter: { name: 'Player', persona: 'Persona', currentState: 'Ready' }, roles: [{ id: 'role', name: 'Role', portraitRef: '/assets/default.svg', currentState: 'Waiting', presence: 'present', selfModel: 'Model' }] })
 function fixture() {
   const calls: any[] = []; let current = story()
   const nativeSession = { id: 'native-1', prompt: async (content: unknown) => { calls.push(['prompt', content]) } }

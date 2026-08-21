@@ -854,11 +854,11 @@ function renderStoryRoles() {
     })
   })
 }
-const storyInitialMemories = role => role.initialMemories ?? Object.entries(role.memoryTimeline ?? {}).flatMap(([occurredAt, items]) => (items ?? []).map(text => ({ text, occurredAt })))
+const storyInitialMemories = role => role.memories ?? []
 function syncStoryExpandedMemory(role) {
   const editor = document.querySelector('[data-story-memory-expanded]')
   if (!editor || expandedStoryMemoryIndex === null) return
-  const entry = role.initialMemories?.[expandedStoryMemoryIndex]
+  const entry = role.memories?.[expandedStoryMemoryIndex]
   if (entry) {
     entry.text = editor.querySelector('[data-story-memory-text]').value.trim()
     entry.occurredAt = editor.querySelector('[data-story-memory-time]').value.trim() || '过去'
@@ -868,7 +868,7 @@ function syncStoryExpandedMemory(role) {
 function renderStoryInitialMemories(role) {
   let panel = $('#story-initial-memories')
   if (!panel || panel === missingElement) { panel = document.createElement('section'); panel.id = 'story-initial-memories'; $('#inspector-memory-structured').append(panel) }
-  const memories = role.initialMemories ?? []
+  const memories = role.memories ?? []
   panel.innerHTML = `${memories.length ? `<div class="memory-list-rows">${memories.map((memory, index) => index === expandedStoryMemoryIndex
     ? `<article class="memory-list-row memory-list-row-expanded" data-story-memory-row="${index}" data-story-memory-expanded="${index}"><button type="button" class="memory-delete memory-expanded-delete" data-story-memory-delete="${index}" title="删除记忆">×</button><div class="memory-expanded-table"><label>时间<input data-story-memory-time value="${escape(memory.occurredAt ?? '过去')}"></label><label>记忆<textarea data-story-memory-text>${escape(memory.text ?? '')}</textarea></label></div></article>`
     : `<article class="memory-list-row story-memory-record" draggable="true" data-story-memory-row="${index}"><span class="memory-drag-handle" title="拖动调整位置">⠿</span><button type="button" class="memory-summary" data-story-memory-expand="${index}"><time>${escape(memory.occurredAt ?? '过去')}</time><span title="${escape(memory.text ?? '')}">${escape(memory.text ?? '')}</span></button><button type="button" class="memory-delete" data-story-memory-delete="${index}" title="删除记忆">×</button></article>`
@@ -878,19 +878,19 @@ function renderStoryInitialMemories(role) {
     row.addEventListener('dragend', () => row.classList.remove('dragging'))
     row.addEventListener('dragover', event => { event.preventDefault(); row.classList.add('drag-over') })
     row.addEventListener('dragleave', () => row.classList.remove('drag-over'))
-    row.addEventListener('drop', event => { event.preventDefault(); row.classList.remove('drag-over'); const from = Number(event.dataTransfer.getData('text/plain')); const to = Number(row.dataset.storyMemoryRow); syncStoryExpandedMemory(role); if (from !== to && role.initialMemories?.[from]) { const [moved] = role.initialMemories.splice(from, 1); role.initialMemories.splice(to, 0, moved); renderStoryInitialMemories(role) } })
+    row.addEventListener('drop', event => { event.preventDefault(); row.classList.remove('drag-over'); const from = Number(event.dataTransfer.getData('text/plain')); const to = Number(row.dataset.storyMemoryRow); syncStoryExpandedMemory(role); if (from !== to && role.memories?.[from]) { const [moved] = role.memories.splice(from, 1); role.memories.splice(to, 0, moved); renderStoryInitialMemories(role) } })
   })
 }
-function collectStoryInitialMemories() { const role = storyEditRoles[storyEditRoleIndex]; if (role) syncStoryExpandedMemory(role); return (role?.initialMemories ?? []).filter(memory => memory.text?.trim()).map(memory => ({ text: memory.text.trim(), occurredAt: memory.occurredAt?.trim() || '过去' })) }
-document.addEventListener('click', event => { const target = event.target.closest?.('#story-memory-add,[data-story-memory-delete],[data-story-memory-expand]'); if (!target) return; const role = storyEditRoles[storyEditRoleIndex]; if (!role) return; syncStoryExpandedMemory(role); if (target.id === 'story-memory-add') { role.initialMemories.push({ text: '', occurredAt: '过去' }); expandedStoryMemoryIndex = role.initialMemories.length - 1 } else if (target.dataset.storyMemoryExpand !== undefined) expandedStoryMemoryIndex = Number(target.dataset.storyMemoryExpand); else role.initialMemories.splice(Number(target.dataset.storyMemoryDelete), 1); renderStoryInitialMemories(role); document.querySelector('[data-story-memory-text]')?.focus() })
+function collectStoryInitialMemories() { const role = storyEditRoles[storyEditRoleIndex]; if (role) syncStoryExpandedMemory(role); return (role?.memories ?? []).filter(memory => memory.text?.trim()).map(memory => ({ text: memory.text.trim(), occurredAt: memory.occurredAt?.trim() || '过去' })) }
+document.addEventListener('click', event => { const target = event.target.closest?.('#story-memory-add,[data-story-memory-delete],[data-story-memory-expand]'); if (!target) return; const role = storyEditRoles[storyEditRoleIndex]; if (!role) return; syncStoryExpandedMemory(role); if (target.id === 'story-memory-add') { role.memories.push({ text: '', occurredAt: '过去' }); expandedStoryMemoryIndex = role.memories.length - 1 } else if (target.dataset.storyMemoryExpand !== undefined) expandedStoryMemoryIndex = Number(target.dataset.storyMemoryExpand); else role.memories.splice(Number(target.dataset.storyMemoryDelete), 1); renderStoryInitialMemories(role); document.querySelector('[data-story-memory-text]')?.focus() })
 document.addEventListener('focusout', event => { const editor = event.target.closest?.('[data-story-memory-expanded]'); if (editor) setTimeout(() => { if (!editor.contains(document.activeElement)) { const role = storyEditRoles[storyEditRoleIndex]; if (role) { syncStoryExpandedMemory(role); renderStoryInitialMemories(role) } } }) })
-$('#story-role-add').onclick = () => { storyEditRoles.push({ id: `new-role-${Date.now()}`, name: '新角色', portraitRef: '/assets/default.svg', currentState: '尚未进入具体场景，等待剧情展开。', presence: 'absent', initialMemories: [], impressions: {}, selfModel: '待补充的角色设定。' }); renderStoryRoles() }
+$('#story-role-add').onclick = () => { storyEditRoles.push({ id: `new-role-${Date.now()}`, name: '新角色', portraitRef: '/assets/default.svg', currentState: '尚未进入具体场景，等待剧情展开。', presence: 'absent', memories: [], impressions: {}, selfModel: '待补充的角色设定。' }); renderStoryRoles() }
 function openStoryRoleEditor(index) {
   const role = storyEditRoles[index]
   if (!role) return
   storyEditRoleIndex = index
   expandedStoryMemoryIndex = null
-  role.initialMemories = storyInitialMemories(role).slice().sort((left, right) => Number((left.occurredAt ?? '过去') !== '过去') - Number((right.occurredAt ?? '过去') !== '过去'))
+  role.memories = storyInitialMemories(role).slice().sort((left, right) => Number((left.occurredAt ?? '过去') !== '过去') - Number((right.occurredAt ?? '过去') !== '过去'))
   // 剧本编辑模式只显示初始记忆：清空 live 模式（openInspector）残留的当前记忆渲染，
   // 避免「当前记忆 + 初始记忆」叠加显示在同一容器里。
   const structured = $('#inspector-memory-structured')
@@ -1014,14 +1014,6 @@ function inspectorEffectiveModel() { const provider = providers.find(item => ite
 function updateInspectorThinkingOptions(selected) { updateThinkingOptions('#inspector-thinking', inspectorEffectiveModel(), selected) }
 $('#inspector-provider').onchange = () => { updateInspectorModels(); updateInspectorThinkingOptions($('#inspector-thinking').value) }
 $('#inspector-model').onchange = () => updateInspectorThinkingOptions($('#inspector-thinking').value)
-function formatTimelineForEdit(role) {
-  const blocks = []
-  for (const [label, events] of Object.entries(role.memoryTimeline ?? {})) {
-    if (!events?.length) continue
-    blocks.push(`【${label}】\n${events.map(event => `- ${event}`).join('\n')}`)
-  }
-  return blocks.join('\n')
-}
 /** 从 textarea 按行收集长期目标（去空行）；允许留空 */
 function collectGoalsInput(selector) {
   return String($(selector)?.value ?? '').split('\n').map(line => line.trim()).filter(Boolean)
@@ -1132,8 +1124,7 @@ $('#inspector-save').onclick = event => {
       role.currentState = $('#inspector-story-state').value
       role.selfModel = $('#inspector-self-model').value
       role.goals = collectGoalsFromEdit()
-      role.initialMemories = collectStoryInitialMemories()
-      delete role.memoryTimeline
+      role.memories = collectStoryInitialMemories()
       role.impressions = impressions
     }
     storyEditRoleIndex = null

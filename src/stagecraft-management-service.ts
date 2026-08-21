@@ -66,9 +66,9 @@ export class StageCraftManagementService implements StageCraftManagementPort {
   updatePlayerCharacter(roomId: string, player: { name: string; persona: string; currentState: string }): void { this.store.updatePlayerCharacter(roomId, player); this.changed(roomId) }
   setPlayerAvatar(roomId: string, portraitRef: string): void { this.store.setPlayerAvatar(roomId, portraitRef); this.changed(roomId) }
 
-  interveneRole(roomId: string, roleId: string, selfModel: string, memoryTimeline?: Record<string, string[]>, config = {}): void {
+  interveneRole(roomId: string, roleId: string, selfModel: string, _memories?: import('./types.ts').InitialMemory[], config = {}): void {
     this.idle(roomId, 'Private role intervention requires an idle room.')
-    this.store.updateRolePrivateState(roomId, roleId, selfModel, memoryTimeline, config)
+    this.store.updateRolePrivateState(roomId, roleId, selfModel, _memories, config)
     this.changed(roomId)
   }
 

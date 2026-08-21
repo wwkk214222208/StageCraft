@@ -17,7 +17,7 @@ function story(overrides: Partial<StoryPackage> = {}): StoryPackage {
     title: 'Synthetic Story',
     opening: 'A public opening.',
     playerCharacter: { name: 'Player', persona: 'Public persona.', currentState: 'At the door.' },
-    roles: [{ id: 'guide', name: 'Guide', portraitRef: '/assets/default.svg', currentState: 'Waiting.', presence: 'present', memoryTimeline: {}, selfModel: 'Public role model.' }],
+    roles: [{ id: 'guide', name: 'Guide', portraitRef: '/assets/default.svg', currentState: 'Waiting.', presence: 'present', selfModel: 'Public role model.' }],
     ...overrides,
   }
 }

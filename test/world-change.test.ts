@@ -113,7 +113,7 @@ test('群聊模式：世界变更申请可提议新人物，批准后创建', as
   const { runtime, roomId } = fixture()
   runtime.setRoomConfig(roomId, { mode: 'chat' })
   runtime.setWorkers(worldChangeWorkers({
-    roleProposals: [{ id: 'guard', name: '守门人', portraitRef: '/assets/default.svg', currentState: '正在城门口巡视。', presence: 'present', selfModel: '你是一个沉默寡言的守门人。', memoryTimeline: {} }],
+    roleProposals: [{ id: 'guard', name: '守门人', portraitRef: '/assets/default.svg', currentState: '正在城门口巡视。', presence: 'present', selfModel: '你是一个沉默寡言的守门人。', memories: [] }],
   }))
   await runtime.speak(roomId, 'aria')
   let room = runtime.get(roomId)
@@ -137,7 +137,7 @@ test('群聊模式：一次导演咨询的结构化变更统一走批准与记�
     ...directorChatWorkers({
       sceneTime: '深夜',
       sceneLocation: '城门下',
-      roleProposals: [{ id: 'guard', name: '守门人', portraitRef: '/assets/default.svg', currentState: '正在城门口巡视。', presence: 'present', selfModel: '沉默寡言的守门人。', memoryTimeline: {} }],
+      roleProposals: [{ id: 'guard', name: '守门人', portraitRef: '/assets/default.svg', currentState: '正在城门口巡视。', presence: 'present', selfModel: '沉默寡言的守门人。', memories: [] }],
       rolePresence: [{ roleId: 'noel', presence: 'present' }],
     }, '诺尔推门走进城门，守门人开始巡视。'),
     digest: async (role, scene) => {

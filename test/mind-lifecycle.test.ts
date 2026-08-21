@@ -15,11 +15,12 @@ function fixture() {
 
 test('private reactions stay pending until the player approves the scene', async () => {
   const { runtime, store, roomId } = fixture()
-  const before = JSON.stringify(runtime.get(roomId).roles.find(role => role.id === 'aria')!.memoryTimeline)
+  const memoryTexts = () => JSON.stringify(store.listNpcMemories(roomId, 'aria').map(memory => memory.text))
+  const before = memoryTexts()
   await runtime.submitTurn(roomId, { text: '我注视 Aria。', requiredRoleIds: ['aria'] })
   await runtime.proceedToDraft(roomId)
   const draft = runtime.get(roomId).draft!
-  assert.equal(JSON.stringify(runtime.get(roomId).roles.find(role => role.id === 'aria')!.memoryTimeline), before)
+  assert.equal(memoryTexts(), before, '未批准前私有反应不应写入结构化记忆')
   assert.equal(store.listPendingMindUpdates(roomId, draft.turnId).length, 2)
   runtime.approve(roomId, draft.id, draft.text, draft.stateUpdates)
   const after = runtime.get(roomId).roles.find(role => role.id === 'aria')!
@@ -29,12 +30,13 @@ test('private reactions stay pending until the player approves the scene', async
 
 test('consultation and redraft do not promote pending private reactions', async () => {
   const { runtime, store, roomId } = fixture()
-  const before = JSON.stringify(runtime.get(roomId).roles.find(role => role.id === 'aria')!.memoryTimeline)
+  const memoryTexts = () => JSON.stringify(store.listNpcMemories(roomId, 'aria').map(memory => memory.text))
+  const before = memoryTexts()
   await runtime.submitTurn(roomId, { text: '我停在原地。', requiredRoleIds: ['aria'] })
   await runtime.proceedToDraft(roomId)
   const draft = runtime.get(roomId).draft!
   await runtime.consult(roomId, draft.id, '我想确认一下。')
   await runtime.redraft(roomId, draft.id)
-  assert.equal(JSON.stringify(runtime.get(roomId).roles.find(role => role.id === 'aria')!.memoryTimeline), before)
+  assert.equal(memoryTexts(), before, '咨询与重写不应提升待定私有反应')
   assert.ok(store.listPendingMindUpdates(roomId, draft.turnId).length > 0)
 })

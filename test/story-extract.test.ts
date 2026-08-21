@@ -25,7 +25,7 @@ test('model route is bounded, schema validated, and never auto-applies', async (
   const service = createStoryExtractService()
   const result = await service.extract({ text: '角色：测试', requestModel: async request => {
     seen = request
-    return { requestId: request.requestId, output: { roles: [{ id: 'r', name: '模型角色', portraitRef: '/assets/default.svg', currentState: '待确认', presence: 'present', memoryTimeline: {}, selfModel: '候选设定' }], lore: [] } }
+    return { requestId: request.requestId, output: { roles: [{ id: 'r', name: '模型角色', portraitRef: '/assets/default.svg', currentState: '待确认', presence: 'present', memories: [{ text: '模型提取的记忆。', occurredAt: '过去' }], selfModel: '候选设定' }], lore: [] } }
   } })
   assert.equal(result.source, 'model')
   assert.equal(result.roles[0]?.name, '模型角色')

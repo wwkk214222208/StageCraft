@@ -29,7 +29,7 @@ test('loadStoryPackageWithTxt merges txt world book, JSON lore wins on name conf
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-wbtxt-'))
   writeFileSync(join(root, 'demo.json'), JSON.stringify({
     id: 'demo', title: 'Demo', opening: '开场。', playerCharacter: { name: '玩家', persona: '人设。', currentState: '状态。' },
-    roles: [{ id: 'aria', name: 'Aria', portraitRef: '/a.svg', currentState: '在场。', presence: 'present', memoryTimeline: {}, selfModel: '克制。' }],
+    roles: [{ id: 'aria', name: 'Aria', portraitRef: '/a.svg', currentState: '在场。', presence: 'present', selfModel: '克制。' }],
     lore: [{ name: '重复条目', content: 'JSON 版本。' }],
   }))
   writeFileSync(join(root, 'demo.txt'), '=== 重复条目 ===\ntxt 版本。\n=== txt 新增 ===\n> 角色: aria\n新增内容。\n')
@@ -43,7 +43,7 @@ test('saveStoryPackage writes JSON back preserving lore', () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-wbsave-'))
   writeFileSync(join(root, 'demo.json'), JSON.stringify({
     id: 'demo', title: 'Demo', opening: '开场。', playerCharacter: { name: '玩家', persona: '人设。', currentState: '状态。' },
-    roles: [{ id: 'aria', name: 'Aria', portraitRef: '/a.svg', currentState: '在场。', presence: 'present', memoryTimeline: {}, selfModel: '克制。' }],
+    roles: [{ id: 'aria', name: 'Aria', portraitRef: '/a.svg', currentState: '在场。', presence: 'present', selfModel: '克制。' }],
   }))
   const story = loadStoryPackageWithTxt(root, 'demo')
   story.lore = [{ name: '新条目', content: '内容。' }]

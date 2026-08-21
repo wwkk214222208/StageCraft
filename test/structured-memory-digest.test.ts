@@ -36,7 +36,10 @@ test('群聊 digest 只写入规范化的结构化记忆，并使用已批准场
   assert.equal(memory.occurredLocation, scene.sceneLocation)
   assert.equal(memory.source, 'role_reaction')
   assert.equal(aria.memories.some(item => item.text === '不应写入。'), true)
-  assert.equal(Object.values(aria.memoryTimeline).flat().some(item => item.includes('银钥匙')), false)
+  // 旧式 memoryTimeline 桶已移除：消化结果只写入结构化 memories，且银钥匙记忆只落一次（不重复写入）
+  assert.equal('memoryTimeline' in aria, false)
+  const memoryTexts = (aria.memories ?? []).map(memory => memory.text)
+  assert.equal(memoryTexts.filter(text => text.includes('银钥匙')).length, 1, '银钥匙记忆只写入一次')
 })
 
 test('结构化 digest 以场景、类型和文本去重', () => {

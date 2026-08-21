@@ -20,7 +20,7 @@ test('test fixture story package loads with validated roles', () => {
 
 test('legacy long-term goals are migrated out of selfModel when a story loads', () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-story-goals-'))
-  writeFileSync(join(root, 'legacy.json'), JSON.stringify({ id: 'legacy', title: 'Legacy', opening: '开场', playerCharacter: { name: '玩家', persona: '观察者', currentState: '在场' }, roles: [{ id: 'r', name: '角色', portraitRef: '/assets/default.svg', currentState: '在场', presence: 'present', memoryTimeline: {}, selfModel: '性格定义：谨慎。\n\n===== 长期目标 =====\n- 守住城门\n- 找到失踪者' }]}))
+  writeFileSync(join(root, 'legacy.json'), JSON.stringify({ id: 'legacy', title: 'Legacy', opening: '开场', playerCharacter: { name: '玩家', persona: '观察者', currentState: '在场' }, roles: [{ id: 'r', name: '角色', portraitRef: '/assets/default.svg', currentState: '在场', presence: 'present', selfModel: '性格定义：谨慎。\n\n===== 长期目标 =====\n- 守住城门\n- 找到失踪者' }]}))
   const role = loadStoryPackage(root, 'legacy').roles[0]
   assert.deepEqual(role.goals, ['守住城门', '找到失踪者'])
   assert.equal(role.selfModel, '性格定义：谨慎。')
@@ -54,7 +54,9 @@ test('七女神纪元 story package loads with all roles and lore', () => {
   assert.equal(story.roles.length, 12)
   assert.equal(story.playerCharacter?.name, '怀夕')
   assert.ok(story.lore.length >= 14, `应有世界书条目，实际 ${story.lore.length}`)
-  assert.ok(story.roles.every(role => role.selfModel && role.memoryTimeline), '所有角色应有 selfModel 与记忆时间线')
+  // 新格式契约：所有角色有 selfModel，且不含已移除的 initialMemories 字段
+  //（legacy 数据文件可能仍携带旧 memoryTimeline，加载/播种时被忽略，见 七女神纪元.json）
+  assert.ok(story.roles.every(role => role.selfModel && !role.initialMemories), '所有角色应有 selfModel 且不含旧 initialMemories 字段')
   assert.ok(story.lore.some(entry => entry.name === '归煦神谕·苏棠' && entry.roles?.length === 1 && entry.roles[0] === 'sutang'), '归煦神谕·苏棠只对苏棠可见')
   assert.ok(story.lore.some(entry => entry.name === '怀夕·道成肉身' && entry.roles?.includes('sutang') && entry.roles?.includes('lucifer')), '怀夕·道成肉身只对苏棠、露西菲尔可见')
   assert.ok(story.lore.some(entry => entry.name === '银月圣殿·禁忌知识' && entry.roles?.includes('nara')), '银月圣殿·禁忌知识只对娜拉可见')
@@ -82,12 +84,12 @@ test('a package creates an independent initialized room whose opening is the fir
   assert.equal(room.phase, 'awaiting-player-input')
 })
 
-test('structured initial memories seed canonical story records instead of legacy timeline entries', () => {
+test('structured initial memories seed canonical story records', () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-story-initial-memory-'))
   const store = new Store(join(root, 'app.sqlite'))
   const roomId = store.createRoomFromPackage({
     id: 'structured-memory-story', title: '结构化记忆剧本', opening: '', playerCharacter: { name: '玩家', persona: '', currentState: '' },
-    roles: [{ id: 'keeper', name: '守秘人', portraitRef: '/assets/default.svg', currentState: '守在门前。', presence: 'present', selfModel: '谨慎。', memoryTimeline: { '旧时间': ['不应作为初始记录写入。'] }, initialMemories: [{ text: '答应保护银钥匙。', occurredAt: '开场前' }, { text: '没有时间标签的初始记忆。', occurredAt: '过去' }] }],
+    roles: [{ id: 'keeper', name: '守秘人', portraitRef: '/assets/default.svg', currentState: '守在门前。', presence: 'present', selfModel: '谨慎。', memories: [{ text: '答应保护银钥匙。', occurredAt: '开场前' }, { text: '没有时间标签的初始记忆。', occurredAt: '过去' }] }],
   }, 'structured-memory-room')
   const memory = store.getRoom(roomId)!.roles[0].memories![0]
   assert.equal(memory.text, '没有时间标签的初始记忆。')

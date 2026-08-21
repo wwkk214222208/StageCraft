@@ -486,7 +486,7 @@ export const directorDraftSchema = {
     stateUpdates: { type: 'object', description: '仅限所有在场角色可观察的外在状态；禁止想法、动机、情绪推断和 Director 推理。', additionalProperties: { type: 'string' } },
     sceneUpdates: { type: 'object', additionalProperties: false, description: '本回合场景的时间/地点更新（随剧情推进而改变时填写；无变化可省略）。', properties: { time: { type: 'string' }, location: { type: 'string' } } },
     settingProposals: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, text: { type: 'string' }, basis: { type: 'string' }, status: { type: 'string', enum: ['proposed', 'accepted', 'rejected'] } }, required: ['id', 'text', 'basis', 'status'] } },
-    roleProposals: { type: 'array', description: '需要新建的人物（剧情需要引入新角色时填写；现有角色不填）。', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' }, portraitRef: { type: 'string' }, currentState: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] }, selfModel: { type: 'string' }, memoryTimeline: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } }, required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'selfModel', 'memoryTimeline'] } },
+    roleProposals: { type: 'array', description: '需要新建的人物（剧情需要引入新角色时填写；现有角色不填）。', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' }, portraitRef: { type: 'string' }, currentState: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] }, selfModel: { type: 'string' }, memories: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { text: { type: 'string' }, occurredAt: { type: 'string' } }, required: ['text'] } } }, required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'selfModel'] } },
     intentHandling: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { roleId: { type: 'string' }, intentId: { type: 'string' }, result: { type: 'string', enum: ['used', 'partially-used', 'deferred', 'blocked', 'superseded'] }, note: { type: 'string' } }, required: ['roleId', 'intentId', 'result', 'note'] } },
     openQuestions: { type: 'array', items: { type: 'string' } },
   }, required: ['text', 'stateUpdates', 'settingProposals', 'intentHandling', 'openQuestions'],
@@ -569,26 +569,15 @@ function formatGoals(role: Role): string {
   return `长期目标（私密，仅你自己知道）：\n${goals.map(goal => `- ${goal.trim()}`).join('\n')}\n\n`
 }
 
-/** 角色私有记忆注入片段。结构化记录优先；旧时间线只在尚未迁移时作过渡回退。 */
+/** 角色私有记忆注入片段。结构化记忆记录，按时间倒序取前 30 条。 */
 function formatMemoryTimeline(role: Role): string {
   const memories = (role.memories ?? []).filter(memory => memory.status === 'active' && memory.visibility === 'private')
-  if (memories.length > 0) {
-      return memories
-      .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 30)
-      .map(memory => `【${memory.occurredAt}】\n- ${memory.text}`)
-      .join('\n')
-  }
-  const timeline = role.memoryTimeline ?? {}
-  const lines: string[] = []
-  for (const [when, events] of Object.entries(timeline)) {
-    const label = when.trim() || '过去'
-    const items = Array.isArray(events) ? events.filter(event => typeof event === 'string' && event.trim()) : []
-    if (items.length === 0) continue
-    lines.push(`【${label}】`)
-    for (const event of items) lines.push(`- ${event.trim()}`)
-  }
-  return lines.length > 0 ? lines.join('\n') : '（暂无记忆）'
+  if (memories.length === 0) return '（暂无记忆）'
+  return memories
+    .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 30)
+    .map(memory => `【${memory.occurredAt}】\n- ${memory.text}`)
+    .join('\n')
 }
 
 export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole: (role: Role) => ModelGateway = () => directorGateway, options: { directorThinkingStrength?: import('./types.ts').ThinkingStrength; directorProviderId?: string; directorModel?: string; requestModel?: (request: ModelRequest) => Promise<ModelResult>; cancelModel?: (requestId?: string) => Promise<void> } = {}) {
@@ -754,7 +743,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         properties: {
           sceneTime: { type: 'string', description: '剧情推进导致时间变化时填新的时间；否则省略' },
           sceneLocation: { type: 'string', description: '剧情推进导致地点变化时填新的地点；否则省略' },
-          roleProposals: { type: 'array', description: '剧情需要引入当前角色列表之外的新人物时提案；没有就不填。', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' }, portraitRef: { type: 'string' }, currentState: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] }, selfModel: { type: 'string' }, memoryTimeline: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } }, required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'selfModel', 'memoryTimeline'] } },
+          roleProposals: { type: 'array', description: '剧情需要引入当前角色列表之外的新人物时提案；没有就不填。', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' }, portraitRef: { type: 'string' }, currentState: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] }, selfModel: { type: 'string' }, memories: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { text: { type: 'string' }, occurredAt: { type: 'string' } }, required: ['text'] } } }, required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'selfModel'] } },
           roleStates: { type: 'object', additionalProperties: { type: 'string' }, description: '剧情中该角色或其他在场角色的状态发生值得记录的变化时更新（roleId → 最新状态，现在时描述）；没有明显变化省略。' },
           reason: { type: 'string', description: '给玩家看的简短理由，说明为何提出这项世界变更（可省略）' },
         },
@@ -797,7 +786,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       let usage = { promptTokens: 0, completionTokens: 0 }
       const collectThinking = (text: string) => { thinking += text; onThinking?.(text) }
       const collectUsage = (u: { promptTokens: number; completionTokens: number }) => { usage.promptTokens += u.promptTokens; usage.completionTokens += u.completionTokens }
-      const roleProposalSchema = { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' }, portraitRef: { type: 'string' }, currentState: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] }, selfModel: { type: 'string' }, memoryTimeline: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } }, required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'selfModel', 'memoryTimeline'] }
+      const roleProposalSchema = { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' }, portraitRef: { type: 'string' }, currentState: { type: 'string' }, presence: { type: 'string', enum: ['present', 'absent', 'unavailable'] }, selfModel: { type: 'string' }, memories: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { text: { type: 'string' }, occurredAt: { type: 'string' } }, required: ['text'] } } }, required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'selfModel'] }
       const worldChangeSchema = {
         type: 'object', additionalProperties: false,
         properties: {
@@ -877,11 +866,17 @@ function normalizeWorldChange(raw: unknown): import('./types.ts').WorldChangeReq
       if (!id || !name || !currentState || !selfModel) return undefined
       const presence = p.presence === 'present' || p.presence === 'absent' || p.presence === 'unavailable' ? p.presence : 'present'
       const portraitRef = typeof p.portraitRef === 'string' && p.portraitRef.trim() ? p.portraitRef.trim() : '/assets/default.svg'
-      const memoryRaw = p.memoryTimeline ?? p.memory_timeline
-      const memoryTimeline = memoryRaw && typeof memoryRaw === 'object' && !Array.isArray(memoryRaw)
-        ? Object.fromEntries(Object.entries(memoryRaw as Record<string, unknown>).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, (v as unknown[]).map(item => String(item ?? '').trim()).filter(Boolean)]))
-        : {}
-      return { id, name, portraitRef, currentState, presence, selfModel, memoryTimeline, ...(Array.isArray(p.goals) ? { goals: p.goals.map(item => String(item ?? '').trim()).filter(Boolean) } : {}) }
+      const memoryRaw = p.memories
+      const memories = Array.isArray(memoryRaw)
+        ? memoryRaw.flatMap((item): import('./types.ts').InitialMemory[] => {
+            if (!item || typeof item !== 'object') return []
+            const record = item as Record<string, unknown>
+            const text = typeof record.text === 'string' ? record.text.trim() : ''
+            if (!text) return []
+            return [{ text, ...(typeof record.occurredAt === 'string' && record.occurredAt.trim() ? { occurredAt: record.occurredAt.trim() } : {}) }]
+          })
+        : []
+      return { id, name, portraitRef, currentState, presence, selfModel, ...(memories.length ? { memories } : {}), ...(Array.isArray(p.goals) ? { goals: p.goals.map(item => String(item ?? '').trim()).filter(Boolean) } : {}) }
     }).filter((item): item is import('./types.ts').RoleProposal => Boolean(item))
     if (proposals.length > 0) result.roleProposals = proposals
   }

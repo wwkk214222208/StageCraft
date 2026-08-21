@@ -10,7 +10,7 @@ import type { Role } from '../src/types.ts'
 
 const role: Role = {
   id: 'aria', name: 'Aria', portraitRef: '/aria.svg', presence: 'present',
-  currentState: '在祭典主厅。', memoryTimeline: { '未标注时间': ['她注意到玩家的沉默。'] }, selfModel: '克制。',
+  currentState: '在祭典主厅。', memories: [{ text: '她注意到玩家的沉默。', occurredAt: '过去' }], selfModel: '克制。',
 }
 
 /** 构造一个 content-type 为 text/event-stream 的 SSE 响应 */

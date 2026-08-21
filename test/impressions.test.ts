@@ -46,7 +46,7 @@ test('impressions survive archive round-trip and story restart', () => {
   const story = {
     id: 'demo', title: 'Demo', opening: '开场。', sceneTime: '夜晚', sceneLocation: '大厅',
     playerCharacter: { name: '玩家', persona: 'p', currentState: 'c' },
-    roles: [{ id: 'mira', name: 'Mira', portraitRef: '/x.svg', currentState: 's', presence: 'present' as const, memoryTimeline: {}, impressions: { 艾莉娅: '旧印象。' }, selfModel: 'm' }],
+    roles: [{ id: 'mira', name: 'Mira', portraitRef: '/x.svg', currentState: 's', presence: 'present' as const, impressions: { 艾莉娅: '旧印象。' }, selfModel: 'm' }],
     lore: [],
   }
   runtime.restart(roomId, story)

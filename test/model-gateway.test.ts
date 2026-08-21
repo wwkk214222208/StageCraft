@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ModelGateway, createRealWorkers } from '../src/model-gateway.ts'
-import type { Role } from '../src/types.ts'
+import type { NpcMemory, Role } from '../src/types.ts'
 
 const role: Role = {
   id: 'aria', name: 'Aria', portraitRef: '/aria.svg', presence: 'present',
-  currentState: '在祭典主厅。', memoryTimeline: { '未标注时间': ['她注意到玩家的沉默。'] }, selfModel: '克制。',
+  currentState: '在祭典主厅。',
+  memories: [{
+    id: 'memory-aria', roomId: 'fixture-room', roleId: 'aria', occurredAt: '过去', source: 'story', text: '她注意到玩家的沉默。', visibility: 'private', status: 'active', supersedes: [], dedupeKey: 'memory-aria', createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+  } satisfies NpcMemory],
+  selfModel: '克制。',
 }
 
 function response(content: string, status = 200): Response {

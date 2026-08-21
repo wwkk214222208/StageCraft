@@ -3,7 +3,7 @@ import test from 'node:test'
 import { CreatorWorkbenchService } from '../src/creator-workbench-service.ts'
 import type { StoryPackage } from '../src/story-packages.ts'
 
-const role = { id: 'role', name: 'Role', portraitRef: '/assets/default.svg', currentState: 'Ready', presence: 'present' as const, memoryTimeline: {}, selfModel: 'Model' }
+const role = { id: 'role', name: 'Role', portraitRef: '/assets/default.svg', currentState: 'Ready', presence: 'present' as const, selfModel: 'Model' }
 function story(): StoryPackage { return { id: 'story', title: 'Original', opening: 'Opening', playerCharacter: { name: 'Player', persona: 'Persona', currentState: 'Ready' }, roles: [role] } }
 function fixture() { let current = story(); const writes: StoryPackage[] = []; const service = new CreatorWorkbenchService({ read: () => structuredClone(current), write: (next, previous) => { assert.deepEqual(current, previous); current = structuredClone(next); writes.push(structuredClone(next)) } }, 'workbench:test'); return { service, get current() { return current }, writes } }
 

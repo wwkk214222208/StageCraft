@@ -60,7 +60,8 @@ function stringField(value: unknown, key: string): string | undefined { return i
 function candidateRole(role: Role): RoleCandidate { return { ...role, candidate: true } }
 function candidateLore(lore: LoreEntry): LoreCandidate { return { ...lore, candidate: true } }
 function validateRole(value: unknown, path: string): RoleCandidate {
-  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.portraitRef !== 'string' || typeof value.currentState !== 'string' || typeof value.selfModel !== 'string' || !['present', 'absent', 'unavailable'].includes(String(value.presence)) || !isRecord(value.memoryTimeline)) throw new Error(`Invalid role candidate at ${path}.`)
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.portraitRef !== 'string' || typeof value.currentState !== 'string' || typeof value.selfModel !== 'string' || !['present', 'absent', 'unavailable'].includes(String(value.presence))) throw new Error(`Invalid role candidate at ${path}.`)
+  if (value.memories !== undefined && !Array.isArray(value.memories)) throw new Error(`Invalid role memories at ${path}.`)
   return candidateRole(value as unknown as Role)
 }
 function validateLore(value: unknown, path: string): LoreCandidate {
@@ -85,7 +86,7 @@ function fromText(text: string, maxEntries: number): StoryExtractResult {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
   const roleLine = lines.find(line => /^(?:角色|人物|character)\s*[:：]/i)
   const name = roleLine?.replace(/^(?:角色|人物|character)\s*[:：]\s*/i, '').trim() || '未命名角色'
-  const role = candidateRole({ id: `extract-${name.replace(/[^\p{L}\p{N}_-]+/gu, '-').slice(0, 32) || 'role'}`, name, portraitRef: '/assets/default.svg', currentState: '待确认的初始状态。', presence: 'present', memoryTimeline: {}, selfModel: text.trim() || '待补充角色设定。' })
+  const role = candidateRole({ id: `extract-${name.replace(/[^\p{L}\p{N}_-]+/gu, '-').slice(0, 32) || 'role'}`, name, portraitRef: '/assets/default.svg', currentState: '待确认的初始状态。', presence: 'present', selfModel: text.trim() || '待补充角色设定。' })
   const lore = lines.filter(line => /^(?:世界书|设定|lore)\s*[:：]/i.test(line)).slice(0, maxEntries).map((line, i) => candidateLore({ name: `提取设定 ${i + 1}`, content: line.replace(/^(?:世界书|设定|lore)\s*[:：]\s*/i, '') }))
   if (!roleLine) diagnostics.push(diagnostic('text.heuristic', 'No explicit role label was found; a reviewable role candidate was synthesized.'))
   if (lines.length > maxEntries) diagnostics.push(diagnostic('entries.bounded', `Text extraction is bounded to ${maxEntries} lore candidates.`))
@@ -137,5 +138,5 @@ export function storyExtractCordisPlugin(service: StoryExtractService): Plugin {
 }
 declare module '@deepseek-ai/cordis' { interface Context { storyExtract: StoryExtractService } }
 export function standaloneStoryExtractPlugin(options: Parameters<typeof createStoryExtractService>[0] = {}): { service: StoryExtractService; plugin: Plugin } { const service = createStoryExtractService(options); return { service, plugin: storyExtractCordisPlugin(service) } }
-export const storyExtractSchema = { role: { required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'memoryTimeline', 'selfModel'] }, lore: { required: ['name', 'content'] }, storyPackage: { required: ['id', 'title', 'opening', 'playerCharacter', 'roles', 'lore'] } } as const
+export const storyExtractSchema = { role: { required: ['id', 'name', 'portraitRef', 'currentState', 'presence', 'selfModel'] }, lore: { required: ['name', 'content'] }, storyPackage: { required: ['id', 'title', 'opening', 'playerCharacter', 'roles', 'lore'] } } as const
 export type { PlayerCharacter }

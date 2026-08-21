@@ -49,13 +49,13 @@ test('management handler maps every supported operation to its narrow port metho
   const calls: Array<{ method: string; args: unknown[] }> = []
   const management = new Proxy({}, { get: (_target, property: string) => (...args: unknown[]) => { calls.push({ method: property, args }) } }) as StageCraftManagementPort
   container.addSolution(new StageCraftSolutionPlugin({ management, defaultRoomId: 'room-1' }))
-  const role = { id: 'new-role', name: '新角色', portraitRef: '/assets/new.svg', currentState: '在场', presence: 'present' as const, selfModel: '谨慎', memoryTimeline: {} }
+  const role = { id: 'new-role', name: '新角色', portraitRef: '/assets/new.svg', currentState: '在场', presence: 'present' as const, selfModel: '谨慎' }
   const cases: Array<[string, Record<string, unknown>, string]> = [
     ['import-archive', { archive: { room: {} } }, 'importArchive'],
     ['set-room-config', { mode: 'chat', autoPublish: true }, 'setRoomConfig'],
     ['update-player-character', { name: '玩家', persona: '观察者', currentState: '站在门口' }, 'updatePlayerCharacter'],
     ['set-player-avatar', { portraitRef: '/assets/player.svg' }, 'setPlayerAvatar'],
-    ['intervene-role', { roleId: 'aria', selfModel: '克制', memoryTimeline: {}, config: {} }, 'interveneRole'],
+    ['intervene-role', { roleId: 'aria', selfModel: '克制', memories: [], config: {} }, 'interveneRole'],
     ['store-memories', { roleId: 'aria', entries: [{ text: '记住这件事', occurredAt: '过去' }] }, 'storeNpcMemories'],
     ['retract-memory', { memoryId: 'memory-1' }, 'retractNpcMemory'],
     ['update-memory', { memoryId: 'memory-1', entry: { text: '更新', occurredAt: '过去' } }, 'updateNpcMemory'],

@@ -36,7 +36,7 @@ test('loadStoryPackageWithTxt merges txt world book entries not in JSON', () => 
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-lore-txt-'))
   writeFileSync(join(root, 'demo.json'), JSON.stringify({
     id: 'demo', title: 'Demo', opening: '开场。', playerCharacter: { name: '玩家', persona: '人设。', currentState: '状态。' },
-    roles: [{ id: 'aria', name: 'Aria', portraitRef: '/a.svg', currentState: '在场。', presence: 'present', memoryTimeline: { '未标注时间': ['记忆。'] }, selfModel: '克制。' }],
+    roles: [{ id: 'aria', name: 'Aria', portraitRef: '/a.svg', currentState: '在场。', presence: 'present', memories: [{ text: '记忆。', occurredAt: '过去' }], selfModel: '克制。' }],
     lore: [{ name: 'JSON 已有条目', content: '来自 JSON。' }],
   }))
   writeFileSync(join(root, 'demo.txt'), `=== txt 新条目 ===\n> 角色: aria\n来自 txt。\n=== JSON 已有条目 ===\n来自 txt 的重复。\n`)
@@ -81,7 +81,7 @@ test('world book injected in prompt: 常开 + 角色条目 + 人物卡 + 记忆'
   const ariaIdx = ariaPrompt.indexOf('Aria 是晨光花园学徒。')
   const loreIdx = ariaPrompt.indexOf('创世神话')
   const selfIdx = ariaPrompt.indexOf('当前自我模型：')
-  const memoryIdx = ariaPrompt.indexOf('记忆时间线')
+  const memoryIdx = ariaPrompt.indexOf('角色记忆')
   const miraIdx = ariaPrompt.indexOf('Mira 擅长玩笑。')
   if (!(loreIdx >= 0 && ariaIdx >= 0)) console.error('实际 prompts:\n' + captured.join('\n====\n'))
   assert.ok(loreIdx >= 0 && ariaIdx >= 0, `世界书应注入: ${ariaPrompt}`)
@@ -129,5 +129,5 @@ test('role prompt prefix is cached across turns', async () => {
     const prefix2 = prompts[1].split('当前场景')[0]
     assert.equal(prefix1, prefix2, `角色 ${role} 的前缀（世界书+人物卡）应一致`)
   }
-  assert.ok(captured.every(system => system.includes('记忆时间线')))
+  assert.ok(captured.every(system => system.includes('角色记忆')))
 })

@@ -64,7 +64,7 @@ export function projectRoomSnapshot(room: RoomSnapshot): CoreStateSnapshot {
         consultations: room.consultations,
       },
       memory: {
-        roleTimelines: Object.fromEntries(room.roles.map(role => [role.id, role.memoryTimeline])),
+        roleTimelines: Object.fromEntries(room.roles.map(role => [role.id, (role.memories ?? []).map(memory => memory.text)])),
         impressions: Object.fromEntries(room.roles.map(role => [role.id, role.impressions ?? {}])),
       },
       goals: Object.fromEntries(room.roles.map(role => [role.id, role.goals ?? []])),

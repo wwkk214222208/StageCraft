@@ -20,13 +20,13 @@ function fixture() {
 
 test('player can create and delete a role', () => {
   const { store, runtime, roomId } = fixture()
-  runtime.createRole(roomId, { id: 'new-guy', name: '新人', portraitRef: '/assets/default.svg', currentState: '站在门口。', presence: 'present', selfModel: '沉默寡言。', memoryTimeline: { '未标注时间': ['刚出场。'] } })
+  runtime.createRole(roomId, { id: 'new-guy', name: '新人', portraitRef: '/assets/default.svg', currentState: '站在门口。', presence: 'present', selfModel: '沉默寡言。', memories: [{ text: '刚出场。', occurredAt: '过去' }] })
   const room = runtime.get(roomId)
   const role = room.roles.find(item => item.id === 'new-guy')
   assert.ok(role, '新角色应存在')
   assert.equal(role!.name, '新人')
-  assert.deepEqual(role!.memoryTimeline, { '过去': ['刚出场。'] })
-  assert.throws(() => runtime.createRole(roomId, { id: 'new-guy', name: '重复', portraitRef: '/x.svg', currentState: 'x', presence: 'present', selfModel: 'x', memoryTimeline: {} }), /角色已存在/)
+  assert.deepEqual(store.listNpcMemories(roomId, 'new-guy').map(m => ({ text: m.text, occurredAt: m.occurredAt })), [{ text: '刚出场。', occurredAt: '过去' }])
+  assert.throws(() => runtime.createRole(roomId, { id: 'new-guy', name: '重复', portraitRef: '/x.svg', currentState: 'x', presence: 'present', selfModel: 'x', memories: [] }), /角色已存在/)
   runtime.deleteRole(roomId, 'new-guy')
   assert.ok(!runtime.get(roomId).roles.some(item => item.id === 'new-guy'))
   runtime.deleteRole(roomId, 'noel')
@@ -54,14 +54,14 @@ test('director roleProposals create roles on approve', async () => {
   const runtime = new RoomRuntime(store, {
     decide: async (role, participation) => ({ roleId: role.id, participation, status: 'completed', brief: '意图。', privateReaction: '反应。' }),
     draft: async (turnId) => {
-      const proposal: RoleProposal = { id: 'maid', name: '女仆', portraitRef: '/assets/maid.svg', currentState: '端着茶盘站在一旁。', presence: 'present', selfModel: '安静、周到。', memoryTimeline: { '未标注时间': ['在祭典主厅侍奉。'] } }
+      const proposal: RoleProposal = { id: 'maid', name: '女仆', portraitRef: '/assets/maid.svg', currentState: '端着茶盘站在一旁。', presence: 'present', selfModel: '安静、周到。', memories: [{ text: '在祭典主厅侍奉。', occurredAt: '过去' }] }
       return { id: 'draft-prop', turnId, text: '女仆端茶走来。', stateUpdates: {}, settingProposals: [], intentHandling: [], openQuestions: [], roleProposals: [proposal], createdAt: new Date().toISOString() }
     },
   })
   await runtime.submitTurn(roomId, { text: '叫侍者。', requiredRoleIds: ['aria'] })
   await runtime.proceedToDraft(roomId)
   const draft = runtime.get(roomId).draft!
-  assert.deepEqual(draft.roleProposals, [{ id: 'maid', name: '女仆', portraitRef: '/assets/maid.svg', currentState: '端着茶盘站在一旁。', presence: 'present', selfModel: '安静、周到。', memoryTimeline: { '未标注时间': ['在祭典主厅侍奉。'] } }])
+  assert.deepEqual(draft.roleProposals, [{ id: 'maid', name: '女仆', portraitRef: '/assets/maid.svg', currentState: '端着茶盘站在一旁。', presence: 'present', selfModel: '安静、周到。', memories: [{ text: '在祭典主厅侍奉。', occurredAt: '过去' }] }])
   runtime.approve(roomId, draft.id, draft.text, draft.stateUpdates)
   const room = runtime.get(roomId)
   const maid = room.roles.find(role => role.id === 'maid')

@@ -34,8 +34,7 @@ test('approved scene reaction lands in the memory timeline under the current sce
   runtime.approve(roomId, draft.id, draft.text, draft.stateUpdates)
   const aria = runtime.get(roomId).roles.find(role => role.id === 'aria')!
   assert.ok(aria.memories.some(memory => memory.occurredAt === '夜晚' && memory.text.includes('需要继续观察')), JSON.stringify(aria.memories))
-  // 初始记忆保留在「过去」桶，不再被追加
-  assert.deepEqual(aria.memoryTimeline?.['过去'], ['玩家的举动值得留意。'])
+  assert.ok(aria.memories.some(memory => memory.occurredAt === '过去' && memory.text === '玩家的举动值得留意。'), `初始记忆保留在「过去」，got: ${JSON.stringify(aria.memories)}`)
   assert.equal(store.listPendingMindUpdates(roomId, draft.turnId).length, 0)
 })
 
@@ -97,8 +96,10 @@ test('legacy databases migrate scene and memory timeline columns', () => {
   const store = new Store(join(root, 'legacy.sqlite'))
   const room = store.getRoom('r1')!
   assert.equal(room.sceneTime, undefined)
-  // 旧 private_memory 并入「过去」桶，列已删除
-  assert.deepEqual(room.roles[0].memoryTimeline, { '过去': ['旧记忆。'] })
+  // 旧 private_memory 并入「过去」桶（列级迁移），列已删除；结构化记忆从空开始（旧记忆不再以 memoryTimeline 暴露）
+  const merged = JSON.parse((store['db'].prepare('SELECT memory_timeline FROM roles WHERE room_id = ? AND id = ?').get('r1', 'aria') as any).memory_timeline as string) as Record<string, string[]>
+  assert.deepEqual(merged, { '过去': ['旧记忆。'] })
+  assert.deepEqual(room.roles[0].memories, [])
   const roleColumns = new Set(store['db'].prepare('PRAGMA table_info(roles)').all().map((row: any) => row.name as string))
   assert.ok(!roleColumns.has('private_memory'), 'private_memory column should be dropped')
 })
