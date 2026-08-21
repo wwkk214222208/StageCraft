@@ -119,13 +119,41 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       }
   await ctx.effect(async () => {
     ctx.provide('stagecraftDebug', debug)
+    const cleanups: Array<() => void> = []
     if (manager) await manager.start()
     else {
       // Embedded mode remains the self-contained development path.
       const app: TavernApp = await startTavern({ root, port, host, ctx, remoteAccess: { enabled: config.remoteEnabled === true, pairingTtlMs: config.remotePairingTtlMs, sessionTtlMs: config.remoteSessionTtlMs } })
-      return () => app.close()
+      cleanups.push(() => void app.close())
     }
-    return () => manager?.shutdown('Cordis fiber disposed')
+    // 独立控制端点：POST /api/stagecraft/reload —— 重建 worker（或 embedded 下重启应用）。
+    // 挂在 DSH 主进程 webServer 上（sandboxed 时 8899），供构建脚本 / dsh 命令触发。
+    const webServer = (ctx as unknown as { webServer?: { register: (route: { kind: 'exact' | 'prefix'; path: string; handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void | Promise<void> }) => () => void } }).webServer
+    if (webServer?.register) {
+      const disposer = webServer.register({
+        kind: 'exact',
+        path: '/api/stagecraft/reload',
+        handler: async (req, res) => {
+          try {
+            let reason = 'http-reload'
+            if (req.method === 'POST') {
+              const chunks: Buffer[] = []
+              for await (const chunk of req) chunks.push(chunk as Buffer)
+              const body = Buffer.concat(chunks).toString('utf8').trim()
+              if (body) { try { reason = JSON.parse(body).reason ?? reason } catch { /* keep default */ } }
+            }
+            const snapshot = await debug.restart(reason)
+            res.writeHead(200, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ ok: true, ...snapshot }))
+          } catch (error) {
+            res.writeHead(500, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }))
+          }
+        },
+      })
+      cleanups.push(disposer)
+    }
+    return () => { for (const cleanup of cleanups.reverse()) cleanup() }
   })
 }
 
