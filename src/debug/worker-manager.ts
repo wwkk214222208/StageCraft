@@ -179,6 +179,14 @@ export class WorkerManager {
   }
 
   async restart(reason = 'restarted'): Promise<WorkerManagerSnapshot> {
+    // 优先进程内重建（worker.restart：关 composition → 重建 → 复用同一端口，
+    // 无 TCP 释放竞态）。失败才回退杀进程 + 重新 spawn。
+    if (this.status === 'running' && this.ready) {
+      try {
+        await this.request('worker.restart', { reason }, this.options.requestTimeoutMs)
+        return this.snapshot()
+      } catch { /* fall through to process-level restart */ }
+    }
     await this.stop(reason)
     this.restartCount++
     const snapshot = await this.start()

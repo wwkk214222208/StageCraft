@@ -94,6 +94,21 @@ export class WorkerRpcServer {
     })
   }
 
+  /** 进程内重建 composition：关旧 → 建新 → 重新订阅。端口/进程/RPC 通道均复用。 */
+  private async rebuildComposition(reason: string): Promise<void> {
+    this.setStatus('stopping', reason)
+    for (const controller of this.pending.values()) controller.abort(reason)
+    this.pending.clear()
+    const old = this.composition
+    this.composition = undefined
+    if (old) await old.close()
+    const next = await this.createComposition()
+    this.composition = next
+    this.attachComposition(next)
+    this.generation++
+    this.setStatus('running')
+  }
+
   async stop(reason = 'stopped'): Promise<void> {
     if (this.closed) return
     this.setStatus('stopping', reason)
@@ -150,9 +165,9 @@ export class WorkerRpcServer {
     if (request.method === 'worker.status') return this.snapshot()
     if (request.method === 'worker.stop' || request.method === 'worker.kill') { await this.stop(request.params.reason ?? request.method); return this.snapshot() }
     if (request.method === 'worker.restart' || request.method === 'worker.recover') {
-      await this.stop(request.params.reason ?? request.method)
-      this.closed = false
-      await this.start()
+      // 进程内重建 composition：关闭旧的（释放 HTTP 端口）→ 创建新的（复用同一进程、
+      // 同一端口、同一 lineReader），不触发 TCP 释放竞态，也不打断 RPC 通道。
+      await this.rebuildComposition(request.params.reason ?? request.method)
       return this.snapshot()
     }
     if (!this.composition) throw new Error('Worker composition is unavailable.')
@@ -185,15 +200,7 @@ export class WorkerRpcServer {
         await fiber.dispose()
         this.pluginFibers.delete(pluginId)
       }
-      // StageCraft 在 worker 内以单一 composition 运行：重载即重建 composition。
-      const old = this.composition
-      this.composition = undefined
-      if (old) await old.close()
-      const next = await this.createComposition()
-      this.composition = next
-      this.attachComposition(next)
-      this.generation++
-      this.setStatus('running')
+      await this.rebuildComposition(`plugin:${pluginId}`)
       return { pluginId, reloaded: true, generation: this.generation }
     }
     if (request.method === 'fiber.reload') throw unsupported('Cordis fiber reload is not exposed by this worker boundary.')
