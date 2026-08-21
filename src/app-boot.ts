@@ -428,9 +428,17 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       if (url.pathname === '/api/providers' && request.method === 'GET') return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults() })
       if (url.pathname === '/api/providers/save' && request.method === 'POST') {
         const body = await readJson(request)
-        const config: ProviderConfig = { id: String(body.id), name: String(body.name), baseUrl: String(body.baseUrl).replace(/\/$/, ''), apiKey: String(body.apiKey ?? ''), models: Array.isArray(body.models) ? body.models.map(String) : [], selectedModel: body.selectedModel ? String(body.selectedModel) : undefined, responseFormat: body.responseFormat === 'json_schema' ? 'json_schema' : body.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: body.toolCalling !== false }
+        const existing = providerStore.get(String(body.id ?? ''))
+        const config: ProviderConfig = { id: String(body.id), name: String(body.name), baseUrl: String(body.baseUrl).replace(/\/$/, ''), apiKey: String(body.apiKey ?? '') || existing?.apiKey || '', models: Array.isArray(body.models) ? body.models.map(String) : existing?.models ?? [], selectedModel: body.selectedModel ? String(body.selectedModel) : existing?.selectedModel, responseFormat: body.responseFormat === 'json_schema' ? 'json_schema' : body.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: body.toolCalling !== false }
         providerStore.save(config)
         await activateProvider(config)
+        return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults(), active: gateway?.usage() ?? { route: '模拟', model: '模拟' } })
+      }
+      if (url.pathname === '/api/providers/delete' && request.method === 'POST') {
+        const body = await readJson(request)
+        const removed = providerStore.remove(String(body.id ?? ''))
+        if (!removed) throw new Error('Provider 配置不存在。')
+        await activateProvider()
         return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults(), active: gateway?.usage() ?? { route: '模拟', model: '模拟' } })
       }
       if (url.pathname === '/api/providers/discover' && request.method === 'POST') {

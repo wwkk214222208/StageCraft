@@ -61,6 +61,16 @@
 .role-proposals b{color:#b7c8fe;font:600 13px Georgia,serif}
 .role-proposals small{color:#679efe;font-size:11px}
 .role-proposals p{margin:4px 0 0;color:#a9b8dd;font-size:12px;line-height:1.45}
+/* 供应商管理列表 */
+.provider-manager{margin:0 0 10px}
+.provider-list{display:grid;gap:6px;max-height:200px;overflow:auto}
+.provider-row{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid #3a4a6e;border-radius:4px;background:#222a3d;padding:6px 9px}
+.provider-row-info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.provider-row-info b{color:#b7c8fe;font:600 13px Georgia,serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.provider-row-info small{color:#8fa1c9;font-size:11px}
+.provider-row-actions{display:flex;gap:4px;flex-shrink:0}
+.provider-row-actions button{padding:3px 7px;font-size:11px}
+.provider-form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
 .world-change-proposal{margin:8px 0;padding:8px 10px;border:1px solid #4868b2;background:#2b3247;border-radius:5px}
 .world-change-proposal .section-title{margin:0 0 6px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .world-change-proposal small{color:#679efe;font-size:11px}

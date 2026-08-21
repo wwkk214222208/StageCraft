@@ -113,6 +113,17 @@ export class ProviderConfigStore {
     this.persist()
   }
 
+  /** 删除供应商；若它是默认角色/导演，则相应回退到第一个剩余配置（无则清空）。 */
+  remove(id: string): boolean {
+    const index = this.configs.findIndex(item => item.id === id)
+    if (index < 0) return false
+    this.configs.splice(index, 1)
+    if (this.defaultRoleProviderId === id) this.defaultRoleProviderId = this.configs[0]?.id
+    if (this.directorProviderId === id) this.directorProviderId = this.configs[0]?.id
+    this.persist()
+    return true
+  }
+
   async discoverModels(id: string, fetchImpl: typeof fetch = fetch): Promise<PublicProviderConfig> {
     const config = this.get(id)
     if (!config) throw new Error('Provider 配置不存在。')
