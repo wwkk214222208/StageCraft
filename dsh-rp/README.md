@@ -2,6 +2,13 @@
 
 这是一个可直接安装的 AGPL-3.0-only DSH bundle。它把 StageCraft 的同一份业务实现打包为 dist/index.js；独立运行入口和 DSH 入口不会维护两套逻辑，bundle 不依赖安装目录之外的仓库源码。
 
+## 兼容性
+
+- **DSH**：`0.1.0-rc.7`（以 `dsh --profile web` 形态验证；沙盒 worker、热重载、slash 命令、AppData 用户数据均在 rc.7 上实测）
+- **Cordis**：`4.0.0-rc.8`（`@deepseek-ai/cordis` scoped alias，与 DSH scoped 包名惯例一致）
+- **Node**：`>= 24`（依赖 `node --experimental-strip-types` 运行 TS 入口）
+- 可选服务（`webServer` / `commands` / `systemPrompt` / `apiProxy`）通过 `ctx.get(name, false)` 宽松读取，**不要求 profile 显式声明 inject**；服务未挂载时对应能力自动降级（无 reload 端点、无 slash 命令等）
+
 ## 运行模型
 
 DSH 保持 supervisor 身份；StageCraft 支持两个明确的 Cordis 配置模式：
