@@ -1154,8 +1154,14 @@ $('#inspector-avatar-file').onchange = event => {
   reader.onload = async () => {
     const roleId = $('#inspector-role-id').value
     try {
-      const ok = await api('/api/roles/avatar', { roleId, dataUrl: String(reader.result) })
-      if (ok) { $('#inspector-avatar-preview').src = ok.portraitRef ?? $('#inspector-avatar-preview').src; refreshRoom() }
+      const skipDispatch = storyEditRoleIndex !== null
+      const ok = await api('/api/roles/avatar', { roleId, dataUrl: String(reader.result), ...(skipDispatch ? { skipDispatch: true } : {}) })
+      if (ok) {
+        $('#inspector-avatar-preview').src = ok.portraitRef ?? $('#inspector-avatar-preview').src
+        // 剧本编辑模式：头像写入正在编辑的剧本角色，保存时随剧本包落盘
+        if (storyEditRoleIndex !== null && storyEditRoles[storyEditRoleIndex]) storyEditRoles[storyEditRoleIndex].portraitRef = ok.portraitRef
+        refreshRoom()
+      }
     } finally { event.target.value = '' }
   }
   reader.readAsDataURL(file)
@@ -1165,8 +1171,13 @@ $('#inspector-avatar-url').onclick = async () => {
   if (!url || !url.trim()) return
   const roleId = $('#inspector-role-id').value
   try {
-    const ok = await api('/api/roles/avatar', { roleId, url: url.trim() })
-    if (ok) { $('#inspector-avatar-preview').src = ok.portraitRef ?? $('#inspector-avatar-preview').src; refreshRoom() }
+    const skipDispatch = storyEditRoleIndex !== null
+    const ok = await api('/api/roles/avatar', { roleId, url: url.trim(), ...(skipDispatch ? { skipDispatch: true } : {}) })
+    if (ok) {
+      $('#inspector-avatar-preview').src = ok.portraitRef ?? $('#inspector-avatar-preview').src
+      if (storyEditRoleIndex !== null && storyEditRoles[storyEditRoleIndex]) storyEditRoles[storyEditRoleIndex].portraitRef = ok.portraitRef
+      refreshRoom()
+    }
   } catch { /* api() 已 alert */ }
 }
 

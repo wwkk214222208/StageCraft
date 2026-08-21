@@ -117,6 +117,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const root = options.root ?? fileURLToPath(new URL('..', import.meta.url))
   const publicRoot = options.publicRoot ?? join(root, 'public')
   const userDataRoot = options.userDataRoot
+  // 用户可写资产目录（头像等上传内容）：userDataRoot/public/assets，不随构建产物清空；
+  // 无 userDataRoot（独立模式）时回退到 publicRoot/assets（与旧行为一致）。
+  const userPublicRoot = userDataRoot ? join(userDataRoot, 'public') : undefined
+  if (userPublicRoot) mkdirSync(join(userPublicRoot, 'assets'), { recursive: true })
   const storiesRoot = userDataRoot ? join(userDataRoot, 'stories') : options.storiesRoot ?? join(root, 'stories')
   // 剧本检索/加载的附加源：userDataRoot 模式下 bundle 默认剧本作兜底（AppData 是主源）
   const bundleStoriesDirs: string[] = userDataRoot ? [join(root, 'stories')] : []
@@ -686,7 +690,9 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         const url = typeof body.url === 'string' ? body.url : ''
         if (!dataUrl && !url) throw new Error('缺少头像数据（dataUrl 或 url）。')
         const portraitRef = await saveAvatar(roleId, dataUrl || '', url || '')
-        await dispatchManagement('set-role-avatar', { roleId, portraitRef })
+        // 剧本编辑模式（skipDispatch）：只落盘文件并返回路径，由前端写入剧本角色；
+        // 运行时模式：更新运行时角色的 portraitRef。
+        if (body.skipDispatch !== true) await dispatchManagement('set-role-avatar', { roleId, portraitRef })
         return json(response, 200, { ok: true, portraitRef })
       }
       if (url.pathname === '/api/scene' && request.method === 'POST') {
@@ -810,14 +816,17 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
 
   function asset(response: ServerResponse, path: string): void {
     const name = path.endsWith('aria.svg') ? 'aria.svg' : path.endsWith('mira.svg') ? 'mira.svg' : 'noel.svg'
-    // 先查磁盘真实文件（导入的头像 PNG/SVG）
-    const filePath = join(publicRoot, path)
-    if (existsSync(filePath) && statSync(filePath).isFile()) {
-      const ext = extname(filePath).toLowerCase()
-      const type = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/svg+xml'
-      response.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600' })
-      createReadStream(filePath).pipe(response)
-      return
+    // 先查用户可写目录（上传的头像，AppData），再查 bundle public（默认资源）
+    for (const base of [userPublicRoot, publicRoot]) {
+      if (!base) continue
+      const filePath = join(base, path)
+      if (existsSync(filePath) && statSync(filePath).isFile()) {
+        const ext = extname(filePath).toLowerCase()
+        const type = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/svg+xml'
+        response.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600' })
+        createReadStream(filePath).pipe(response)
+        return
+      }
     }
     // 兜底：内联生成的首字母 SVG（aria/mira/noel 及未知路径）
     response.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=3600' })
@@ -855,7 +864,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     if (buffer.length > MAX_AVATAR_BYTES) throw new Error('头像超过 8MB 上限。')
     const safeId = roleId.replace(/[^a-zA-Z0-9_-]/g, '_')
     const fileName = `avatar-${safeId}-${Date.now()}${ext}`
-    writeFileSync(join(publicRoot, 'assets', fileName), buffer)
+    // 头像写入用户可写目录（AppData，构建不丢）；独立模式回退 publicRoot/assets。
+    const targetAssets = userPublicRoot ? join(userPublicRoot, 'assets') : join(publicRoot, 'assets')
+    mkdirSync(targetAssets, { recursive: true })
+    writeFileSync(join(targetAssets, fileName), buffer)
     return `/assets/${fileName}`
   }
 
