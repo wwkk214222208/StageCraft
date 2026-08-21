@@ -661,9 +661,21 @@ async function renderCreatorSession(session) {
   $('#creator-session-label').textContent = session ? `${session.storyTitle} · ${String(session.id).slice(-8)}` : '尚未选择会话'
   $('#creator-session-close').disabled = !session
   $('#creator-session-model').disabled = !session
-  $('#creator-session-chat').hidden = !session
   $('#creator-preview-status').textContent = session ? '已连接' : '未连接'
   $('#creator-preview-status').className = `creator-status ${session ? 'ready' : 'empty'}`
+  const modelLabel = $('#creator-session-model-label')
+  if (session) {
+    try {
+      const data = await creatorRequest('/api/agent/models', { owner: creatorOwner, sessionId: session.id })
+      const current = data.current ?? {}
+      modelLabel.hidden = false
+      modelLabel.textContent = `当前模型：${current.provider ?? '?'} / ${current.model ?? '?'}`
+    } catch (error) {
+      modelLabel.hidden = true
+    }
+  } else {
+    modelLabel.hidden = true
+  }
   renderCreatorSessionMessages(session)
 }
 async function loadCreatorSessions() {
@@ -708,6 +720,8 @@ $('#creator-session-model-save').onclick = async () => {
     const verify = await creatorRequest('/api/agent/models', { owner: creatorOwner, sessionId: creatorSession.id })
     const now = verify.current ?? {}
     $('#creator-agent-preview').innerHTML = `<strong>会话模型已保存</strong><p>${escape(now.provider ?? provider)} / ${escape(now.model ?? model)}（DSH 已确认）</p>`
+    const modelLabel = $('#creator-session-model-label')
+    if (now.provider || now.model) { modelLabel.hidden = false; modelLabel.textContent = `当前模型：${now.provider ?? '?'} / ${now.model ?? '?'}` }
   } catch (error) { $('#creator-agent-preview').innerHTML = `<strong class="error">模型保存失败：${escape(error instanceof Error ? error.message : String(error))}</strong>` } finally { button.disabled = false }
 }
 $('#creator-session-new').onclick = async () => { try { const session = await creatorRequest('/api/agent/session', { owner: creatorOwner, storyId: $('#story-edit-id').textContent }); void renderCreatorSession(session); $('#creator-session-modal').close() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
