@@ -757,8 +757,9 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   function events(request: IncomingMessage, response: ServerResponse, id: string): void {
     response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
     const send = (value: unknown) => response.write(`event: room\ndata: ${JSON.stringify(value)}\n\n`)
-    send(runtime.get(id))
-    const unsubscribe = runtime.subscribe(id, send)
+    // 与 /api/room 一致：归一化角色字段，避免首帧 null/undefined 覆盖已渲染的角色详情。
+    send(publicRoomSnapshot(runtime.get(id)))
+    const unsubscribe = runtime.subscribe(id, value => send(publicRoomSnapshot(value)))
     const ping = setInterval(() => response.write(': ping\n\n'), 20_000)
     request.on('close', () => { clearInterval(ping); unsubscribe() })
   }
