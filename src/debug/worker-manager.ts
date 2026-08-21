@@ -122,6 +122,9 @@ export class WorkerManager {
   async start(): Promise<WorkerManagerSnapshot> {
     if (this.status === 'running') return this.snapshot()
     if (this.child) await this.forceKill('replacing stale worker')
+    // 进程级重启时，旧进程的 TCP 端口（8799）可能未完全释放（TIME_WAIT），
+    // 等待一小段让端口可重新绑定，避免新 worker EADDRINUSE。
+    if (this.restartCount > 0) await delay(500)
     this.stopping = false
     this.stderr = ''
     this.ready = undefined
@@ -179,16 +182,9 @@ export class WorkerManager {
   }
 
   async restart(reason = 'restarted'): Promise<WorkerManagerSnapshot> {
-    // 优先进程内重建（worker.restart：关 composition → 重建 → 复用同一端口，
-    // 无 TCP 释放竞态）。失败才回退杀进程 + 重新 spawn。
-    if (this.status === 'running' && this.ready) {
-      try {
-        await this.request('worker.restart', { reason }, this.options.requestTimeoutMs)
-        this.restartCount++
-        this.generation++
-        return this.snapshot()
-      } catch { /* fall through to process-level restart */ }
-    }
+    // 进程级重启：优雅停止旧进程 → 等待端口/句柄释放 → 重新 spawn 新进程。
+    // 新进程从磁盘加载最新 worker.js，因此改完代码后 restart 即热重载生效。
+    // （进程内 rebuildComposition 无法加载新代码，仅用于 recover 保状态。）
     await this.stop(reason)
     this.restartCount++
     const snapshot = await this.start()
