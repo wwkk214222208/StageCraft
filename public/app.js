@@ -891,6 +891,11 @@ function openStoryRoleEditor(index) {
   storyEditRoleIndex = index
   expandedStoryMemoryIndex = null
   role.initialMemories = storyInitialMemories(role).slice().sort((left, right) => Number((left.occurredAt ?? '过去') !== '过去') - Number((right.occurredAt ?? '过去') !== '过去'))
+  // 剧本编辑模式只显示初始记忆：清空 live 模式（openInspector）残留的当前记忆渲染，
+  // 避免「当前记忆 + 初始记忆」叠加显示在同一容器里。
+  const structured = $('#inspector-memory-structured')
+  if (structured && structured !== missingElement) structured.innerHTML = ''
+  $('#story-initial-memories')?.remove()
   $('#role-modal-title').textContent = `${role.name} 角色设置（剧本）`
   $('#inspector-role-id').value = role.id
   $('#inspector-provider').innerHTML = '<option value="">使用默认</option>'
