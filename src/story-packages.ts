@@ -46,15 +46,19 @@ function normalizeStoryRoles(story: StoryPackage): StoryPackage {
   return story
 }
 
-/** 优先主目录，其次 stories/custom/（用户自建剧本，随项目保留目录但不提交内容） */
-function storyPath(directory: string, id: string): string {
-  const direct = join(directory, `${id}.json`)
-  if (existsSync(direct)) return direct
-  return join(directory, 'custom', `${id}.json`)
+/** 优先主目录，其次 stories/custom/，再回退附加目录（bundle 默认剧本）；用户自建剧本（custom）次之 */
+function storyPath(directory: string, id: string, extraDirectories: string[] = []): string {
+  const candidates = [
+    join(directory, `${id}.json`),
+    join(directory, 'custom', `${id}.json`),
+    ...extraDirectories.flatMap(dir => [join(dir, `${id}.json`), join(dir, 'custom', `${id}.json`)]),
+  ]
+  for (const candidate of candidates) if (existsSync(candidate)) return candidate
+  return candidates[0]
 }
 
-export function loadStoryPackage(directory: string, id: string): StoryPackage {
-  const path = storyPath(directory, id)
+export function loadStoryPackage(directory: string, id: string, extraDirectories: string[] = []): StoryPackage {
+  const path = storyPath(directory, id, extraDirectories)
   const value = JSON.parse(readFileSync(path, 'utf8')) as StoryPackage
   value.playerCharacter ??= { name: '玩家', persona: '由玩家自由定义的参与者。', currentState: '刚刚进入当前场景。' }
   normalizeStoryRoles(value)
@@ -109,23 +113,30 @@ export function loadStoryPackageWithTxt(directory: string, id: string): StoryPac
   return story
 }
 
-export function listStoryPackages(directory: string): Array<Pick<StoryPackage, 'id' | 'title'> & { custom?: boolean }> {
-  const read = (dir: string) => {
+export function listStoryPackages(directory: string, extraDirectories: string[] = []): Array<Pick<StoryPackage, 'id' | 'title'> & { custom?: boolean }> {
+  const read = (dir: string): Array<{ id: string; title: string; custom?: boolean; source: string }> => {
     if (!existsSync(dir)) return []
     return readdirSync(dir, { withFileTypes: true })
       .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
       .map(entry => {
-        const value = JSON.parse(readFileSync(join(dir, entry.name), 'utf8')) as StoryPackage
-        value.playerCharacter ??= { name: '玩家', persona: '由玩家自由定义的参与者。', currentState: '刚刚进入当前场景。' }
-        validateStoryPackage(value)
-        return { id: value.id, title: value.title }
+        try {
+          const value = JSON.parse(readFileSync(join(dir, entry.name), 'utf8')) as StoryPackage
+          value.playerCharacter ??= { name: '玩家', persona: '由玩家自由定义的参与者。', currentState: '刚刚进入当前场景。' }
+          validateStoryPackage(value)
+          return { id: value.id, title: value.title, source: dir }
+        } catch { return null }
       })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
   }
-  const main = read(directory)
-  const custom = read(join(directory, 'custom')).map(entry => ({ ...entry, custom: true }))
-  // custom 优先（同 id 时覆盖）：用户自建优先于随项目的同名剧本
-  const byId = new Map<string, (typeof main)[number]>()
-  for (const entry of [...main, ...custom]) byId.set(entry.id, entry)
+  // 优先级从低到高：bundle 主目录 → bundle custom → 主目录(AppData) → 主目录 custom(AppData custom)。
+  // Map 后者覆盖前者，所以最后填充的 AppData/custom 优先级最高。
+  const all = [
+    ...extraDirectories.flatMap(dir => [...read(dir), ...read(join(dir, 'custom')).map(entry => ({ ...entry, custom: true }))]),
+    ...read(directory),
+    ...read(join(directory, 'custom')).map(entry => ({ ...entry, custom: true })),
+  ]
+  const byId = new Map<string, { id: string; title: string; custom?: boolean }>()
+  for (const entry of all) byId.set(entry.id, { id: entry.id, title: entry.title, ...(entry.custom ? { custom: true } : {}) })
   return [...byId.values()]
 }
 

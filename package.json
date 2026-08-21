@@ -9,7 +9,8 @@
     "start": "node --experimental-strip-types src/server.ts",
     "test": "node --experimental-strip-types --test --test-concurrency=8 test/*.test.ts",
     "build:android-core": "node scripts/build-android-core.mjs",
-    "release": "node scripts/release.mjs"
+    "release": "node scripts/release.mjs",
+    "sync:stories": "node scripts/sync-stories-back.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "npm:cordis@4.0.0-rc.8",

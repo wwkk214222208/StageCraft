@@ -116,6 +116,8 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const publicRoot = options.publicRoot ?? join(root, 'public')
   const userDataRoot = options.userDataRoot
   const storiesRoot = userDataRoot ? join(userDataRoot, 'stories') : options.storiesRoot ?? join(root, 'stories')
+  // 剧本检索/加载的附加源：userDataRoot 模式下 bundle 默认剧本作兜底（AppData 是主源）
+  const bundleStoriesDirs: string[] = userDataRoot ? [join(root, 'stories')] : []
   const saveRoot = userDataRoot ? join(userDataRoot, 'save') : options.saveRoot ?? join(root, 'save')
   const dataDir = userDataRoot ? join(userDataRoot, 'data') : options.dataDir ?? join(root, 'data')
   // 提示词模板始终来自包内（只读发布资源）；用户自定义提示词（custom）落在 userDataRoot。
@@ -183,7 +185,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     // 避免导演模式在模拟网关下不可用；有真实配置时保持导演模式。
     const hasRealProvider = providerStore.list().some(config => Boolean(config.apiKey) && !/在这里填写|你的_API_Key|你的_Key/i.test(config.apiKey))
     const defaultMode = hasRealProvider ? 'director' as const : 'chat' as const
-    roomId = store.seed(loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'), { mode: defaultMode })
+    roomId = store.seed(loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria', bundleStoriesDirs), { mode: defaultMode })
     store.recoverInterruptedRooms()
   } catch (error) {
     try { store.close() } catch { /* preserve the startup error */ }
@@ -257,10 +259,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const container = new DefaultCorePluginContainer(core)
   const humanCore = new HttpHumanCorePlugin()
   const runtime = new RoomRuntime(store, undefined, core)
-  const creatorWorkbench = new CreatorWorkbenchService({ read: () => loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'), write: (next, previous) => { if (JSON.stringify(loadStoryPackage(storiesRoot, next.id)) !== JSON.stringify(previous)) throw new Error('Creator preview conflict: StoryPackage changed since preview.'); saveStoryPackage(storiesRoot, next) } }, roomId)
+  const creatorWorkbench = new CreatorWorkbenchService({ read: () => loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria', bundleStoriesDirs), write: (next, previous) => { if (JSON.stringify(loadStoryPackage(storiesRoot, next.id, bundleStoriesDirs)) !== JSON.stringify(previous)) throw new Error('Creator preview conflict: StoryPackage changed since preview.'); saveStoryPackage(storiesRoot, next) } }, roomId)
   const stagecraft = createStageCraftService(core, roomId, container, repository => core.attachStateRepository(repository))
   const nativeSessions = ctx.get('sessions', false) as any
-  const dshStorySessions = new DshStorySessionService(id => loadStoryPackage(storiesRoot, id), nativeSessions, () => ctx.get('apiProxy', false) as any, storiesRoot)
+  const dshStorySessions = new DshStorySessionService(id => loadStoryPackage(storiesRoot, id, bundleStoriesDirs), nativeSessions, () => ctx.get('apiProxy', false) as any, storiesRoot)
   const systemPrompt = ctx.get('systemPrompt', false) as { section?: (section: { name: string; order: number; text: string | ((context: { agent?: { id?: string } }) => string) }) => void } | undefined
   if (systemPrompt?.section) {
     try {
@@ -373,7 +375,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         rmSync(path)
         return json(response, 200, { ok: true, files: listSaves() })
       }
-      if (url.pathname === '/api/story/get' && request.method === 'GET') return json(response, 200, loadStoryPackage(storiesRoot, String(url.searchParams.get('id') ?? '')))
+      if (url.pathname === '/api/story/get' && request.method === 'GET') return json(response, 200, loadStoryPackage(storiesRoot, String(url.searchParams.get('id') ?? ''), bundleStoriesDirs))
       if (url.pathname === '/api/agent/capability' && request.method === 'GET') return json(response, 200, dshStorySessions.capability())
       if (url.pathname === '/api/agent/session' && request.method === 'GET') {
         return json(response, 200, await dshStorySessions.list(String(url.searchParams.get('owner') ?? ''), url.searchParams.get('storyId') ?? undefined))
@@ -420,7 +422,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         saveStoryPackage(storiesRoot, story)
         return json(response, 200, { ok: true })
       }
-      if (url.pathname === '/api/stories' && request.method === 'GET') return json(response, 200, listStoryPackages(storiesRoot))
+      if (url.pathname === '/api/stories' && request.method === 'GET') return json(response, 200, listStoryPackages(storiesRoot, bundleStoriesDirs))
       if (url.pathname === '/api/providers' && request.method === 'GET') return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults() })
       if (url.pathname === '/api/providers/save' && request.method === 'POST') {
         const body = await readJson(request)
@@ -489,7 +491,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       if (url.pathname === '/api/debug-events') return debugEvents(request, response)
       if (url.pathname === '/api/restart' && request.method === 'POST') {
         const body = await readJson(request)
-        const story = loadStoryPackage(storiesRoot, String(body.storyId))
+        const story = loadStoryPackage(storiesRoot, String(body.storyId ?? ''), bundleStoriesDirs)
         const mode = body.mode === 'chat' || body.mode === 'director' ? body.mode : undefined
         await dispatchRestart(story, { ...(mode ? { mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}) })
         return json(response, 200, { ok: true, roomId })
@@ -682,7 +684,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         if (room.phase !== 'awaiting-player-input') throw new Error('同步剧本需要在空闲时进行。')
         const role = room.roles.find(item => item.id === roleId)
         if (!role) throw new Error('角色不存在。')
-        const story = loadStoryPackage(storiesRoot, storyId)
+        const story = loadStoryPackage(storiesRoot, storyId, bundleStoriesDirs)
         const index = story.roles.findIndex(item => item.id === roleId)
         const updated = { id: role.id, name: role.name, portraitRef: role.portraitRef, currentState: role.currentState, presence: role.presence, memories: (role.memories ?? []).map(memory => ({ text: memory.text, occurredAt: memory.occurredAt })), selfModel: role.selfModel, ...(role.impressions && Object.keys(role.impressions).length ? { impressions: role.impressions } : index >= 0 && story.roles[index].impressions ? { impressions: story.roles[index].impressions } : {}), ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { modelOverride: role.modelOverride } : {}) }
         if (index >= 0) story.roles[index] = updated; else story.roles.push(updated)
@@ -694,7 +696,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         const storyId = String(body.storyId ?? '')
         const room = runtime.get(roomId)
         if (room.phase !== 'awaiting-player-input') throw new Error('同步剧本需要在空闲时进行。')
-        const story = loadStoryPackage(storiesRoot, storyId)
+        const story = loadStoryPackage(storiesRoot, storyId, bundleStoriesDirs)
         const storyImpressions = new Map(story.roles.map(item => [item.id, item.impressions]))
         story.roles = room.roles.map(role => ({
           id: role.id, name: role.name, portraitRef: role.portraitRef, currentState: role.currentState, presence: role.presence,
