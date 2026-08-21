@@ -597,7 +597,6 @@ function resetCreatorPreview() {
   $('#creator-agent-preview').innerHTML = '<strong>尚未连接 DSH 会话</strong><p>选择或新建会话后，可以直接让 DSH 协助编辑当前剧本。</p>'
   $('#creator-session-label').textContent = '尚未选择会话'
   $('#creator-session-close').disabled = true
-  $('#creator-session-chat').hidden = true
   $('#creator-session-messages').innerHTML = ''
   $('#creator-warnings').innerHTML = '<li class="hint">暂无警告</li>'
   $('#creator-field-diffs').innerHTML = '<p class="hint">暂无字段差异。导入或提取后显示真实结果。</p>'

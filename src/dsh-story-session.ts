@@ -143,7 +143,7 @@ export class DshStorySessionService {
       const event = entry.event ?? (entry as unknown as { type?: string; data?: Record<string, unknown> })
       const type = event.type ?? ''; const data = event.data ?? {}
       if (type !== 'user/message' && type !== 'assistant/message') continue
-      const content = data.content
+      const content = (data as { content?: unknown }).content ?? (data as { message?: { content?: unknown } }).message?.content
       const text = Array.isArray(content) ? content.map(item => typeof item === 'string' ? item : (item as Record<string, unknown>)?.type === 'text' ? String((item as Record<string, unknown>)?.text ?? '') : '').join('') : typeof content === 'string' ? content : ''
       if (!text) continue
       if (type === 'user/message') {
