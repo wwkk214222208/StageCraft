@@ -17,7 +17,7 @@ import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } 
 import { listStoryPackages, loadStoryPackage, saveStoryPackage, type StoryPackage } from './story-packages.ts'
 import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
-import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptsFilePath, type PromptTemplates } from './prompts.ts'
+import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptsFilePath, setUserPromptsDir, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
 import { CreatorWorkbenchService } from './creator-workbench-service.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
@@ -118,25 +118,26 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const storiesRoot = userDataRoot ? join(userDataRoot, 'stories') : options.storiesRoot ?? join(root, 'stories')
   const saveRoot = userDataRoot ? join(userDataRoot, 'save') : options.saveRoot ?? join(root, 'save')
   const dataDir = userDataRoot ? join(userDataRoot, 'data') : options.dataDir ?? join(root, 'data')
-  const promptsFilePath = userDataRoot ? join(userDataRoot, 'prompts', 'prompts.json') : options.promptsFilePath ?? join(root, 'prompts', 'prompts.json')
+  // 提示词模板始终来自包内（只读发布资源）；用户自定义提示词（custom）落在 userDataRoot。
+  const promptsFilePath = options.promptsFilePath ?? join(root, 'prompts', 'prompts.json')
   const host = options.host ?? process.env.HOST ?? '127.0.0.1'
   const port = options.port === undefined ? parsePort(process.env.PORT ?? '8787') : parsePort(options.port)
   const remoteAccess = new RemoteAccessService(typeof options.remoteAccess === 'boolean' ? { enabled: options.remoteAccess } : options.remoteAccess)
   if (!isLoopbackHost(host) && !remoteAccess.enabled) throw new Error('Non-loopback listening requires remote access to be explicitly enabled.')
   mkdirSync(saveRoot, { recursive: true })
   mkdirSync(dataDir, { recursive: true })
-  // userDataRoot 模式：把包内默认剧本/提示词/供应商模板拷贝到用户数据目录（首次启动）。
-  // 之后用户编辑、存档都落在 AppData，卸载插件不丢数据。
+  // userDataRoot 模式：把包内默认剧本/供应商模板拷贝到用户数据目录（首次启动）。
+  // 提示词模板留在包内只读；用户自定义提示词目录（custom）放 AppData。
   if (userDataRoot) {
     mkdirSync(storiesRoot, { recursive: true })
     mkdirSync(join(userDataRoot, 'prompts'), { recursive: true })
+    setUserPromptsDir(join(userDataRoot, 'prompts', 'custom'))
     const copyIfMissing = (from: string, to: string): void => {
       if (existsSync(to) || !existsSync(from)) return
       copyFileSync(from, to)
       console.log(`已初始化用户数据：${to}`)
     }
     for (const file of readdirSync(join(root, 'stories'))) copyIfMissing(join(root, 'stories', file), join(storiesRoot, file))
-    copyIfMissing(join(root, 'prompts', 'prompts.json'), promptsFilePath)
     copyIfMissing(join(root, 'providers.example.json'), join(dataDir, 'providers.example.json'))
   }
 
