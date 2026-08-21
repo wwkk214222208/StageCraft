@@ -90,7 +90,22 @@ export class WorkerRpcServer {
       this.eventHistory.push(diagnosticEvent)
       while (this.eventHistory.length > 256) this.eventHistory.shift()
       this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.event', sequence: ++this.sequence, revision: event.revision, event: diagnosticEvent })
-      this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.view', sequence: ++this.sequence, revision: composition.core.getView().revision, view: redactDebugValue(composition.core.getView()) as unknown as import('../core/protocol.ts').CoreView })
+      // core.view 流只推有界摘要（revision + 状态概要），避免长剧情/回滚后完整 view 超过 1MB 帧上限；
+      // 完整视图按需走 core.view.get RPC。
+      const view = composition.core.getView()
+      const summary: import('../core/protocol.ts').CoreView = {
+        protocolVersion: view.protocolVersion,
+        revision: view.revision,
+        state: view.state,
+        workflows: [],
+        interactions: view.interactions?.slice(0, DEBUG_SANDBOX_LIMITS.maxArrayLength),
+        actions: view.actions?.slice(0, DEBUG_SANDBOX_LIMITS.maxArrayLength),
+        availableCommands: view.availableCommands,
+        recentEvents: [],
+        ...(view.viewContributions ? { viewContributions: view.viewContributions.slice(0, DEBUG_SANDBOX_LIMITS.maxArrayLength) } : {}),
+        ...(view.ui ? { ui: view.ui } : {}),
+      }
+      this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'core.view', sequence: ++this.sequence, revision: view.revision, view: redactDebugValue(summary) as unknown as import('../core/protocol.ts').CoreView })
     })
   }
 
@@ -228,7 +243,18 @@ export class WorkerRpcServer {
   private setStatus(status: WorkerStatus, reason?: string): void { this.status = status; this.emit({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream', stream: 'worker.status', sequence: ++this.sequence, status: this.snapshotWith(status, reason) }) }
   private snapshotWith(status: WorkerStatus, reason?: string): WorkerStatusSnapshot { return { status, generation: this.generation, ...(this.pid ? { pid: this.pid } : {}), ...(reason ? { reason } : {}), changedAt: this.now() } }
   private emit(envelope: DebugStreamEnvelope): void {
-    assertBoundedJson(envelope, 'stream')
+    // 流帧有界：超限（长剧情/回滚后的完整 core.view）时降级为极简摘要帧，不中断流。
+    try {
+      assertBoundedJson(envelope, 'stream')
+    } catch {
+      const minimal = envelope.stream === 'core.view'
+        ? { protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream' as const, stream: 'core.view' as const, sequence: envelope.sequence, revision: envelope.revision ?? 0, view: { protocolVersion: '1.0', revision: envelope.revision ?? 0, state: { overflow: true }, workflows: [], interactions: [], actions: [], availableCommands: [], recentEvents: [] } }
+        : envelope.stream === 'core.event'
+          ? { protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'stream' as const, stream: 'core.event' as const, sequence: envelope.sequence, revision: envelope.revision ?? 0, event: { type: 'state.changed' as const, revision: envelope.revision ?? 0, transition: { before: {}, after: {}, changes: [] } } }
+          : null
+      if (minimal) { try { this.write(minimal); return } catch { return } }
+      return
+    }
     if (this.subscribers.has(envelope.stream)) this.write(envelope)
     for (const listener of this.subscribers.get(envelope.stream) ?? []) listener(envelope)
   }
