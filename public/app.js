@@ -277,8 +277,9 @@ function render(next) {
   $('#progress').innerHTML = progressText
   $('#recovery-actions').hidden = !(room.phase === 'drafting' || room.phase === 'role-speaking' || (room.phase === 'collecting-decisions' && decisionsDone))
   $('#retry-director').hidden = room.phase !== 'drafting'
-  // 群聊模式发言失败时，在「取消回合」旁显示「重试发言」
-  $('#retry-speak').hidden = !(isChat && room.phase === 'role-speaking' && room.lastError)
+  // 群聊模式发言失败时，在「取消回合」旁显示「重试发言」；
+  // 中断/恢复后 phase 可能已回 awaiting-player-input，只要存在失败的决策就保留重试入口
+  $('#retry-speak').hidden = !(isChat && room.decisions.some(decision => decision.status === 'unavailable'))
   let consultHtml = (room.consultations ?? []).map(message => `<p class="consultation ${message.role}"><b>${message.role === 'player' ? room.playerCharacter.name : '导演'}</b>${message.thinking ? thinkingBlockHtml('导演思维链', message.thinking) : ''}${tokenNoteHtml('consult', message.usage)}${escape(message.text)}</p>`).join('')
   if (room.draft?.openQuestions?.length) consultHtml += `<p class="consultation director director-extra"><b>导演</b>❓ 待确认：${room.draft.openQuestions.map(escape).join('；')}</p>`
   $('#consultations').innerHTML = consultHtml

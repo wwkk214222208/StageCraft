@@ -179,7 +179,9 @@ export class StageCraftChatService implements StageCraftChatPort {
     if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
     const failed = room.decisions.find(decision => decision.status === 'unavailable')
     if (!failed) throw new Error('没有可重试的发言。')
-    this.store.cancelTurn(roomId)
+    // 恢复/中断后 phase 可能已回到 awaiting-player-input（cancelTurn 无活动回合可取消），
+    // 此时直接以失败角色重发即可；有活动回合（role-speaking）时先取消再重发。
+    try { this.store.cancelTurn(roomId) } catch { /* phase 非可取消状态：直接重试 */ }
     await this.speak(roomId, failed.roleId)
   }
 
