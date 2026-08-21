@@ -1,6 +1,6 @@
 # StageCraft
 
-> 本文为项目根 `README.md`，面向**开发者**与**接手本仓库的 AI 助手**。玩家向使用说明见 [`玩家看我.md`](./玩家看我.md)。  
+> 本文为项目根 `README.md`，面向**开发者**。玩家向使用说明见 [`玩家看我.md`](./玩家看我.md)。  
 
 ## 文档导航
 
@@ -140,9 +140,9 @@ pnpm test           # node --experimental-strip-types --test --test-concurrency=
 
 > ⚠️ 安卓端**暂时不推荐使用**：当前存在较严重的 UI 布局问题，尚未经充分实测。玩家向说明见 `docs/玩家看我.md` 的「怎么开始」。
 
-> 注意：`custom/docs/` 目录**不进仓库**（已 ignore），里面是私有设计 / 交接 / 审计文档，仅供内部与 AI 助手参考，请勿视为发布内容。
+> 注意：`custom/docs/` 目录**不进仓库**（已 ignore），里面是私有设计 / 交接 / 审计文档，请勿视为发布内容。
 
-## 给接手 AI 助手的速览
+## 开发速览
 
 - **状态权威在 Core**：任何要改状态的动作都走 Command → Core → StateEvent → 事务提交。不要绕过 Core 直接写 Store / 库。
 - **扩展点**：新玩法通过 `CoreSolutionHost` 注册方案插件；UI 扩展走 `core/extensions.ts` + `core/ui.ts` + `renderer-host.ts`；模型接入走 LLM 路由插件。
@@ -150,6 +150,6 @@ pnpm test           # node --experimental-strip-types --test --test-concurrency=
 - **不要做的事**：Core 不得依赖 Node 文件系统 / Android API / DOM / 平台密钥；Workflow Definition 不允许被 LLM 或 Author Pack 直接修改（未来走版本化 `WorkflowPatchProposal` 且需授权校验）。
 - **验证基准**：Cordis 锁定 `4.0.0-rc.8`，跟随 dsh 平台版本（`dsh-rp/verify.mjs` 校验 vendor 版本）。
 
-## 当前限制（来自架构文档）
+## 当前限制
 
 Core 通用内核、插件容器、状态仓储、Workflow Registry / Executor、HTTP 人机插件、LLM 路由边界已进入启动链；StageCraft 的 Store-backed domain services 仍是当前业务状态变化的执行者，并通过 Core 投影与事务仓储保持一致。Workflow Executor 当前负责固定定义的注册 / 投影 / 合法转换，**不是通用自动业务编排器**。未来仍需在不破坏边界的前提下继续收紧旧外部接口与迁移策略。
