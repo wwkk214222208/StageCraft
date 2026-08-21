@@ -9,7 +9,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -52,8 +52,21 @@ function copyTree(src, dest, base = '') {
   }
 }
 
-function ensureStartScripts() {
-  // 打包一个通用的独立启动脚本（Windows/Linux 都可用，避免引用仓库里的 WSL 专用脚本）
+/** 定位 npm-cli.js：优先本地 node_modules，其次 npm.cmd/npm 同目录，最后 PATH 解析 */
+function resolveNpmCli() {
+  const candidates = [
+    join(repoRoot, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ]
+  for (const candidate of candidates) if (existsSync(candidate)) return candidate
+  const which = execFileSync(process.platform === 'win32' ? 'where' : 'which', [process.platform === 'win32' ? 'npm.cmd' : 'npm'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0]
+  if (which) {
+    const cli = join(dirname(which), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    if (existsSync(cli)) return cli
+  }
+  return 'npm'
+}
+
+function ensureStartScripts() {  // 打包一个通用的独立启动脚本（Windows/Linux 都可用，避免引用仓库里的 WSL 专用脚本）
   const bat = `@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\nset "PORT=8787"\r\necho StageCraft starting on http://127.0.0.1:%PORT% ...\r\nnode --experimental-strip-types src/server.ts\r\npause\r\n`
   const sh = `#!/usr/bin/env bash\ncd "$(dirname "$0")"\nexport PORT="\${PORT:-8787}"\necho "StageCraft starting on http://127.0.0.1:$PORT ..."\nexec node --experimental-strip-types src/server.ts\n`
   writeFileSync(join(stageDir, 'start.bat'), bat, 'utf8')
@@ -84,11 +97,11 @@ async function main() {
   makeZip()
   console.log(`[release] standalone zip: ${join(releaseDir, process.platform === 'win32' ? `stagecraft-${version}.zip` : `stagecraft-${version}.tar.gz`)}`)
 
-  // 2. dsh-rp tgz（npm pack）
+  // 2. dsh-rp tgz（npm pack）—— 定位 npm-cli.js 直接以 node 运行，避免 shell 拼接
   console.log(`[release] packing dsh-rp tgz...`)
   rmSync(join(repoRoot, 'dsh-rp', 'release'), { recursive: true, force: true })
-  const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-  const packOutput = execFileSync(npmBin, ['pack', '--pack-destination', releaseDir], { cwd: join(repoRoot, 'dsh-rp'), encoding: 'utf8', shell: process.platform === 'win32' })
+  const npmCli = resolveNpmCli()
+  const packOutput = execFileSync(process.execPath, [npmCli, 'pack', '--pack-destination', releaseDir], { cwd: join(repoRoot, 'dsh-rp'), encoding: 'utf8' })
   const tgzName = packOutput.trim().split(/\r?\n/).pop().trim()
   console.log(`[release] dsh-rp tgz: ${join(releaseDir, tgzName)}`)
 
