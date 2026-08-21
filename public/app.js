@@ -866,14 +866,14 @@ function syncStoryExpandedMemory(role) {
   expandedStoryMemoryIndex = null
 }
 function renderStoryInitialMemories(role) {
-  let panel = $('#story-initial-memories')
-  if (!panel || panel === missingElement) { panel = document.createElement('section'); panel.id = 'story-initial-memories'; $('#inspector-memory-structured').append(panel) }
+  const list = $('#inspector-memory-structured')
+  if (!list || list === missingElement) return
   const memories = role.memories ?? []
-  panel.innerHTML = `${memories.length ? `<div class="memory-list-rows">${memories.map((memory, index) => index === expandedStoryMemoryIndex
+  list.innerHTML = `${memories.length ? `<div class="memory-list-rows">${memories.map((memory, index) => index === expandedStoryMemoryIndex
     ? `<article class="memory-list-row memory-list-row-expanded" data-story-memory-row="${index}" data-story-memory-expanded="${index}"><button type="button" class="memory-delete memory-expanded-delete" data-story-memory-delete="${index}" title="删除记忆">×</button><div class="memory-expanded-table"><label>时间<input data-story-memory-time value="${escape(memory.occurredAt ?? '过去')}"></label><label>记忆<textarea data-story-memory-text>${escape(memory.text ?? '')}</textarea></label></div></article>`
     : `<article class="memory-list-row story-memory-record" draggable="true" data-story-memory-row="${index}"><span class="memory-drag-handle" title="拖动调整位置">⠿</span><button type="button" class="memory-summary" data-story-memory-expand="${index}"><time>${escape(memory.occurredAt ?? '过去')}</time><span title="${escape(memory.text ?? '')}">${escape(memory.text ?? '')}</span></button><button type="button" class="memory-delete" data-story-memory-delete="${index}" title="删除记忆">×</button></article>`
-  ).join('')}</div>` : '<p class="hint">暂无初始记忆</p>'}<button type="button" class="small-btn" id="story-memory-add">＋ 添加初始记忆</button>`
-  panel.querySelectorAll('[data-story-memory-row]').forEach(row => {
+  ).join('')}</div>` : '<p class="hint">暂无记忆</p>'}<button type="button" class="small-btn" id="story-memory-add">＋ 添加记忆</button>`
+  list.querySelectorAll('[data-story-memory-row]').forEach(row => {
     row.addEventListener('dragstart', event => { event.dataTransfer.setData('text/plain', row.dataset.storyMemoryRow); row.classList.add('dragging') })
     row.addEventListener('dragend', () => row.classList.remove('dragging'))
     row.addEventListener('dragover', event => { event.preventDefault(); row.classList.add('drag-over') })

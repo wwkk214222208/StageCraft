@@ -26,8 +26,23 @@ function normalizeRoleGoals(role: Role): Role {
   return { ...role, selfModel, ...(goals.length ? { goals } : {}) }
 }
 
+/** 旧格式兼容：memoryTimeline（时间桶）→ memories（列表）。新格式（memories）原样通过。 */
+function normalizeRoleMemories(role: Role): Role {
+  const legacy = role as Role & { memoryTimeline?: Record<string, string[]> }
+  if (Array.isArray(role.memories)) {
+    const { memoryTimeline: _legacy, ...clean } = legacy
+    return clean
+  }
+  const timeline = legacy.memoryTimeline
+  if (!timeline || typeof timeline !== 'object') return role
+  const memories = Object.entries(timeline).flatMap(([occurredAt, items]) =>
+    (Array.isArray(items) ? items : []).filter(text => typeof text === 'string' && text.trim()).map(text => ({ text: String(text).trim(), occurredAt })))
+  const { memoryTimeline: _legacyTimeline, ...clean } = legacy
+  return { ...clean, memories }
+}
+
 function normalizeStoryRoles(story: StoryPackage): StoryPackage {
-  story.roles = (story.roles ?? []).map(normalizeRoleGoals)
+  story.roles = (story.roles ?? []).map(normalizeRoleGoals).map(normalizeRoleMemories)
   return story
 }
 
