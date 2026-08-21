@@ -46,12 +46,13 @@ function normalizeStoryRoles(story: StoryPackage): StoryPackage {
   return story
 }
 
-/** 优先主目录，其次 stories/custom/，再回退附加目录（bundle 默认剧本）；用户自建剧本（custom）次之 */
+/** 查找顺序：主目录 → custom/（用户自建）→ default/（默认剧本）→ 附加目录（bundle 镜像） */
 function storyPath(directory: string, id: string, extraDirectories: string[] = []): string {
   const candidates = [
     join(directory, `${id}.json`),
     join(directory, 'custom', `${id}.json`),
-    ...extraDirectories.flatMap(dir => [join(dir, `${id}.json`), join(dir, 'custom', `${id}.json`)]),
+    join(directory, 'default', `${id}.json`),
+    ...extraDirectories.flatMap(dir => [join(dir, `${id}.json`), join(dir, 'custom', `${id}.json`), join(dir, 'default', `${id}.json`)]),
   ]
   for (const candidate of candidates) if (existsSync(candidate)) return candidate
   return candidates[0]
@@ -81,7 +82,7 @@ export function resolveStoryAssetFile(directory: string, urlPath: string, extraD
   const storyId = decodeURIComponent(match[1])
   const file = match[2]
   for (const base of [directory, ...extraDirectories]) {
-    for (const sub of ['', 'custom']) {
+    for (const sub of ['', 'custom', 'default']) {
       const candidate = join(base, sub, `${storyId}.assets`, file)
       if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
     }
@@ -160,12 +161,13 @@ export function listStoryPackages(directory: string, extraDirectories: string[] 
       })
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
   }
-  // 优先级从低到高：bundle 主目录 → bundle custom → 主目录(AppData) → 主目录 custom(AppData custom)。
+  // 优先级从低到高：bundle 主目录 → bundle custom → bundle default → 主目录(AppData) → 主目录 custom → 主目录 default。
   // Map 后者覆盖前者，所以最后填充的 AppData/custom 优先级最高。
   const all = [
-    ...extraDirectories.flatMap(dir => [...read(dir), ...read(join(dir, 'custom')).map(entry => ({ ...entry, custom: true }))]),
+    ...extraDirectories.flatMap(dir => [...read(dir), ...read(join(dir, 'custom')).map(entry => ({ ...entry, custom: true })), ...read(join(dir, 'default'))]),
     ...read(directory),
     ...read(join(directory, 'custom')).map(entry => ({ ...entry, custom: true })),
+    ...read(join(directory, 'default')),
   ]
   const byId = new Map<string, { id: string; title: string; custom?: boolean }>()
   for (const entry of all) byId.set(entry.id, { id: entry.id, title: entry.title, ...(entry.custom ? { custom: true } : {}) })

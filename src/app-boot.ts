@@ -145,11 +145,17 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       copyFileSync(from, to)
       console.log(`已初始化用户数据：${to}`)
     }
+    // 默认剧本目录（stories/default/，含示范资产目录）：整体镜像到用户数据，之后由用户数据优先
+    const bundleDefaultStories = join(root, 'stories', 'default')
+    if (existsSync(bundleDefaultStories) && !existsSync(join(storiesRoot, 'default'))) {
+      cpSync(bundleDefaultStories, join(storiesRoot, 'default'), { recursive: true })
+      console.log(`已初始化用户数据：${join(storiesRoot, 'default')}`)
+    }
     for (const entry of readdirSync(join(root, 'stories'), { withFileTypes: true })) {
+      if (entry.name === 'default') continue
       const from = join(root, 'stories', entry.name)
       const to = join(storiesRoot, entry.name)
       if (entry.isDirectory()) {
-        // 故事包资产目录（自包含肖像）：目录整体拷贝
         if (!existsSync(to)) { cpSync(from, to, { recursive: true }); console.log(`已初始化用户数据：${to}`) }
       } else {
         copyIfMissing(from, to)

@@ -43,10 +43,8 @@ for (const file of ['default.svg', 'rowan.svg', 'seraphina.png', 'vex.svg', 'sta
 
 mkdirSync(join(distRoot, 'stories'), { recursive: true })
 mkdirSync(join(distRoot, 'prompts'), { recursive: true })
-cpSync(join(repositoryRoot, 'stories', 'eldoria.json'), join(distRoot, 'stories', 'eldoria.json'))
-// 默认剧本的示范资产目录（自包含引用 /story-assets/eldoria/... 随包分发）
-const eldoriaAssets = join(repositoryRoot, 'stories', 'eldoria.assets')
-if (existsSync(eldoriaAssets)) cpSync(eldoriaAssets, join(distRoot, 'stories', 'eldoria.assets'), { recursive: true })
+// 默认剧本与示范资产目录（stories/default/，自包含 /story-assets/eldoria/... 随包分发）
+cpSync(join(repositoryRoot, 'stories', 'default'), join(distRoot, 'stories', 'default'), { recursive: true })
 cpSync(join(repositoryRoot, 'prompts', 'prompts.json'), join(distRoot, 'prompts', 'prompts.json'))
 cpSync(join(repositoryRoot, 'providers.example.json'), join(distRoot, 'providers.example.json'))
 cpSync(join(repositoryRoot, 'LICENSE'), join(distRoot, 'LICENSE'))
