@@ -17,7 +17,7 @@ import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } 
 import { listStoryPackages, loadStoryPackage, saveStoryPackage, type StoryPackage } from './story-packages.ts'
 import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
-import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, type PromptTemplates } from './prompts.ts'
+import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptsFilePath, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
 import { CreatorWorkbenchService } from './creator-workbench-service.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
@@ -151,14 +151,8 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     console.log('检测到旧数据库，已迁移到 stagecraft.sqlite。')
   }
   const store = new NodeSqliteRepository(dbPath)
-  let roomId: string
-  try {
-    roomId = store.seed(loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'))
-    store.recoverInterruptedRooms()
-  } catch (error) {
-    try { store.close() } catch { /* preserve the startup error */ }
-    throw error
-  }
+  // 提示词文件路径（AppData 等）注入模块级单例，ModelGateway 装配前必须设置。
+  setPromptsFilePath(promptsFilePath)
 
   const debugListeners = new Set<(text: string) => void>()
   const debugLog = join(dataDir, 'server.log')
@@ -181,6 +175,19 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     providerStore = new ProviderConfigStore(providerFilePath)
     envRoute = routeFromEnvironment()
     if (providerStore.list().length === 0 && envRoute.apiKey) providerStore.save({ id: 'environment', name: '环境变量', baseUrl: envRoute.baseUrl, apiKey: envRoute.apiKey, models: [envRoute.model], selectedModel: envRoute.model, responseFormat: envRoute.responseFormat })
+  } catch (error) {
+    try { store.close() } catch { /* preserve the startup error */ }
+    throw error
+  }
+
+  let roomId: string
+  try {
+    // 无有效模型配置（无 provider 或全部缺 apiKey）时默认群聊模式（chat，无导演），
+    // 避免导演模式在模拟网关下不可用；有真实配置时保持导演模式。
+    const hasRealProvider = providerStore.list().some(config => Boolean(config.apiKey) && !/在这里填写|你的_API_Key|你的_Key/i.test(config.apiKey))
+    const defaultMode = hasRealProvider ? 'director' as const : 'chat' as const
+    roomId = store.seed(loadStoryPackage(storiesRoot, options.storyId ?? 'eldoria'), { mode: defaultMode })
+    store.recoverInterruptedRooms()
   } catch (error) {
     try { store.close() } catch { /* preserve the startup error */ }
     throw error

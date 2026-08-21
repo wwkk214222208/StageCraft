@@ -18,8 +18,13 @@ export interface PromptIdeology {
 
 const defaultPath = join(fileURLToPath(new URL('..', import.meta.url)), 'prompts', 'prompts.json')
 
+/** 运行时提示词文件路径（AppData 等）；由 startTavern 装配时设置，未设置时回退默认。 */
+let activePromptsPath: string | undefined
+export function setPromptsFilePath(filePath: string): void { activePromptsPath = filePath }
+export function getPromptsFilePath(): string { return activePromptsPath ?? defaultPath }
+
 /** 私有理念文件：<prompts 目录>/custom/ideology.json（默认）；若 active.json 指定了其他文件则用该文件 */
-export function loadIdeology(filePath = defaultPath): PromptIdeology {
+export function loadIdeology(filePath = getPromptsFilePath()): PromptIdeology {
   const dir = join(dirname(filePath), 'custom')
   const active = join(dir, 'active.json')
   if (existsSync(active)) {
@@ -34,7 +39,7 @@ export function loadIdeology(filePath = defaultPath): PromptIdeology {
 }
 
 /** 激活指定提示词文件：写 active.json；此后 loadPrompts 注入该文件的理念 */
-export function setActiveIdeologyFile(name: string, filePath = defaultPath): void {
+export function setActiveIdeologyFile(name: string, filePath = getPromptsFilePath()): void {
   const dir = join(dirname(filePath), 'custom')
   mkdirSync(dir, { recursive: true })
   const safe = name.endsWith('.json') ? name : `${name}.json`
@@ -126,7 +131,7 @@ function applyIdeology(templates: PromptTemplates, ideology: PromptIdeology): vo
 }
 
 /** 加载提示词模板；可用环境变量 PROMPTS_FILE 指向自定义文件；自动合并私有创作理念 */
-export function loadPrompts(filePath = process.env.PROMPTS_FILE ?? defaultPath): PromptTemplates {
+export function loadPrompts(filePath = process.env.PROMPTS_FILE ?? getPromptsFilePath()): PromptTemplates {
   if (!existsSync(filePath)) throw new Error(`Prompts file not found: ${filePath}`)
   const templates = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<PromptTemplates>
   const defaults = JSON.parse(readFileSync(defaultPath, 'utf8')) as PromptTemplates

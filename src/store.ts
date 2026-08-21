@@ -483,14 +483,14 @@ export class Store {
     return Number(result.changes)
   }
 
-  seed(story?: StoryPackage): string {
+  seed(story?: StoryPackage, options: { mode?: import('./types.ts').RoomMode } = {}): string {
     const existing = this.db.prepare('SELECT id, story_id FROM rooms LIMIT 1').get() as { id: string; story_id: string | null } | undefined
     if (story) {
       const match = this.db.prepare('SELECT id FROM rooms WHERE story_id = ? ORDER BY rowid LIMIT 1').get(story.id) as { id: string } | undefined
       if (match) return match.id
       const isPlaceholderFestival = existing?.id === 'festival-room' && (existing.story_id === 'royal-festival' || existing.story_id === null)
       if (existing && !isPlaceholderFestival) return existing.id
-      return this.createRoomFromPackage(story, `${story.id}-room`)
+      return this.createRoomFromPackage(story, `${story.id}-room`, options)
     }
     if (existing) return existing.id
     return this.createRoomFromPackage({
@@ -500,7 +500,7 @@ export class Store {
         { id: 'mira', name: 'Mira', portraitRef: '/assets/mira.svg', currentState: '位于皇家祭典主厅，在场。带着一箱啤酒，神态轻松，正观察人群。', presence: 'present', memoryTimeline: { '过去': ['Aria 今晚比平时紧张。'] }, selfModel: '直率、好奇，擅长用玩笑缓和紧张气氛。' },
         { id: 'noel', name: 'Noel', portraitRef: '/assets/noel.svg', currentState: '不在祭典主厅，暂时不可见。', presence: 'absent', memoryTimeline: { '过去': ['尚未参与本轮。'] }, selfModel: '谨慎、寡言，优先观察。' },
       ],
-    }, 'festival-room')
+    }, 'festival-room', options)
   }
 
   createRoomFromPackage(story: StoryPackage, roomId = `${story.id}-${Date.now()}`, options: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean } = {}): string {
