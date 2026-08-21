@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import type { LoreEntry, PlayerCharacter, Role } from './types.ts'
 
 export interface StoryPackage {
@@ -55,6 +55,38 @@ function storyPath(directory: string, id: string, extraDirectories: string[] = [
   ]
   for (const candidate of candidates) if (existsSync(candidate)) return candidate
   return candidates[0]
+}
+
+/** 故事包资产目录：<故事包所在目录>/<storyId>.assets/。肖像等资源随故事包存放，可整体分发。 */
+export function storyAssetsDir(directory: string, id: string, extraDirectories: string[] = []): string {
+  const story = storyPath(directory, id, extraDirectories)
+  return join(dirname(story), `${id}.assets`)
+}
+
+/** 解析故事包内相对肖像引用（`assets/xxx.png`）为可访问的全局 URL（`/story-assets/<id>/xxx.png`） */
+export function storyPortraitUrl(id: string, portraitRef: string): string {
+  const cleaned = portraitRef.replace(/^\.?\//, '')
+  return `/story-assets/${encodeURIComponent(id)}/${cleaned.replace(/^assets\//, '')}`
+}
+
+/** 把全局 URL 转回故事包资产目录下的相对文件路径（`assets/xxx.png`），供落盘存储 */
+export function storyPortraitFileName(portraitRef: string): string {
+  return `assets/${portraitRef.replace(/^\/story-assets\/[^/]+\//, '').replace(/^assets\//, '')}`
+}
+
+/** 静态 URL → 故事包资产目录内文件（返回绝对路径；不存在返回 undefined） */
+export function resolveStoryAssetFile(directory: string, urlPath: string, extraDirectories: string[] = []): string | undefined {
+  const match = urlPath.match(/^\/story-assets\/([^/]+)\/(.+)$/)
+  if (!match) return undefined
+  const storyId = decodeURIComponent(match[1])
+  const file = match[2]
+  for (const base of [directory, ...extraDirectories]) {
+    for (const sub of ['', 'custom']) {
+      const candidate = join(base, sub, `${storyId}.assets`, file)
+      if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
+    }
+  }
+  return undefined
 }
 
 export function loadStoryPackage(directory: string, id: string, extraDirectories: string[] = []): StoryPackage {

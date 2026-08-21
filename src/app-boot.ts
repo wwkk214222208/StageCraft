@@ -14,7 +14,7 @@ import { Store } from './store.ts'
 import { NodeSqliteRepository } from './platform/node-sqlite-repository.ts'
 import { RoomRuntime } from './room-runtime.ts'
 import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } from './model-gateway.ts'
-import { listStoryPackages, loadStoryPackage, saveStoryPackage, type StoryPackage } from './story-packages.ts'
+import { listStoryPackages, loadStoryPackage, resolveStoryAssetFile, saveStoryPackage, storyAssetsDir, storyPortraitUrl, type StoryPackage } from './story-packages.ts'
 import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
 import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptsFilePath, setUserPromptsDir, type PromptTemplates } from './prompts.ts'
@@ -689,10 +689,11 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         const dataUrl = typeof body.dataUrl === 'string' ? body.dataUrl : ''
         const url = typeof body.url === 'string' ? body.url : ''
         if (!dataUrl && !url) throw new Error('缺少头像数据（dataUrl 或 url）。')
-        const portraitRef = await saveAvatar(roleId, dataUrl || '', url || '')
-        // 剧本编辑模式（skipDispatch）：只落盘文件并返回路径，由前端写入剧本角色；
+        const storyId = typeof body.storyId === 'string' && body.storyId.trim() ? body.storyId.trim() : undefined
+        const portraitRef = await saveAvatar(roleId, dataUrl || '', url || '', storyId)
+        // 剧本编辑模式（storyId）：只落盘文件并返回路径，由前端写入剧本角色；
         // 运行时模式：更新运行时角色的 portraitRef。
-        if (body.skipDispatch !== true) await dispatchManagement('set-role-avatar', { roleId, portraitRef })
+        if (body.skipDispatch !== true && !storyId) await dispatchManagement('set-role-avatar', { roleId, portraitRef })
         return json(response, 200, { ok: true, portraitRef })
       }
       if (url.pathname === '/api/scene' && request.method === 'POST') {
@@ -774,7 +775,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         await core.dispatch({ id: `legacy-cancel-turn-${Date.now()}`, actor: 'player', type: 'cancel', payload: { roomId, scope: runtime.get(roomId).mode, action: 'cancel-turn' } })
         return json(response, 200, { ok: true })
       }
-      if (url.pathname.startsWith('/assets/')) return asset(response, url.pathname)
+      if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/story-assets/')) return asset(response, url.pathname)
       if (url.pathname === '/' || url.pathname === '/index.html') return staticFile(response, 'index.html', 'text/html; charset=utf-8')
       if (url.pathname === '/app.js') return staticFile(response, 'app.js', 'text/javascript; charset=utf-8')
       if (url.pathname === '/core-client.js') return staticFile(response, 'core-client.js', 'text/javascript; charset=utf-8')
@@ -816,6 +817,18 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
 
   function asset(response: ServerResponse, path: string): void {
     const name = path.endsWith('aria.svg') ? 'aria.svg' : path.endsWith('mira.svg') ? 'mira.svg' : 'noel.svg'
+    // 故事包自包含资产（/story-assets/<id>/<file>）：从故事包资产目录读（AppData 优先，bundle 兜底）
+    if (path.startsWith('/story-assets/')) {
+      const filePath = resolveStoryAssetFile(storiesRoot, path, bundleStoriesDirs)
+      if (filePath) {
+        const ext = extname(filePath).toLowerCase()
+        const type = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/svg+xml'
+        response.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600' })
+        createReadStream(filePath).pipe(response)
+        return
+      }
+      response.writeHead(404); response.end(); return
+    }
     // 先查用户可写目录（上传的头像，AppData），再查 bundle public（默认资源）
     for (const base of [userPublicRoot, publicRoot]) {
       if (!base) continue
@@ -835,8 +848,9 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
 
   const MAX_AVATAR_BYTES = 8 * 1024 * 1024 // 8MB 上限
 
-  /** 保存角色头像：dataUrl（文件上传）或 url（远程导入），返回可访问的 portraitRef */
-  async function saveAvatar(roleId: string, dataUrl: string, url: string): Promise<string> {
+  /** 保存角色头像：dataUrl（文件上传）或 url（远程导入），返回可访问的 portraitRef。
+   *  storyId 提供时写入该故事包的资产目录（自包含，可随作品分发），否则写入用户头像目录。 */
+  async function saveAvatar(roleId: string, dataUrl: string, url: string, storyId?: string): Promise<string> {
     let buffer: Buffer
     let ext: string
     if (dataUrl) {
@@ -864,7 +878,14 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     if (buffer.length > MAX_AVATAR_BYTES) throw new Error('头像超过 8MB 上限。')
     const safeId = roleId.replace(/[^a-zA-Z0-9_-]/g, '_')
     const fileName = `avatar-${safeId}-${Date.now()}${ext}`
-    // 头像写入用户可写目录（AppData，构建不丢）；独立模式回退 publicRoot/assets。
+    // 剧本编辑模式（storyId）：写入故事包资产目录（自包含，随作品分发），返回 /story-assets/<id>/<file>
+    if (storyId) {
+      const assetsDir = storyAssetsDir(storiesRoot, storyId, bundleStoriesDirs)
+      mkdirSync(assetsDir, { recursive: true })
+      writeFileSync(join(assetsDir, fileName), buffer)
+      return `/story-assets/${encodeURIComponent(storyId)}/${fileName}`
+    }
+    // 运行时角色头像：写入用户可写目录（AppData，构建不丢）；独立模式回退 publicRoot/assets。
     const targetAssets = userPublicRoot ? join(userPublicRoot, 'assets') : join(publicRoot, 'assets')
     mkdirSync(targetAssets, { recursive: true })
     writeFileSync(join(targetAssets, fileName), buffer)

@@ -1154,12 +1154,13 @@ $('#inspector-avatar-file').onchange = event => {
   reader.onload = async () => {
     const roleId = $('#inspector-role-id').value
     try {
-      const skipDispatch = storyEditRoleIndex !== null
-      const ok = await api('/api/roles/avatar', { roleId, dataUrl: String(reader.result), ...(skipDispatch ? { skipDispatch: true } : {}) })
+      const editing = storyEditRoleIndex !== null
+      const storyId = editing ? ($('#story-edit-id').textContent || '').trim() : ''
+      const ok = await api('/api/roles/avatar', { roleId, dataUrl: String(reader.result), ...(editing ? { skipDispatch: true, ...(storyId ? { storyId } : {}) } : {}) })
       if (ok) {
         $('#inspector-avatar-preview').src = ok.portraitRef ?? $('#inspector-avatar-preview').src
-        // 剧本编辑模式：头像写入正在编辑的剧本角色，保存时随剧本包落盘
-        if (storyEditRoleIndex !== null && storyEditRoles[storyEditRoleIndex]) storyEditRoles[storyEditRoleIndex].portraitRef = ok.portraitRef
+        // 剧本编辑模式：头像写入正在编辑的剧本角色（自包含资产，保存时随剧本包分发）
+        if (editing && storyEditRoles[storyEditRoleIndex]) storyEditRoles[storyEditRoleIndex].portraitRef = ok.portraitRef
         refreshRoom()
       }
     } finally { event.target.value = '' }
@@ -1171,11 +1172,12 @@ $('#inspector-avatar-url').onclick = async () => {
   if (!url || !url.trim()) return
   const roleId = $('#inspector-role-id').value
   try {
-    const skipDispatch = storyEditRoleIndex !== null
-    const ok = await api('/api/roles/avatar', { roleId, url: url.trim(), ...(skipDispatch ? { skipDispatch: true } : {}) })
+    const editing = storyEditRoleIndex !== null
+    const storyId = editing ? ($('#story-edit-id').textContent || '').trim() : ''
+    const ok = await api('/api/roles/avatar', { roleId, url: url.trim(), ...(editing ? { skipDispatch: true, ...(storyId ? { storyId } : {}) } : {}) })
     if (ok) {
       $('#inspector-avatar-preview').src = ok.portraitRef ?? $('#inspector-avatar-preview').src
-      if (storyEditRoleIndex !== null && storyEditRoles[storyEditRoleIndex]) storyEditRoles[storyEditRoleIndex].portraitRef = ok.portraitRef
+      if (editing && storyEditRoles[storyEditRoleIndex]) storyEditRoles[storyEditRoleIndex].portraitRef = ok.portraitRef
       refreshRoom()
     }
   } catch { /* api() 已 alert */ }
