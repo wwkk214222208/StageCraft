@@ -128,7 +128,8 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     }
     // 独立控制端点：POST /api/stagecraft/reload —— 重建 worker（或 embedded 下重启应用）。
     // 挂在 DSH 主进程 webServer 上（sandboxed 时 8899），供构建脚本 / dsh 命令触发。
-    const webServer = (ctx as unknown as { webServer?: { register: (route: { kind: 'exact' | 'prefix'; path: string; handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void | Promise<void> }) => () => void } }).webServer
+    // 可选注入：profile 未声明 inject 时 ctx.get('webServer', false) 返回 undefined，不注册路由。
+    const webServer = (ctx as unknown as { get?: (name: string, loose?: boolean) => unknown }).get?.('webServer', false) as { register: (route: { kind: 'exact' | 'prefix'; path: string; handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void | Promise<void> }) => () => void } | undefined
     if (webServer?.register) {
       const disposer = webServer.register({
         kind: 'exact',
