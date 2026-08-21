@@ -1,7 +1,6 @@
 # StageCraft
 
 > 本文为项目根 `README.md`，面向**开发者**与**接手本仓库的 AI 助手**。玩家向使用说明见 [`玩家看我.md`](./玩家看我.md)。  
-> 起草：WorkBuddy（DeepSeek V4 Flash）· 2026-08-21 · 已作为根 README.md 发布。
 
 ## 文档导航
 
@@ -13,7 +12,7 @@
 
 ## 项目定位
 
-StageCraft是一个**自托管的、插件化的多角色角色扮演（RP）运行时 + Web 工作台**。目标定位是成为比 SillyTavern 更易用的新生态：一端让**创作者**低门槛做角色 / 剧本，一端让**玩家**免配置开玩。
+StageCraft 是一个自托管、插件化的多角色角色扮演（RP）运行时，配套一个 Web 工作台。它想成为比 SillyTavern 更好上手的生态：创作者能低门槛地做角色和剧本，玩家不用配置、打开就能玩。
 
 - 名称：`stagecraft`，版本 `0.1.0`，`private`，协议 **AGPL-3.0-only**。
 - 运行形态：① 独立 Node 服务；② 作为 **dsh 插件**（经 `dsh-rp` 适配壳）；③ 安卓（远程模式 APK / Termux 本地，**当前暂不推荐**，UI 布局问题待修）。
@@ -154,7 +153,3 @@ pnpm test           # node --experimental-strip-types --test --test-concurrency=
 ## 当前限制（来自架构文档）
 
 Core 通用内核、插件容器、状态仓储、Workflow Registry / Executor、HTTP 人机插件、LLM 路由边界已进入启动链；StageCraft 的 Store-backed domain services 仍是当前业务状态变化的执行者，并通过 Core 投影与事务仓储保持一致。Workflow Executor 当前负责固定定义的注册 / 投影 / 合法转换，**不是通用自动业务编排器**。未来仍需在不破坏边界的前提下继续收紧旧外部接口与迁移策略。
-
----
-
-*本文件由 WorkBuddy（DeepSeek V4 Flash）起草于 2026-08-21，已作为项目根 `README.md` 发布（开发者与 AI 向）。玩家向说明见 `docs/玩家看我.md`。事实依据：package.json、docs/architecture.md、src 目录结构；路线图与限制部分引用既有设计文档。*
