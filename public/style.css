@@ -61,9 +61,13 @@
 .role-proposals b{color:#b7c8fe;font:600 13px Georgia,serif}
 .role-proposals small{color:#679efe;font-size:11px}
 .role-proposals p{margin:4px 0 0;color:#a9b8dd;font-size:12px;line-height:1.45}
-/* 供应商管理列表 */
-.provider-manager{margin:0 0 10px}
-.provider-list{display:grid;gap:6px;max-height:200px;overflow:auto}
+/* 供应商管理 */
+.provider-manager-panel{display:flex;flex-direction:column;gap:10px;min-width:420px}
+.provider-manager-panel header{height:auto;padding:0 0 8px;border-bottom:1px solid #34415b;display:flex;align-items:center;justify-content:space-between;background:none}
+.provider-manager-panel header h3{margin:0}
+.provider-manager-toolbar{display:flex;justify-content:flex-end}
+.provider-manager-toolbar .primary{background:#3a5fae}
+.provider-list{display:grid;gap:6px;max-height:300px;overflow:auto}
 .provider-row{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid #3a4a6e;border-radius:4px;background:#222a3d;padding:6px 9px}
 .provider-row-info{display:flex;flex-direction:column;gap:2px;min-width:0}
 .provider-row-info b{color:#b7c8fe;font:600 13px Georgia,serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

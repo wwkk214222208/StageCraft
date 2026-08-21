@@ -299,36 +299,32 @@ async function loadStories() { const response = await fetch('/api/stories'); con
 async function loadProviders() { const data = await (await fetch('/api/providers')).json(); providers = data.providers; const options = providers.map(provider => `<option value="${escape(provider.id)}">${escape(provider.name)}${provider.hasApiKey ? '（已配置）' : '（无密钥）'}</option>`).join(''); $('#provider-select').innerHTML = options; $('#director-provider-select').innerHTML = options; $('#provider-select').value = data.defaults.defaultRoleProviderId ?? providers[0]?.id ?? ''; $('#director-provider-select').value = data.defaults.directorProviderId ?? providers[0]?.id ?? ''; updateModels(providers.find(item => item.id === $('#provider-select').value), '#model-select', data.defaults.defaultRoleModel); updateModels(providers.find(item => item.id === $('#director-provider-select').value), '#director-model-select', data.defaults.directorModel); updateThinkingOptions('#director-thinking', $('#director-model-select').value, data.defaults.directorThinkingStrength ?? 'standard'); renderProviderList() }
 function renderProviderList() {
   const list = $('#provider-list')
-  list.innerHTML = providers.length ? providers.map(provider => `<div class="provider-row" data-id="${escape(provider.id)}"><div class="provider-row-info"><b>${escape(provider.name)}</b><small>${provider.models?.length ?? 0} 个模型 · ${provider.hasApiKey ? '已配置密钥' : '无密钥'}</small></div><div class="provider-row-actions"><button type="button" class="provider-edit" data-id="${escape(provider.id)}">编辑</button><button type="button" class="provider-delete" data-id="${escape(provider.id)}">删除</button></div></div>`).join('') : '<p class="hint">还没有供应商，用下方表单新建。</p>'
-  list.querySelectorAll('.provider-edit').forEach(button => button.onclick = () => editProvider(button.dataset.id))
+  list.innerHTML = providers.length ? providers.map(provider => `<div class="provider-row" data-id="${escape(provider.id)}"><div class="provider-row-info"><b>${escape(provider.name)}</b><small>${provider.models?.length ?? 0} 个模型 · ${provider.hasApiKey ? '已配置密钥' : '无密钥'}</small></div><div class="provider-row-actions"><button type="button" class="provider-edit" data-id="${escape(provider.id)}">编辑</button><button type="button" class="provider-delete" data-id="${escape(provider.id)}">删除</button></div></div>`).join('') : '<p class="hint">还没有供应商，点上方「新建供应商」添加。</p>'
+  list.querySelectorAll('.provider-edit').forEach(button => button.onclick = () => openProviderEdit(button.dataset.id))
   list.querySelectorAll('.provider-delete').forEach(button => button.onclick = () => deleteProvider(button.dataset.id))
 }
-function editProvider(id) {
+function openProviderEdit(id) {
   const provider = providers.find(item => item.id === id)
-  if (!provider) return
-  $('#provider-name').value = provider.name ?? ''
-  $('#provider-url').value = provider.baseUrl ?? ''
+  $('#provider-edit-title').textContent = provider ? `编辑供应商：${provider.name}` : '新建供应商'
+  $('#provider-name').value = provider?.name ?? ''
+  $('#provider-url').value = provider?.baseUrl ?? ''
   $('#provider-key').value = '' // 密钥不回填（仅展示是否已配置）
-  $('#provider-models').value = (provider.models ?? []).join(',')
-  $('#provider-format').value = provider.responseFormat ?? 'json_object'
-  $('#provider-save').dataset.editingId = id
-  $('#provider-save').textContent = '保存修改'
-  $('#provider-key').placeholder = provider.hasApiKey ? '已配置（留空保持不变）' : '输入 API Key'
+  $('#provider-models').value = (provider?.models ?? []).join(',')
+  $('#provider-format').value = provider?.responseFormat ?? 'json_object'
+  $('#provider-save').dataset.editingId = provider?.id ?? ''
+  $('#provider-key').placeholder = provider?.hasApiKey ? '已配置（留空保持不变）' : '输入 API Key'
+  $('#provider-edit-modal').showModal()
 }
 async function deleteProvider(id) {
   const provider = providers.find(item => item.id === id)
   if (!provider || !confirm(`删除供应商「${provider.name}」？`)) return
   const response = await fetch('/api/providers/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
   if (!response.ok) { alert((await response.json()).error || '删除失败'); return }
-  if ($('#provider-save').dataset.editingId === id) resetProviderForm()
   await loadProviders(); await refreshRoom()
 }
-function resetProviderForm() {
-  delete $('#provider-save').dataset.editingId
-  $('#provider-save').textContent = '保存连接'
-  $('#provider-name').value = ''; $('#provider-url').value = ''; $('#provider-key').value = ''; $('#provider-models').value = ''
-  $('#provider-key').placeholder = '输入 API Key'
-}
+$('#provider-manage').onclick = () => { loadProviders(); $('#connection-modal').close(); $('#provider-manager-modal').showModal() }
+$('#provider-manager-back').onclick = () => { $('#provider-manager-modal').close(); $('#connection-modal').showModal() }
+$('#provider-create').onclick = () => openProviderEdit('')
 function updateModels(provider, selector, selected) { $(selector).innerHTML = (provider?.models ?? []).map(model => `<option>${escape(model)}</option>`).join(''); $(selector).value = selected ?? provider?.selectedModel ?? provider?.models?.[0] ?? '' }
 function thinkingChoicesForModel(model) {
   const name = String(model ?? '').toLowerCase()
@@ -530,8 +526,7 @@ $('#director-provider-select').onchange = () => { updateModels(providers.find(it
 $('#director-model-select').onchange = () => { updateThinkingOptions('#director-thinking', $('#director-model-select').value, $('#director-thinking').value); api('/api/providers/director', { id: $('#director-provider-select').value, model: $('#director-model-select').value }) }
 $('#director-thinking').onchange = () => api('/api/providers/director-thinking', { thinking: $('#director-thinking').value })
 $('#refresh-models').onclick = event => { event.preventDefault(); api('/api/providers/discover', { id: $('#provider-select').value }).then(loadProviders) }
-$('#provider-save').onclick = event => { event.preventDefault(); api('/api/providers/save', { id: $('#provider-save').dataset.editingId ?? `provider-${Date.now()}`, name: $('#provider-name').value, baseUrl: $('#provider-url').value, apiKey: $('#provider-key').value, models: $('#provider-models').value.split(',').map(value => value.trim()).filter(Boolean), responseFormat: $('#provider-format').value }).then(ok => { if (ok) { resetProviderForm(); $('#connection-modal').close(); loadProviders() } }) }
-$('#provider-reset').onclick = event => { event.preventDefault(); resetProviderForm() }
+$('#provider-save').onclick = event => { event.preventDefault(); api('/api/providers/save', { id: $('#provider-save').dataset.editingId || `provider-${Date.now()}`, name: $('#provider-name').value, baseUrl: $('#provider-url').value, apiKey: $('#provider-key').value, models: $('#provider-models').value.split(',').map(value => value.trim()).filter(Boolean), responseFormat: $('#provider-format').value }).then(ok => { if (ok) { $('#provider-edit-modal').close(); loadProviders(); refreshRoom() } }) }
 $('#player-save').onclick = event => { event.preventDefault(); api('/api/player-character', { name: $('#player-name').value, persona: $('#player-persona').value, currentState: $('#player-state').value }).then(ok => { if (ok) $('#player-modal').close() }) }
 $('#restart').onclick = event => { event.preventDefault(); if (confirm('重开将清除当前剧本的回合、草稿和已批准正文。继续吗？')) api('/api/restart', { storyId: $('#story-select').value, mode: $('#room-mode-select').value, autoPublish: $('#room-auto-publish').checked }).then(ok => { if (ok) $('#story-modal').close() }) }
 $('#save-archive').onclick = event => { event.preventDefault(); api('/api/archive/save', { name: $('#archive-name').value.trim() }).then(ok => { if (ok) { $('#archive-name').value = ''; refreshArchiveList() } }) }
