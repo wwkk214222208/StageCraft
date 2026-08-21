@@ -18,8 +18,8 @@ let expandedMemoryId = null
 let draggingMemoryId = null
 let expandedStoryMemoryIndex = null
 const WHALE_MEME_PREFS_KEY = 'stagecraft-whale-meme'
-let whaleMemeEnabled = true
-try { whaleMemeEnabled = localStorage.getItem(WHALE_MEME_PREFS_KEY) !== '0' } catch {}
+let whaleMemeEnabled = false
+try { whaleMemeEnabled = localStorage.getItem(WHALE_MEME_PREFS_KEY) === '1' } catch {}
 const TOKEN_PREFS_KEY = 'stagecraft-token-count'
 let tokenCountEnabled = false
 try { tokenCountEnabled = localStorage.getItem(TOKEN_PREFS_KEY) === '1' } catch {}
