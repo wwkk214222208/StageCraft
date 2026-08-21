@@ -248,6 +248,9 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 .scene.narration .scene-text{white-space:pre-wrap;line-height:1.8}
 /* 待审批台词：气泡头 + 可编辑正文 + 操作 */
 .speech-approval{border:1px solid #4868b2;border-radius:14px;padding:10px 12px;background:#2b3247;margin:10px 0}
+.speech-approval .chat-msg{margin:2px 0 0}
+.speech-approval .bubble{background:none;border:0;padding:0;max-width:none}
+.speech-approval .bubble-name{margin-bottom:0;color:#b7c8fe}
 .speech-textarea{width:100%;min-height:400px;background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:6px;padding:8px 10px;font:13px/1.6 inherit;resize:vertical;margin-top:8px}
 .speech-feedback-textarea{width:100%;min-height:27px;background:#1b2133;color:#e4edfd;border:1px dashed #3a4c6b;border-radius:6px;padding:8px 10px;font:12px/1.5 inherit;resize:vertical;margin-top:8px}
 .speech-approval .draft-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
