@@ -8,7 +8,7 @@ function fixture() {
   const calls: any[] = []; let current = story()
   const nativeSession = { id: 'native-1', prompt: async (content: unknown) => { calls.push(['prompt', content]) } }
   const native = { create: () => nativeSession, binding: (id: string) => id === 'native-1' ? { session: nativeSession } : undefined }
-  const apiProxy = { sessions: { create: async (request: unknown) => { calls.push(['create', request]); return { rpcId: 'create', result: { ok: true, value: { sessionId: 'native-1' } } } }, models: async (request: unknown) => { calls.push(['models', request]); return { rpcId: 'models', result: { ok: true, value: { providers: [{ id: 'provider-a', models: ['model-a'] }] } } } }, selectModel: async (selection: unknown) => { calls.push(['select-model', selection]); return { rpcId: 'select', result: { ok: true, value: { selected: selection } } } } } }
+  const apiProxy = { sessions: { create: async (request: unknown) => { calls.push(['create', request]); return { rpcId: 'create', result: { ok: true, value: { sessionId: 'native-1' } } } }, history: async (request: unknown) => { calls.push(['history', request]); return { rpcId: 'history', result: { ok: true, value: { events: [{ event: { type: 'user/message', data: { content: [{ type: 'text', text: '你正在协助编辑剧本文件。当前剧本 ID：story\n用户请求：帮我改一下场景时间' }] } } }, { event: { type: 'assistant/message', data: { content: [{ type: 'text', text: '好的，已改好。' }] } } }] } } } }, models: async (request: unknown) => { calls.push(['models', request]); return { rpcId: 'models', result: { ok: true, value: { providers: [{ id: 'provider-a', models: ['model-a'] }] } } } }, selectModel: async (selection: unknown) => { calls.push(['select-model', selection]); return { rpcId: 'select', result: { ok: true, value: { selected: selection } } } } } }
   let currentApiProxy: any
   const service = new DshStorySessionService(() => structuredClone(current), native, () => currentApiProxy)
   currentApiProxy = apiProxy
@@ -31,6 +31,15 @@ test('native model directory and selection stay on the DSH session', async () =>
   const selectCall = f.calls.find(call => call[0] === 'select-model')
   assert.equal(selectCall[1].payload.sessionId, 'native-1')
   assert.deepEqual(selectCall[1].payload, { sessionId: 'native-1', provider: 'provider-a', model: 'model-a' })
+})
+
+test('history shows only chat body, not injected system context', async () => {
+  const f = fixture(); const session = await f.service.open('owner-a', 'story')
+  const messages = await f.service.history('owner-a', session.id)
+  assert.deepEqual(messages.map(message => ({ role: message.role, text: message.text })), [
+    { role: 'user', text: '帮我改一下场景时间' },
+    { role: 'system', text: '好的，已改好。' },
+  ])
 })
 
 test('close rejects further access', async () => {
