@@ -251,7 +251,7 @@ function render(next) {
           const avatar = role?.portraitRef || '/assets/default.svg'
           const wc = room.pendingWorldChange
           const worldChangeHtml = wc ? `<div class="world-change-proposal"><h4 class="section-title">世界变更申请 <small>（角色随台词提出，批准发布时一并生效）</small></h4>${wc.reason ? `<p class="wc-reason">${escape(wc.reason)}</p>` : ''}${wcSceneHtml(wc, 'wc-time', 'wc-location')}${wcRolesHtml(wc)}${wcPresenceHtml(wc)}</div>` : ''
-          return `<div class="scene scene-msg speech-approval"><div class="chat-msg"><img class="avatar" src="${escape(avatar)}" onerror="this.onerror=null;this.src='/assets/default.svg'"><div class="bubble"><div class="bubble-name">${escape(name)} <small>台词待审批</small></div></div></div>${thinkingBlockHtml(`${name} 思维链`, room.speech.thinking)}${tokenNoteHtml('speech', room.speech.usage)}<textarea id="speech-text" class="speech-textarea">${escape(room.speech.text)}</textarea><textarea id="speech-reconsider-feedback" class="speech-feedback-textarea" placeholder="写下希望角色如何重新考虑这段台词…"></textarea>${worldChangeHtml}<div class="draft-actions"><button id="speech-reconsider">重考</button><button id="speech-cancel">放弃</button><button id="speech-approve">批准发布</button></div></div>`
+          return `<div class="scene scene-msg speech-approval"><div class="chat-msg"><img class="avatar" src="${escape(avatar)}" onerror="this.onerror=null;this.src='/assets/default.svg'"><div class="bubble"><div class="bubble-name">${escape(name)} <small>台词待审批</small></div><div class="bubble-text">${escape(room.speech.text)}</div></div></div>${thinkingBlockHtml(`${name} 思维链`, room.speech.thinking)}${tokenNoteHtml('speech', room.speech.usage)}<label class="speech-edit-label">编辑台词</label><textarea id="speech-text" class="speech-textarea">${escape(room.speech.text)}</textarea><textarea id="speech-reconsider-feedback" class="speech-feedback-textarea" placeholder="写下希望角色如何重新考虑这段台词…"></textarea>${worldChangeHtml}<div class="draft-actions"><button id="speech-reconsider">重考</button><button id="speech-cancel">放弃</button><button id="speech-approve">批准发布</button></div></div>`
         })() : ''
     // 群聊：导演对话产出的世界变更申请（无台词）独立审批
     const worldChangeApproval = isChat && room.phase === 'world-change-approval' && !room.speech && room.pendingWorldChange
@@ -264,6 +264,7 @@ function render(next) {
   const thinking = ['drafting', 'consulting-director'].includes(room.phase)
   let progressText = ''
   if (room.lastError) progressText = `<p class="error">${escape(room.lastError)}</p>`
+  else if (isChat && activeAction === 'director') progressText = `<p class="thinking">导演正在思考你的建议…</p>`
   else if (thinking) progressText = `<p class="thinking">导演正在思考…</p>`
   else if (room.phase === 'role-speaking') progressText = `<p class="thinking">角色正在发言…</p>`
   else if (room.phase === 'collecting-decisions' && decisionsDone) progressText = `<p>角色反馈已就绪——可点击气泡修改，确认后拟定草稿。</p>`
@@ -277,7 +278,7 @@ function render(next) {
   $('#retry-director').hidden = room.phase !== 'drafting'
   // 群聊模式发言失败时，在「取消回合」旁显示「重试发言」
   $('#retry-speak').hidden = !(isChat && room.phase === 'role-speaking' && room.lastError)
-  let consultHtml = (room.consultations ?? []).map(message => `<p class="consultation ${message.role}"><b>${message.role === 'player' ? room.playerCharacter.name : '导演'}</b>${escape(message.text)}${message.thinking ? thinkingBlockHtml('导演思维链', message.thinking) : ''}${tokenNoteHtml('consult', message.usage)}</p>`).join('')
+  let consultHtml = (room.consultations ?? []).map(message => `<p class="consultation ${message.role}"><b>${message.role === 'player' ? room.playerCharacter.name : '导演'}</b>${message.thinking ? thinkingBlockHtml('导演思维链', message.thinking) : ''}${tokenNoteHtml('consult', message.usage)}${escape(message.text)}</p>`).join('')
   if (room.draft?.openQuestions?.length) consultHtml += `<p class="consultation director director-extra"><b>导演</b>❓ 待确认：${room.draft.openQuestions.map(escape).join('；')}</p>`
   $('#consultations').innerHTML = consultHtml
   $('#director-chat').hidden = false

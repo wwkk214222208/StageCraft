@@ -247,8 +247,11 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 /* 旁白（开场 / 导演正文）：保留原本的整段叙述样式 */
 .scene.narration .scene-text{white-space:pre-wrap;line-height:1.8}
 /* 待审批台词：气泡头 + 可编辑正文 + 操作 */
-.speech-approval{border:1px solid #4868b2;border-radius:14px;padding:8px 10px;background:#2b3247;margin:10px 0}
-.speech-textarea{width:100%;min-height:min(50vh,520px);background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:6px;padding:8px 10px;font:13px/1.6 inherit;resize:vertical;margin-top:8px}
+.speech-approval{border:1px solid #4868b2;border-radius:14px;padding:10px 12px;background:#2b3247;margin:10px 0}
+.speech-approval .bubble-text{white-space:pre-wrap;line-height:1.6;color:#e4edfd;padding:6px 2px 2px}
+.speech-edit-label{display:block;color:#93a5cd;font-size:11px;margin:10px 0 2px}
+.speech-textarea{width:100%;min-height:110px;background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:6px;padding:8px 10px;font:13px/1.6 inherit;resize:vertical;margin-top:4px}
+.speech-feedback-textarea{width:100%;min-height:54px;background:#1b2133;color:#e4edfd;border:1px dashed #3a4c6b;border-radius:6px;padding:8px 10px;font:12px/1.5 inherit;resize:vertical;margin-top:8px}
 .speech-approval .draft-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
 
 /* ── 头像：仅左栏与对话气泡用圆形；完整肖像保持方形原图 ── */
