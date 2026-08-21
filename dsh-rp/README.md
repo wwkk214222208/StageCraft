@@ -18,6 +18,21 @@ DSH 保持 supervisor 身份；StageCraft 支持两个明确的 Cordis 配置模
 
 `ctx.stagecraftDebug` 是可选调试桥；Inspector 不会自动开启，也不提供默认公网或非 loopback 端点。sandboxed worker 默认只监听内部 stdio RPC，不暴露 StageCraft HTTP。
 
+## DSH 命令
+
+插件注册两个 DSH slash 命令，在 DSH 会话输入框里以 `/` 开头输入：
+
+| 命令 | 作用 |
+|---|---|
+| `/stagecraft-reload` | 重启 StageCraft worker（不重启 DSH），加载 dsh-rp 最新构建。可在命令后附一句原因，例如 `/stagecraft-reload 改了开场文案` |
+| `/stagecraft` | 在系统默认浏览器打开 StageCraft 页面（`http://127.0.0.1:8799/`） |
+
+- 两个命令都只在 `commands` 服务可用时注册（Web profile 默认可用）；其他 profile 缺该服务时命令不出现。
+- `/stagecraft-reload` 走 worker 的进程内重建（`rebuildComposition`）：关闭旧 composition → 复用同一端口与 RPC 通道重建新 composition，**没有 TCP 端口释放竞态，DSH 主进程全程不动**。若进程内重建失败（如 worker 未就绪），自动回退为杀进程 + 重新 spawn。
+- 除命令外，还有等价的外部触发途径：
+  - HTTP 端点：`POST http://127.0.0.1:8899/api/stagecraft/reload`（DSH 主进程 webServer 上）
+  - CLI：`node dsh-rp/bin/stagecraft-reload.mjs`
+
 构建脚本把公开的默认剧本、提示词、UI 资源和 worker entry 写入 dist/。data/、save/、custom/、本地媒体、私有卡片内容和本地保存不会进入 bundle。
 
 ## 验证与打包
