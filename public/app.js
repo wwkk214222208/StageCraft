@@ -205,7 +205,7 @@ function render(next) {
   const roleCards = room.roles.map(role => {
     const focused = focalRoleIds.has(role.id)
     const decision = room.decisions.find(item => item.roleId === role.id)
-    const status = focused ? '焦点' : states[role.presence]
+    const status = focused ? '焦点' : (states[role.presence] ?? '未知')
     const activity = decision?.status === 'pending' ? '正在回应' : decision?.status === 'completed' ? '已回应' : decision?.status === 'unavailable' ? '回应失败' : ''
     const speakActionable = isChat && role.presence === 'present' && room.phase === 'awaiting-player-input' && !activeAction
     // 始终为在场角色保留「发言」占位按钮：可点时正常点击，不可点（发言中/非空闲/有动作进行）时置灰而非移除，
@@ -213,7 +213,7 @@ function render(next) {
     const speakBtn = isChat && role.presence === 'present'
       ? `<button class="speak-toggle"${speakActionable ? ` data-speak="${escape(role.id)}"` : ' disabled'}>发言</button>`
       : ''
-    return `<article class="role ${focused ? 'focal' : ''} ${role.presence !== 'present' ? 'away' : ''}" draggable="true" data-role-drag="${escape(role.id)}"><img src="${escape(role.portraitRef)}" onerror="this.onerror=null;this.src='/assets/default.svg'"><div><div class="role-heading"><button class="role-name" data-inspect="${escape(role.id)}">${escape(role.name)}</button>${speakBtn}${!isChat && role.presence === 'present' ? `<button class="focus-toggle" data-focus="${escape(role.id)}">焦</button>` : ''}<button class="presence-toggle" data-presence="${escape(role.id)}" title="点击切换在场/离场">${role.presence === 'present' ? '在场' : '离场'}</button></div><small>${status}${activity ? ` · ${activity}` : ''}</small></div><p>${readOnly ? `<span class="role-state">${escape(role.currentState)}</span>` : `<span class="role-state" data-state-edit="${escape(role.id)}" title="点击修改当前状态">${escape(role.currentState)}</span>`}</p>${decision?.error ? `<small class="error">${escape(decision.error)}</small>` : ''}</article>`
+    return `<article class="role ${focused ? 'focal' : ''} ${role.presence !== 'present' ? 'away' : ''}" draggable="true" data-role-drag="${escape(role.id)}"><img src="${escape(role.portraitRef)}" onerror="this.onerror=null;this.src='/assets/default.svg'"><div><div class="role-heading"><button class="role-name" data-inspect="${escape(role.id)}">${escape(role.name)}</button>${speakBtn}${!isChat && role.presence === 'present' ? `<button class="focus-toggle" data-focus="${escape(role.id)}">焦</button>` : ''}<button class="presence-toggle" data-presence="${escape(role.id)}" title="点击切换在场/离场">${role.presence === 'present' ? '在场' : '离场'}</button></div><small>${status}${activity ? ` · ${activity}` : ''}</small></div><p>${readOnly ? `<span class="role-state">${escape(role.currentState ?? '')}</span>` : `<span class="role-state" data-state-edit="${escape(role.id)}" title="点击修改当前状态">${escape(role.currentState ?? '')}</span>`}</p>${decision?.error ? `<small class="error">${escape(decision.error)}</small>` : ''}</article>`
   }).join('')
   const loreCards = (room.lore ?? []).map((entry, index) => {
     const tags = entry.roles && entry.roles.length ? entry.roles.map(id => room.roles.find(role => role.id === id)?.name ?? id).join('、') : '常开'

@@ -839,7 +839,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   }
 
   function publicRoomSnapshot(room: RoomSnapshot): Omit<RoomSnapshot, 'roles'> & { roles: Array<Omit<RoomSnapshot['roles'][number], 'memories' | 'selfModel' | 'goals' | 'impressions'>> } {
-    return { ...room, roles: room.roles.map(({ memories: _memories, selfModel: _selfModel, goals: _goals, impressions: _impressions, ...role }) => role) }
+    return { ...room, roles: room.roles.map(({ memories: _memories, selfModel: _selfModel, goals: _goals, impressions: _impressions, ...role }) => ({ ...role, name: role.name ?? '', currentState: role.currentState ?? '', presence: role.presence ?? 'present', portraitRef: role.portraitRef ?? '/assets/default.svg' })) }
   }
 
   function json(response: ServerResponse, status: number, value: unknown): void {
