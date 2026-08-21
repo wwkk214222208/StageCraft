@@ -839,8 +839,23 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><rect width="160" height="160" fill="${bg}"/><circle cx="80" cy="63" r="34" fill="${tone}"/><path d="M28 158c8-39 26-57 52-57s44 18 52 57" fill="${tone}"/><text x="80" y="145" text-anchor="middle" font-family="serif" font-size="26" fill="${bg}">${letter}</text></svg>`
   }
 
-  function publicRoomSnapshot(room: RoomSnapshot): Omit<RoomSnapshot, 'roles'> & { roles: Array<Omit<RoomSnapshot['roles'][number], 'memories' | 'selfModel' | 'goals' | 'impressions'>> } {
-    return { ...room, roles: room.roles.map(({ memories: _memories, selfModel: _selfModel, goals: _goals, impressions: _impressions, ...role }) => ({ ...role, name: role.name ?? '', currentState: role.currentState ?? '', presence: role.presence ?? 'present', portraitRef: role.portraitRef ?? '/assets/default.svg' })) }
+  function publicRoomSnapshot(room: RoomSnapshot): RoomSnapshot {
+    // 角色字段完整传给前端：角色设置弹窗需要 selfModel/goals/impressions/memories，
+    // 剥离会导致弹窗显示 undefined。字段做 null 兜底避免字面 undefined/null。
+    return {
+      ...room,
+      roles: room.roles.map(role => ({
+        ...role,
+        name: role.name ?? '',
+        currentState: role.currentState ?? '',
+        presence: role.presence ?? 'present',
+        portraitRef: role.portraitRef ?? '/assets/default.svg',
+        selfModel: role.selfModel ?? '',
+        goals: role.goals ?? [],
+        impressions: role.impressions ?? {},
+        memories: role.memories ?? [],
+      })),
+    }
   }
 
   function json(response: ServerResponse, status: number, value: unknown): void {
