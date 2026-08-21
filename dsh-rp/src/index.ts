@@ -154,6 +154,25 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       })
       cleanups.push(disposer)
     }
+    // DSH slash 命令：/stagecraft-reload —— 在会话里直接触发 worker 热重载。
+    // 可选注入：commands 服务未挂载时跳过（headless 等 profile 无 UI 命令面）。
+    const commands = (ctx as unknown as { get?: (name: string, loose?: boolean) => unknown }).get?.('commands', false) as { register: (definition: { name: string; description: string; handler: (invocation: { rawInput: string; signal: AbortSignal }) => Promise<{ kind: 'success'; text: string } | { kind: 'error'; text: string }> }) => () => void } | undefined
+    if (commands?.register) {
+      const disposer = commands.register({
+        name: 'stagecraft-reload',
+        description: '重启 StageCraft worker（不重启 DSH），加载 dsh-rp 最新构建',
+        handler: async invocation => {
+          try {
+            const reason = invocation.rawInput.trim() || 'slash-command'
+            const snapshot = await debug.restart(reason)
+            return { kind: 'success', text: `StageCraft 已重载：generation ${snapshot.generation}，pid ${snapshot.pid ?? '?'}（${snapshot.status}）` }
+          } catch (error) {
+            return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
+          }
+        },
+      })
+      cleanups.push(disposer)
+    }
     return () => { for (const cleanup of cleanups.reverse()) cleanup() }
   })
 }
