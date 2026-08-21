@@ -173,6 +173,41 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       })
       cleanups.push(disposer)
     }
+    // DSH slash 命令：/stagecraft —— 在系统默认浏览器打开 StageCraft 页面。
+    const openPage = async (): Promise<void> => {
+      const url = `http://${host}:${port}/`
+      if (process.platform === 'win32') {
+        const { execFile } = await import('node:child_process')
+        await new Promise<void>((resolve, reject) => {
+          execFile('cmd', ['/c', 'start', '', url], error => error ? reject(error) : resolve())
+        })
+      } else if (process.platform === 'darwin') {
+        const { execFile } = await import('node:child_process')
+        await new Promise<void>((resolve, reject) => {
+          execFile('open', [url], error => error ? reject(error) : resolve())
+        })
+      } else {
+        const { execFile } = await import('node:child_process')
+        await new Promise<void>((resolve, reject) => {
+          execFile('xdg-open', [url], error => error ? reject(error) : resolve())
+        })
+      }
+    }
+    if (commands?.register) {
+      const disposer = commands.register({
+        name: 'stagecraft',
+        description: `在系统默认浏览器打开 StageCraft（http://${host}:${port}/）`,
+        handler: async () => {
+          try {
+            await openPage()
+            return { kind: 'success', text: `已在默认浏览器打开 StageCraft：http://${host}:${port}/` }
+          } catch (error) {
+            return { kind: 'error', text: `打开页面失败：${error instanceof Error ? error.message : String(error)}（直接访问 http://${host}:${port}/）` }
+          }
+        },
+      })
+      cleanups.push(disposer)
+    }
     return () => { for (const cleanup of cleanups.reverse()) cleanup() }
   })
 }
