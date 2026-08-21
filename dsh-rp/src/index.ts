@@ -15,7 +15,8 @@
  * - root 默认指向打包产物的 dist/，可用 DSH Config 或 RP_ROOT 覆盖。
  */
 import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { startTavern, type TavernApp } from '../../src/app-boot.ts'
@@ -57,6 +58,8 @@ export interface Config {
   host?: string
   /** Bundle data/resource root; omitted uses RP_ROOT or this package's root. */
   root?: string
+  /** 用户数据根（AppData 等）；省略时默认 <AppData>/stagecraft。 */
+  userDataRoot?: string
   /** Enable development-only bearer-authenticated LAN access (TLS is external). */
   remoteEnabled?: boolean
   /** One-time pairing code lifetime in milliseconds. */
@@ -70,6 +73,7 @@ export const Config = z.object({
   port: z.natural().max(65535),
   host: z.string(),
   root: z.string(),
+  userDataRoot: z.string(),
   remoteEnabled: z.boolean(),
   remotePairingTtlMs: z.natural(),
   remoteSessionTtlMs: z.natural(),
@@ -87,11 +91,17 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const runtimeMode = config.runtimeMode ?? 'embedded'
   const port = config.port ?? Number(process.env.RP_PORT ?? 8799)
   const host = config.host || process.env.HOST || '127.0.0.1'
+  // 用户数据根：插件模式固定放在 AppData（卸载重装不丢存档/进度/供应商配置）。
+  // Windows %APPDATA%\stagecraft；macOS/Linux ~/.config/stagecraft（XDG）。
+  const userDataRoot = config.userDataRoot || process.env.STAGECRAFT_USER_DATA || (() => {
+    const base = process.env.APPDATA || (process.platform === 'darwin' ? join(os.homedir(), 'Library', 'Application Support') : process.env.XDG_CONFIG_HOME || join(os.homedir(), '.config'))
+    return join(base, 'stagecraft')
+  })()
   const manager = runtimeMode === 'sandboxed' ? new WorkerManager({
     command: process.execPath,
     args: [workerEntryPath(packageRoot)],
     cwd: packageRoot,
-    env: { STAGECRAFT_ROOT: root, RP_PORT: String(port), HOST: host },
+    env: { STAGECRAFT_ROOT: root, STAGECRAFT_USER_DATA: userDataRoot, RP_PORT: String(port), HOST: host },
     onLog: line => console.error(`[stagecraft.worker] ${line}`),
   }) : undefined
   const debug: StageCraftDebugService = manager
@@ -123,7 +133,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     if (manager) await manager.start()
     else {
       // Embedded mode remains the self-contained development path.
-      const app: TavernApp = await startTavern({ root, port, host, ctx, remoteAccess: { enabled: config.remoteEnabled === true, pairingTtlMs: config.remotePairingTtlMs, sessionTtlMs: config.remoteSessionTtlMs } })
+      const app: TavernApp = await startTavern({ root, userDataRoot, port, host, ctx, remoteAccess: { enabled: config.remoteEnabled === true, pairingTtlMs: config.remotePairingTtlMs, sessionTtlMs: config.remoteSessionTtlMs } })
       cleanups.push(() => void app.close())
     }
     // 独立控制端点：POST /api/stagecraft/reload —— 重建 worker（或 embedded 下重启应用）。

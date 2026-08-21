@@ -12,9 +12,9 @@ test('dsh-rp declares explicit embedded and sandboxed runtime modes', () => {
   assert.match(source, /StageCraft sandbox is disabled in embedded runtime mode/)
 })
 
-test('dsh-rp patch keeps embedded development mode and loopback default', () => {
+test('dsh-rp patch keeps sandboxed runtime and loopback default', () => {
   const patch = readFileSync(new URL('../dsh-rp/cordis.patch.yml', import.meta.url), 'utf8')
-  assert.match(patch, /runtimeMode:\s*'embedded'/)
+  assert.match(patch, /runtimeMode:\s*'sandboxed'/)
   assert.match(patch, /host:\s*'127\.0\.0\.1'/)
   assert.doesNotMatch(patch, /inspector|0\.0\.0\.0/i)
 })

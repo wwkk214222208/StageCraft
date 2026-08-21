@@ -62,6 +62,13 @@ export interface TavernOptions {
   dataDir?: string
   /** prompts.json 路径（默认 <root>/prompts/prompts.json） */
   promptsFilePath?: string
+  /**
+   * 用户数据根目录（插件模式：AppData 下，卸载重装不丢数据）。
+   * 提供时 save/data/prompts 落在 <userDataRoot> 下；stories 优先读
+   * <userDataRoot>/stories，缺失时回退 <root>/stories 并拷贝默认剧本。
+   * 未提供时维持 <root> 下的传统布局。
+   */
+  userDataRoot?: string
   /** 初始剧本 id（默认 'eldoria'） */
   storyId?: string
   /** 监听端口（默认 process.env.PORT ?? 8787；0 = 系统分配） */
@@ -107,16 +114,31 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   }
   const root = options.root ?? fileURLToPath(new URL('..', import.meta.url))
   const publicRoot = options.publicRoot ?? join(root, 'public')
-  const storiesRoot = options.storiesRoot ?? join(root, 'stories')
-  const saveRoot = options.saveRoot ?? join(root, 'save')
-  const dataDir = options.dataDir ?? join(root, 'data')
-  const promptsFilePath = options.promptsFilePath ?? join(root, 'prompts', 'prompts.json')
+  const userDataRoot = options.userDataRoot
+  const storiesRoot = userDataRoot ? join(userDataRoot, 'stories') : options.storiesRoot ?? join(root, 'stories')
+  const saveRoot = userDataRoot ? join(userDataRoot, 'save') : options.saveRoot ?? join(root, 'save')
+  const dataDir = userDataRoot ? join(userDataRoot, 'data') : options.dataDir ?? join(root, 'data')
+  const promptsFilePath = userDataRoot ? join(userDataRoot, 'prompts', 'prompts.json') : options.promptsFilePath ?? join(root, 'prompts', 'prompts.json')
   const host = options.host ?? process.env.HOST ?? '127.0.0.1'
   const port = options.port === undefined ? parsePort(process.env.PORT ?? '8787') : parsePort(options.port)
   const remoteAccess = new RemoteAccessService(typeof options.remoteAccess === 'boolean' ? { enabled: options.remoteAccess } : options.remoteAccess)
   if (!isLoopbackHost(host) && !remoteAccess.enabled) throw new Error('Non-loopback listening requires remote access to be explicitly enabled.')
   mkdirSync(saveRoot, { recursive: true })
   mkdirSync(dataDir, { recursive: true })
+  // userDataRoot 模式：把包内默认剧本/提示词/供应商模板拷贝到用户数据目录（首次启动）。
+  // 之后用户编辑、存档都落在 AppData，卸载插件不丢数据。
+  if (userDataRoot) {
+    mkdirSync(storiesRoot, { recursive: true })
+    mkdirSync(join(userDataRoot, 'prompts'), { recursive: true })
+    const copyIfMissing = (from: string, to: string): void => {
+      if (existsSync(to) || !existsSync(from)) return
+      copyFileSync(from, to)
+      console.log(`已初始化用户数据：${to}`)
+    }
+    for (const file of readdirSync(join(root, 'stories'))) copyIfMissing(join(root, 'stories', file), join(storiesRoot, file))
+    copyIfMissing(join(root, 'prompts', 'prompts.json'), promptsFilePath)
+    copyIfMissing(join(root, 'providers.example.json'), join(dataDir, 'providers.example.json'))
+  }
 
     // 更名迁移：旧库 character-tavern.sqlite → stagecraft.sqlite（保留数据）
   const legacyDb = join(dataDir, 'character-tavern.sqlite')
