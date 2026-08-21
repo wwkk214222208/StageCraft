@@ -737,8 +737,9 @@ async function waitForCreatorReply(sessionId) {
   }
 }
 function renderCreatorSessionMessages(session) {
-  $('#creator-session-messages').innerHTML = (session?.messages ?? []).map(message => `<div class="creator-session-message ${message.role}"><span class="creator-session-message-author">${message.role === 'user' ? '你' : 'DSH'}</span><p>${escape(message.text)}</p></div>`).join('')
-  const messages = $('#creator-session-messages'); messages.scrollTop = messages.scrollHeight
+  const messages = (session?.messages ?? [])
+  $('#creator-session-messages').innerHTML = messages.length ? messages.map(message => `<div class="creator-session-message ${message.role}"><span class="creator-session-message-author">${message.role === 'user' ? '你' : 'DSH'}</span><p>${escape(message.text)}</p></div>`).join('') : '<p class="creator-session-empty">暂无消息，向 DSH 描述你想如何修改剧本。</p>'
+  const el = $('#creator-session-messages'); el.scrollTop = el.scrollHeight
 }
 async function sendCreatorMessage(inputSelector, buttonSelector) {
   if (!creatorSession) return
