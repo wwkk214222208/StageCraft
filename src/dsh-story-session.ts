@@ -45,11 +45,11 @@ type NativeApiProxy = {
 function clone<T>(value: T): T { return structuredClone(value) }
 function publicSession(session: DshStorySession): DshStorySession { const { nativeHandle: _nativeHandle, ...safe } = session; return clone(safe as DshStorySession) }
 function bounded(value: string): string { return value.slice(0, MAX_REQUEST) }
-/** DSH 的 user/message 里包含注入的剧本上下文；聊天只显示「用户请求：」之后的正文。 */
-function stripSystemContext(text: string): string {
+/** DSH 的 user/message 里包含注入的剧本上下文；聊天只显示「用户请求：」之后的正文。非我们发送的注入消息返回 undefined。 */
+function stripSystemContext(text: string): string | undefined {
   const marker = '用户请求：'
   const index = text.lastIndexOf(marker)
-  return index >= 0 ? text.slice(index + marker.length).trim() : text
+  return index >= 0 ? text.slice(index + marker.length).trim() : undefined
 }
 
 export interface DshStorySession { id: string; owner: string; storyId: string; storyTitle: string; createdAt: string; updatedAt: string; nativeId?: string; nativeHandle?: NativeSession; messages: DshStoryMessage[] }
@@ -130,7 +130,13 @@ export class DshStorySessionService {
       if (type !== 'user/message' && type !== 'assistant/message') continue
       const content = data.content
       const text = Array.isArray(content) ? content.map(item => typeof item === 'string' ? item : (item as Record<string, unknown>)?.type === 'text' ? String((item as Record<string, unknown>)?.text ?? '') : '').join('') : typeof content === 'string' ? content : ''
-      if (text) messages.push({ role: type === 'user/message' ? 'user' : 'system', text: type === 'user/message' ? stripSystemContext(text) : text, createdAt: this.now().toISOString() })
+      if (!text) continue
+      if (type === 'user/message') {
+        const cleaned = stripSystemContext(text)
+        if (cleaned) messages.push({ role: 'user', text: cleaned, createdAt: this.now().toISOString() })
+      } else {
+        messages.push({ role: 'system', text, createdAt: this.now().toISOString() })
+      }
     }
     session.messages = messages.slice(-MAX_MESSAGES); return clone(session.messages)
   }
