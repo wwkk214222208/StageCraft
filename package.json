@@ -12,9 +12,11 @@
     "release": "node scripts/release.mjs",
     "sync:stories": "node scripts/sync-stories-back.mjs"
   },
-  "devDependencies": {
+  "dependencies": {
     "@deepseek-ai/cordis": "npm:cordis@4.0.0-rc.8",
-    "@deepseek-ai/schemastery": "3.18.1",
+    "@deepseek-ai/schemastery": "3.18.1"
+  },
+  "devDependencies": {
     "esbuild": "0.28.2"
   },
   "engines": {

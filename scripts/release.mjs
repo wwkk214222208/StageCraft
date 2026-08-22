@@ -17,9 +17,9 @@ const version = process.argv[2] ?? '0.1.0'
 const releaseDir = join(repoRoot, 'release')
 const stageDir = join(releaseDir, `stagecraft-${version}`)
 
-/** 排除敏感/本地内容（密钥、用户自定义、构建产物） */
+/** 排除敏感/本地内容（密钥、用户自定义、构建产物）。node_modules 不排除：staging 内独立安装运行时依赖。 */
 const EXCLUDE = [
-  'data', 'save', 'node_modules', 'release', '.git', 'test', 'android',
+  'data', 'save', 'release', '.git', 'test', 'android',
   'public/assets/custom', 'stories/custom', 'prompts/custom',
   'providers.json', 'build.log', 'clone.log', 'install2.log', 'skins-build.log', '*.log',
   'dsh-rp/dist', 'dsh-rp/node_modules', 'dsh-web-ui', 'custom', 'docs/certification-matrix.md',
@@ -94,13 +94,17 @@ async function main() {
   ensureStartScripts()
   // 清理 staging 里的 release 自身
   rmSync(join(stageDir, 'release'), { recursive: true, force: true })
+  // 独立版内置运行时依赖（cordis/schemastery 为 dependencies）：解压即用，无需用户装依赖
+  console.log(`[release] installing standalone runtime dependencies...`)
+  const npmCli = resolveNpmCli()
+  execFileSync(process.execPath, [npmCli, 'install', '--omit=dev', '--no-audit', '--no-fund', '--ignore-scripts'], { cwd: stageDir, stdio: 'inherit' })
+  rmSync(join(stageDir, 'package-lock.json'), { force: true })
   makeZip()
   console.log(`[release] standalone zip: ${join(releaseDir, process.platform === 'win32' ? `stagecraft-${version}.zip` : `stagecraft-${version}.tar.gz`)}`)
 
   // 2. dsh-rp tgz（npm pack）—— 定位 npm-cli.js 直接以 node 运行，避免 shell 拼接
   console.log(`[release] packing dsh-rp tgz...`)
   rmSync(join(repoRoot, 'dsh-rp', 'release'), { recursive: true, force: true })
-  const npmCli = resolveNpmCli()
   const packOutput = execFileSync(process.execPath, [npmCli, 'pack', '--pack-destination', releaseDir], { cwd: join(repoRoot, 'dsh-rp'), encoding: 'utf8' })
   const tgzName = packOutput.trim().split(/\r?\n/).pop().trim()
   console.log(`[release] dsh-rp tgz: ${join(releaseDir, tgzName)}`)
