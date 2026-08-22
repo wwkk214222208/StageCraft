@@ -99,6 +99,9 @@ async function main() {
   const npmCli = resolveNpmCli()
   execFileSync(process.execPath, [npmCli, 'install', '--omit=dev', '--no-audit', '--no-fund', '--ignore-scripts'], { cwd: stageDir, stdio: 'inherit' })
   rmSync(join(stageDir, 'package-lock.json'), { force: true })
+  // npm 因 `npm:cordis@...` alias 使用 pnpm 布局，node_modules/.pnpm 是虚拟存储副本（冗余、占体积）；
+  // 扁平目录（node_modules/@deepseek-ai/cordis 等）已包含实际文件，删除 .pnpm 可大幅减小 zip。
+  rmSync(join(stageDir, 'node_modules', '.pnpm'), { recursive: true, force: true })
   makeZip()
   console.log(`[release] standalone zip: ${join(releaseDir, process.platform === 'win32' ? `stagecraft-${version}.zip` : `stagecraft-${version}.tar.gz`)}`)
 
