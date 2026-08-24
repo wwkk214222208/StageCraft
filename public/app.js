@@ -8,13 +8,48 @@ window.stagecraftCore = coreClient
 let room
 let creatorSession = null
 const creatorOwner = `creator-web:${crypto.randomUUID()}`
+let promptAssistantSession = null
+const promptAssistantOwner = `prompt-assistant-web:${crypto.randomUUID()}`
 let providers = []
 let storyCatalog = [] // /api/stories 最近一次列表（含 custom 标记：true=玩家自建，false=默认剧本）
 let focalRoleIds = new Set()
 let reconsideringRoleIds = new Set()
 let activeAction = null
 let skipArmed = false
-let sidebarTab = 'roles' // 左侧栏标签：roles | lore
+let sidebarTab = 'roles' // 左侧栏标签：roles | lore | prompts
+let promptPresets = []
+let editingPromptPreset = null
+let promptPresetState = { activeByScope: {} }
+let promptPresetScope = 'director.draft'
+let promptPresetSource = ''
+let promptModes = [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }]
+let promptTemplates = null
+let promptGameplayScenarios = {}
+let promptGameplayScenarioForceThinkingOff = false
+const promptPresetScopes = { 'director.role-decision': '导演模式 · 角色决策', 'director.draft': '导演模式 · 场景草稿', 'director.consult': '导演模式 · 导演咨询', 'director.memory-digest': '导演模式 · 记忆消化', 'chat.role-speech': '群聊模式 · 角色发言', 'chat.world-director': '群聊模式 · 世界导演', 'prompt-preset.transform': 'AI 预设助手' }
+const promptSystemParts = {
+  'director.role-decision': ['角色身份与决策职责', '场景、记忆与公共状态', '信息边界与角色私有信息', '工具输出与决策约束'],
+  'director.draft': ['Director 身份与创作职责', '世界书与公开信息边界', '玩家、场景与角色意图上下文', '状态变更与提案规则', '工具输出与审批约束'],
+  'director.consult': ['Director 咨询身份', '非正文与信息边界', '当前草稿、提案与咨询上下文', '工具输出约束'],
+  'director.memory-digest': ['记忆消化职责', '角色视角与事实边界', '已批准正文与精炼规则', '工具输出约束'],
+  'chat.role-speech': ['角色身份与发言职责', '角色设定、目标与世界信息', '场景、记忆与公共状态', '世界变更与工具输出约束'],
+  'chat.world-director': ['世界导演身份与职责', '不替角色发言的边界', '场景、历史与世界状态上下文', '世界变更与工具输出约束'],
+  'prompt-preset.transform': ['预设助手身份与安全边界', '导入内容与转换规则', '工具与输出约束'],
+}
+const promptSystemTemplatePaths = {
+  'director.role-decision': ['role', 'system'],
+  'director.draft': ['skills', 'director'],
+  'director.consult': ['skills', 'consultation'],
+  'director.memory-digest': ['role', 'digestSystem'],
+  'chat.role-speech': ['chat', 'system'],
+  'chat.world-director': ['chat', 'directorChatSystem'],
+  'prompt-preset.transform': ['skills', 'consultation'],
+}
+function gameplayComponents(scope) { return promptGameplayScenarios?.[scope]?.components ?? (promptSystemParts[scope] ?? ['系统规则']).map((name, index) => ({ id: `runtime.${scope}.${index + 1}`, name, templatePath: promptSystemTemplatePaths[scope] ?? [], dynamic: true })) }
+function defaultPromptEditorNodes(scope) { return gameplayComponents(scope).map(component => ({ id: component.id, name: component.name, content: '', type: component.role === 'user' ? 'user' : 'system', enabled: true, editable: false, runtimeBinding: component.id, removable: false, dynamic: component.dynamic === true })) }
+function readTemplatePath(path, template) { if (typeof template === 'string') return template; let value = promptTemplates; for (const key of path ?? []) value = value?.[key]; return String(value ?? '') }
+function runtimePreview(scope, node) { const component = gameplayComponents(scope).find(item => item.id === (node.runtimeBinding ?? node.id)); return component ? readTemplatePath(component.templatePath, component.template) : '该组件来自当前玩法的固定提示词文件。' }
+function normalizeEditorScenario(scenario, scope) { const components = gameplayComponents(scope); if (!components.length) return scenario; const oldNodes = Array.isArray(scenario.nodes) ? scenario.nodes : []; const fixedIds = new Set(components.map(component => component.id)); const privateNodes = oldNodes.filter(node => !fixedIds.has(node.runtimeBinding ?? node.id) && node.removable !== false); const fixedNodes = components.map((component, index) => { const old = oldNodes.find(node => (node.runtimeBinding ?? node.id) === component.id); return { id: component.id, name: component.name, content: '', type: component.role === 'user' ? 'user' : 'system', enabled: true, editable: false, runtimeBinding: component.id, removable: false, dynamic: component.dynamic === true, _oldIndex: old ? oldNodes.indexOf(old) : index } }); const combined = [...fixedNodes, ...privateNodes].sort((a, b) => (a._oldIndex ?? oldNodes.indexOf(a)) - (b._oldIndex ?? oldNodes.indexOf(b))); return { ...scenario, nodes: combined.map(({ _oldIndex, ...node }) => node) } }
 // URL 导入：拉取为 blob → dataURL → 同样 3:4 裁剪；拉取/跨域失败时回退原 url（后端原样保存）
 async function preparePortraitUrl(url) {
   try {
@@ -259,7 +294,8 @@ function render(next) {
     const tags = entry.roles && entry.roles.length ? entry.roles.map(id => room.roles.find(role => role.id === id)?.name ?? id).join('、') : '常开'
     return `<article class="lore-entry"${readOnly ? '' : ` data-lore="${index}"`}><div class="lore-heading"><b>${escape(entry.name)}</b><small>${escape(tags)}</small></div><p>${escape(entry.content)}</p></article>`
   }).join('')
-  $('#roles').innerHTML = `<div class="sidebar-tabs"><button data-tab="roles" class="${sidebarTab === 'roles' ? 'active' : ''}">角色</button><button data-tab="lore" class="${sidebarTab === 'lore' ? 'active' : ''}">世界书</button></div><div id="roles-list" ${sidebarTab === 'roles' ? '' : 'hidden'}>${roleCards || '<p class="hint">暂无角色</p>'}<button id="role-add" class="role-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新建人物</button></div><div id="lore-list" ${sidebarTab === 'lore' ? '' : 'hidden'}><button id="lore-add" class="lore-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新增条目</button>${loreCards || '<p class="hint">暂无世界书条目</p>'}</div>`
+  const presetCards = promptPresets.map(preset => `<article class="prompt-preset-row"><button type="button" class="prompt-preset-name" data-prompt-preset="${escape(preset.id)}">${escape(preset.name)}</button><span>${Object.values(promptPresetState.activeByScope ?? {}).includes(preset.id) || preset.enabled ? '使用中' : '未使用'}</span><button type="button" data-prompt-copy="${escape(preset.id)}">复制</button><button type="button" data-prompt-delete="${escape(preset.id)}">删除</button></article>`).join('')
+  $('#roles').innerHTML = `<div class="sidebar-tabs"><button data-tab="roles" class="${sidebarTab === 'roles' ? 'active' : ''}">角色</button><button data-tab="lore" class="${sidebarTab === 'lore' ? 'active' : ''}">世界书</button><button data-tab="prompts" class="${sidebarTab === 'prompts' ? 'active' : ''}">提示词</button></div><div id="roles-list" ${sidebarTab === 'roles' ? '' : 'hidden'}>${roleCards || '<p class="hint">暂无角色</p>'}<button id="role-add" class="role-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新建人物</button></div><div id="lore-list" ${sidebarTab === 'lore' ? '' : 'hidden'}><button id="lore-add" class="lore-add" ${readOnly ? 'disabled title="沉浸模式只读"' : ''}>＋ 新增条目</button>${loreCards || '<p class="hint">暂无世界书条目</p>'}</div><div id="prompts-list" ${sidebarTab === 'prompts' ? '' : 'hidden'}><button id="prompt-preset-new" class="lore-add">＋ 管理预设</button>${presetCards || '<p class="hint">暂无预设</p>'}</div>`
   $('#scenes').innerHTML = room.scenes.length ? room.scenes.map(scene => {
     const snapshot = [scene.sceneTime ? `🕐 ${escape(scene.sceneTime)}` : '', scene.sceneLocation ? `📍 ${escape(scene.sceneLocation)}` : ''].filter(Boolean).join('　')
     const meta = snapshot ? `<time class="scene-snapshot">${snapshot}</time>` : `<time>${new Date(scene.createdAt).toLocaleString()}</time>`
@@ -340,6 +376,26 @@ function render(next) {
   if ($('#center-reconsider')) { $('#center-reconsider').disabled = activeAction === 'director'; $('#center-reconsider').textContent = activeAction === 'director' ? '思考中…' : '重考' }
 }
 
+async function loadPromptPresets() { const response = await fetch('/api/prompts/presets'); if (response.ok) { const data = await response.json(); promptPresets = data.presets ?? []; promptPresetState = data; promptModes = Array.isArray(data.modes) && data.modes.length ? data.modes : promptModes; promptTemplates = data.promptTemplates ?? promptTemplates; promptGameplayScenarios = data.gameplayScenarios ?? promptGameplayScenarios; promptGameplayScenarioForceThinkingOff = promptGameplayScenarios?.[promptPresetScope]?.forceThinkingOff === true } }
+function ensurePromptScenario(preset, scope = promptPresetScope) {
+  preset.scenarios ??= {}
+  if (!preset.scenarios[scope]) preset.scenarios[scope] = { nodes: defaultPromptEditorNodes(scope), regexRules: [] }
+  preset.scenarios[scope] = normalizeEditorScenario(preset.scenarios[scope], scope)
+  return preset.scenarios[scope]
+}
+function renderPromptPresetEditor() {
+  const preset = editingPromptPreset; if (!preset) return
+  const presetSelect = $('#prompt-preset-select'); if (presetSelect) { presetSelect.innerHTML = promptPresets.map(item => `<option value="${escape(item.id)}">${escape(item.name)}</option>`).join(''); presetSelect.value = preset.id } $('#prompt-preset-name').value = preset.name; $('#prompt-preset-enabled').checked = preset.enabled === true; const scenario = ensurePromptScenario(preset); const thinkingOverride = scenario.forceThinkingOff === true || promptGameplayScenarioForceThinkingOff; const thinkingToggle = $('#prompt-scenario-thinking-off'); if (thinkingToggle) { thinkingToggle.checked = thinkingOverride; thinkingToggle.disabled = promptGameplayScenarioForceThinkingOff } const modeList = $('#prompt-mode-list'); if (modeList) modeList.innerHTML = promptModes.map(mode => `<label><input type="checkbox" data-prompt-mode="${escape(mode.id)}"${(preset.modes ?? ['director']).includes(mode.id) ? ' checked' : ''}>${escape(mode.name)}</label>`).join(''); const tabs = $('#prompt-scenario-tabs'); if (tabs) { tabs.innerHTML = Object.entries(promptPresetScopes).filter(([id]) => id !== 'prompt-preset.transform' && (id.startsWith('director.') ? (preset.modes ?? ['director']).includes('director') : (preset.modes ?? []).includes('chat'))).map(([id, label]) => `<button type="button" class="prompt-scenario-tab${promptPresetScope === id ? ' active' : ''}" data-prompt-scenario="${id}">${label}</button>`).join('') }
+  const renderNode = (node, index) => { const content = node.removable === false ? runtimePreview(promptPresetScope, node) : node.content; const nodeLabel = node.removable === false ? (node.type === 'system' ? '玩法系统组件 · 必须启用' : '玩法用户组件 · 必须启用') : ''; return `<details class="prompt-node${node.removable === false ? ' prompt-gameplay-node' : ' prompt-private-node'}${node.type === 'system' ? ' prompt-system-node' : ' prompt-user-node'}${node.enabled ? '' : ' prompt-node-disabled'}" data-node-index="${index}" data-node-role="${node.type}"><summary><span class="prompt-node-handle" draggable="true" data-prompt-drag-handle="${index}" title="拖动调整顺序">☷</span><b>${escape(node.name)}</b><small>${nodeLabel}</small>${node.removable !== false ? `<button type="button" class="prompt-node-delete-icon" data-prompt-node-delete="${index}" title="删除私有提示词" aria-label="删除私有提示词">×</button>` : ''}</summary><div class="prompt-node-fields"><label>名称<input data-node-field="name" value="${escape(node.name)}"${node.type === 'system' ? ' disabled' : ''}></label><label>内容<textarea data-node-field="content"${node.type === 'system' ? ' disabled' : ''}>${escape(content)}</textarea></label><label class="settings-row">启用<input data-node-field="enabled" type="checkbox"${node.enabled ? ' checked' : ''}${node.type === 'system' ? ' disabled' : ''}></label></div></details>` }
+  const systemNodes = scenario.nodes.map((node, index) => node.type === 'system' ? renderNode(node, index) : '').join('')
+  const userNodes = scenario.nodes.map((node, index) => node.type === 'user' ? renderNode(node, index) : '').join('')
+  const nodes = `${systemNodes}<div class="prompt-role-divider" data-prompt-divider="user" role="separator" title="拖动私有提示词到此处可切换为用户消息"><span>system / user</span></div>${userNodes}`
+  const rules = scenario.regexRules.map((rule, index) => `<article class="prompt-regex" data-regex-index="${index}"><label>名称<input data-regex-field="name" value="${escape(rule.name)}"></label><label>匹配正则<input data-regex-field="pattern" value="${escape(rule.pattern)}"></label><label>替换文本<input data-regex-field="replacement" value="${escape(rule.replacement)}"></label><label class="settings-row">规则启用<input data-regex-field="enabled" type="checkbox"${rule.enabled ? ' checked' : ''}></label><small>仅用于 ST 导入预设的文本替换。</small><button type="button" data-regex-delete="${index}">删除</button></article>`).join('')
+  $('#prompt-preset-nodes').innerHTML = `<h4 class="section-title">提示词节点（拖动排序）</h4>${nodes}<details class="prompt-compatibility" open><summary>ST 正则兼容层</summary><label class="settings-row">启用 ST 正则兼容层<input id="prompt-regex-compatibility" type="checkbox"${preset.compatibility?.regexEnabled === true ? ' checked' : ''}></label><p class="hint">用于兼容导入的 ST 文本替换规则。关闭时规则保留但不会修改发送给模型的提示词。</p>${rules || '<p class="hint">没有兼容规则</p>'}</details>`
+}
+function blankPromptPreset() { return { id: `preset-${Date.now()}`, name: '新预设', enabled: false, modes: ['director'], scenarios: {}, nodes: [], regexRules: [] } }
+async function openPromptPreset(id) { $('#prompt-preset-nodes').innerHTML = '<p class="hint">加载预设中…</p>'; editingPromptPreset = null; await loadPromptPresets(); editingPromptPreset = structuredClone(promptPresets.find(item => item.id === id) ?? blankPromptPreset()); $('#prompt-preset-modal').showModal(); renderPromptPresetEditor(); await openPromptAssistantSession() }
+function collectPromptPreset() { const preset = editingPromptPreset; preset.modes = [...document.querySelectorAll('[data-prompt-mode]:checked')].map(input => input.dataset.promptMode); preset.modes = [...new Set(preset.modes)]; if (!preset.modes.length) { alert('至少选择一个已安装模式。'); throw new Error('Preset must declare at least one mode.') } preset.name = $('#prompt-preset-name').value.trim() || '未命名预设'; preset.enabled = $('#prompt-preset-enabled').checked; preset.compatibility = { ...(preset.compatibility ?? {}), source: 'sillytavern', regexEnabled: $('#prompt-regex-compatibility')?.checked === true }; const scenario = ensurePromptScenario(preset); scenario.forceThinkingOff = $('#prompt-scenario-thinking-off')?.checked === true && !promptGameplayScenarioForceThinkingOff; scenario.order = [...document.querySelectorAll('.prompt-node')].map(card => scenario.nodes[Number(card.dataset.nodeIndex)]?.runtimeBinding ?? scenario.nodes[Number(card.dataset.nodeIndex)]?.id); scenario.nodes = [...document.querySelectorAll('.prompt-node')].map(card => { const old = scenario.nodes[Number(card.dataset.nodeIndex)]; const role = card.dataset.nodeRole === 'system' ? 'system' : 'user'; return { ...old, type: old.removable === false ? old.type : role, name: old.type === 'system' ? old.name : card.querySelector('[data-node-field="name"]').value.trim() || '未命名节点', content: old.type === 'system' ? old.content : card.querySelector('[data-node-field="content"]').value, enabled: old.type === 'system' ? true : card.querySelector('[data-node-field="enabled"]').checked } }); scenario.regexRules = [...document.querySelectorAll('.prompt-regex')].map(card => { const old = scenario.regexRules[Number(card.dataset.regexIndex)]; return { ...old, name: card.querySelector('[data-regex-field="name"]').value.trim() || '未命名规则', pattern: card.querySelector('[data-regex-field="pattern"]').value, replacement: card.querySelector('[data-regex-field="replacement"]').value, enabled: card.querySelector('[data-regex-field="enabled"]').checked } }); preset.scenarios = { ...(preset.scenarios ?? {}), [promptPresetScope]: scenario }; return preset }
 async function refreshRoom() { const response = await fetch('/api/room'); render(await response.json()) }
 async function api(path, body) { const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!response.ok) { alert((await response.json()).error || '请求失败'); return false }; const data = await response.json(); await refreshRoom(); return data }
 async function loadStories() {
@@ -511,6 +567,88 @@ document.addEventListener('click', event => {
   const decision = event.target.closest?.('[data-creator-decision]')
   if (decision) { const row = decision.closest('[data-creator-path]'); const diff = window.creatorPreview?.diffs?.find(item => item.path === row?.dataset.creatorPath); if (diff) { diff.decision = decision.dataset.creatorDecision; row.classList.toggle('accepted', diff.decision === 'accept'); row.classList.toggle('rejected', diff.decision === 'reject') } }
 })
+$('#prompt-preset-select').onchange = () => { if ($('#prompt-preset-select').value) openPromptPreset($('#prompt-preset-select').value) }
+$('#prompt-preset-new-modal').onclick = () => { editingPromptPreset = blankPromptPreset(); renderPromptPresetEditor() }
+$('#prompt-stagecraft-import-button').onclick = () => $('#prompt-stagecraft-import-file').click()
+$('#prompt-stagecraft-import-file').onchange = async event => { const file = event.target.files?.[0]; if (!file) return; try { const data = JSON.parse(await file.text()); const imported = Array.isArray(data) ? data[0] : Array.isArray(data.presets) ? data.presets[0] : data.preset ?? data; if (!imported || typeof imported !== 'object') throw new Error('文件不是有效的 StageCraft 预设'); editingPromptPreset = structuredClone(imported); editingPromptPreset.id = editingPromptPreset.id || `preset-${Date.now()}`; editingPromptPreset.name = editingPromptPreset.name || file.name.replace(/\.json$/i, ''); renderPromptPresetEditor() } catch (error) { alert(`导入 StageCraft 预设失败：${error.message}`) } finally { event.target.value = '' } }
+$('#prompt-st-import-button').onclick = () => $('#prompt-st-import-file').click()
+$('#prompt-st-import-file').onchange = async event => { const file = event.target.files?.[0]; if (!file) return; try { const source = await file.text(); const response = await fetch('/api/prompts/import-st', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? 'ST 预设转换失败'); const result = data.result ?? {}; editingPromptPreset = preparePromptAssistantDraft(result.preset); if (!editingPromptPreset) throw new Error('ST 预设没有可导入的提示词节点'); ensurePromptScenario(editingPromptPreset); renderPromptPresetEditor(); const warnings = Array.isArray(result.warnings) && result.warnings.length ? `\n\n注意：\n${result.warnings.join('\n')}` : ''; alert(`${result.reply ?? `已导入《${file.name}》`} ${warnings}`) } catch (error) { alert(`导入 ST 预设失败：${error.message}`) } finally { event.target.value = '' } }
+$('#prompt-preset-add-node').onclick = () => { collectPromptPreset(); const scenario = ensurePromptScenario(editingPromptPreset); scenario.nodes.push({ id: `user-${Date.now()}`, name: '私有提示词', content: '', type: 'user', enabled: true, editable: true, removable: true }); renderPromptPresetEditor() }
+$('#prompt-preset-add-regex').onclick = () => { collectPromptPreset(); editingPromptPreset.regexRules.push({ id: `regex-${Date.now()}`, name: 'ST 兼容规则', pattern: '', replacement: '', enabled: false }); renderPromptPresetEditor() }
+$('#prompt-preset-save').onclick = async () => { const preset = collectPromptPreset(); const response = await fetch('/api/prompts/presets', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ preset }) }); if (!response.ok) { alert('保存提示词预设失败。'); return }; const data = await response.json(); promptPresets = data.presets ?? promptPresets; if ($('#prompt-preset-enabled').checked) { const active = await fetch('/api/prompts/presets', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: promptPresetScope, activePresetId: preset.id }) }); if (!active.ok) { alert('作用域预设设置失败。'); return } } $('#prompt-preset-modal').close(); render(room) }
+document.addEventListener('click', event => { const tab = event.target.closest?.('[data-prompt-scenario]'); if (tab) { collectPromptPreset(); promptPresetScope = tab.dataset.promptScenario; promptGameplayScenarioForceThinkingOff = promptGameplayScenarios?.[promptPresetScope]?.forceThinkingOff === true; renderPromptPresetEditor() } })
+document.addEventListener('change', event => { const mode = event.target.closest?.('[data-prompt-mode]'); if (!mode || !editingPromptPreset) return; const enabled = [...document.querySelectorAll('[data-prompt-mode]:checked')].map(input => input.dataset.promptMode); if (!enabled.length) { mode.checked = true; return } editingPromptPreset.modes = [...new Set(enabled)]; const hidden = promptPresetScope.startsWith('director.') ? !enabled.includes('director') : !enabled.includes('chat'); if (hidden) { const next = Object.keys(promptPresetScopes).find(id => id !== 'prompt-preset.transform' && (id.startsWith('director.') ? enabled.includes('director') : enabled.includes('chat'))); if (next) promptPresetScope = next } renderPromptPresetEditor() })
+document.addEventListener('change', event => { const input = event.target.closest?.('[data-panel-input]'); if (!input) return; const card = input.closest('.panel-card'); const actionId = input.dataset.panelInput; if (!actionId) return; const owner = card?.dataset.panelOwner ?? ''; const value = input.value ?? ''; fetch('/api/core/ui/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actionId, owner, input: { value } }) }).then(response => response.json()).then(data => { if (!data.ok) alert(data.error || '面板操作失败'); if (workbenchTab === 'panels') renderPanelDock() }).catch(error => alert(error.message)) })
+let draggingPromptNode = null
+let promptAssistantDraft = null
+function appendPromptAssistant(role, text) { const list = $('#prompt-assistant-messages'); if (!list) return; $('#prompt-assistant-welcome')?.remove(); list.insertAdjacentHTML('beforeend', `<p class="prompt-assistant-message ${role}"><b>${role === 'user' ? '你' : 'AI'}</b>${escape(text)}</p>`); list.scrollTop = list.scrollHeight }
+function preparePromptAssistantDraft(raw) {
+  const draft = structuredClone(raw)
+  if (!draft || typeof draft !== 'object') return null
+  draft.id = draft.id || `preset-${Date.now()}`
+  draft.name = draft.name || 'AI助手草案'
+  draft.enabled = false
+  draft.modes = Array.isArray(draft.modes) && draft.modes.length ? draft.modes : ['director']
+  draft.scenarios ??= {}
+  if (!draft.scenarios[promptPresetScope]) {
+    const legacyNodes = Array.isArray(draft.nodes) ? draft.nodes : []
+    draft.scenarios[promptPresetScope] = { nodes: legacyNodes, regexRules: Array.isArray(draft.regexRules) ? draft.regexRules : [] }
+  }
+  return draft
+}
+function importPromptAssistantDraft() {
+  if (!promptAssistantDraft) return
+  editingPromptPreset = preparePromptAssistantDraft(promptAssistantDraft)
+  ensurePromptScenario(editingPromptPreset)
+  renderPromptPresetEditor()
+  $('#prompt-preset-nodes')?.scrollTo({ top: 0, behavior: 'smooth' })
+}
+function promptAssistantContext() { return `你是 StageCraft 的提示词预设编辑助手。你只能分析和提出预设变更建议，不要修改剧本文件，不要声称已经保存任何预设。用户会在中栏预览并明确点击保存。
+
+编辑规则（完整版见 docs/st-preset-mapping-manual.md）：
+- 固定玩法节点（removable=false）不可改名、不可删、不可改 role，只能调顺序和启用状态。
+- 每个独立信息来源保持独立节点；不合并、不改写内容。
+- role 为 system 的节点保持在 system 段，role 为 user 的保持在 user 段；调整顺序不跨段。
+- enabled=false 的节点保留，以暗色显示；不要删除用户已关闭的节点。
+- 正则规则是 ST 兼容层，默认总开关关闭；不要建议默认开启。
+- 采样参数、prefill、squash_system_messages 不在此预设中体现（导入时已过滤），不讨论。
+- 只输出节点级 diff 和理由，不直接改预设、不伪造已保存、不返回空对象。
+
+当前预设：
+${JSON.stringify(editingPromptPreset, null, 2)}
+
+当前情景：${promptPresetScope}
+先按手册标注每个 ST 条目为 保留/跳过/警告，再输出节点级 diff 和理由，不要返回空对象。` }
+async function syncPromptAssistantContext() { if (!promptAssistantSession) return; await agentSessionRequest('/api/agent/context', { owner: promptAssistantOwner, sessionId: promptAssistantSession.id, context: promptAssistantContext() }) }
+async function renderPromptAssistantSession(session) { promptAssistantSession = session; try { session.messages = await agentSessionRequest('/api/agent/history', { owner: promptAssistantOwner, sessionId: session.id }) } catch {} $('#prompt-assistant-session-label').textContent = session ? `会话 · ${String(session.id).slice(-8)}` : '尚未选择会话'; $('#prompt-assistant-session-model').disabled = !session; renderPromptAssistantMessages(session?.messages ?? []) }
+async function openPromptAssistantSession() { try { await loadPromptAssistantSessions(); $('#prompt-assistant-session-modal').showModal() } catch (error) { $('#prompt-assistant-messages').innerHTML = `<p class="error">DSH 预设编辑助手不可用：${escape(error instanceof Error ? error.message : String(error))}<br>仍可使用左栏的本地 ST 导入。</p>` } }
+async function loadPromptAssistantSessions() { const response = await fetch(`/api/agent/session?owner=${encodeURIComponent(promptAssistantOwner)}&storyId=eldoria`); if (!response.ok) throw new Error('无法读取 DSH 会话。'); const sessions = await response.json(); const list = $('#prompt-assistant-session-list'); list.innerHTML = sessions.length ? sessions.map(session => `<div class="creator-session-row"><button type="button" class="creator-session-choice" data-prompt-session-id="${escape(session.id)}">${escape(String(session.id).slice(-8))}</button><button type="button" class="creator-session-archive" data-prompt-archive-id="${escape(session.id)}" title="归档此会话">归档</button></div>`).join('') : '<p class="hint">当前没有预设助手会话。</p>'; list.querySelectorAll('[data-prompt-session-id]').forEach(button => button.onclick = async () => { const session = sessions.find(item => item.id === button.dataset.promptSessionId); await renderPromptAssistantSession(session); await syncPromptAssistantContext(); $('#prompt-assistant-session-modal').close() }); list.querySelectorAll('[data-prompt-archive-id]').forEach(button => button.onclick = async event => { event.stopPropagation(); const id = button.dataset.promptArchiveId; if (!confirm(`归档会话 ${String(id).slice(-8)}？`)) return; await agentSessionRequest('/api/agent/archive', { owner: promptAssistantOwner, sessionId: id }); await loadPromptAssistantSessions() }) }
+async function agentSessionRequest(path, body) { const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? 'DSH 会话请求失败'); return data }
+
+async function waitForPromptAssistantReply(sessionId) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (!promptAssistantSession || promptAssistantSession.id !== sessionId) return;
+    try { const messages = await agentSessionRequest('/api/agent/history', { owner: promptAssistantOwner, sessionId }); renderPromptAssistantMessages(messages); if (messages.some(message => message.role === 'system')) return } catch { return }
+  }
+}
+function renderPromptAssistantMessages(messages) { const list = $('#prompt-assistant-messages'); if (!list) return; list.innerHTML = messages?.length ? messages.map(message => `<div class="prompt-assistant-message ${message.role}"><b>${message.role === 'user' ? '你' : 'DSH'}</b><p>${escape(message.text)}</p></div>`).join('') : '<p class="hint">暂无消息。</p>'; list.scrollTop = list.scrollHeight }
+async function requestPromptAssistant(message) {
+  const input = $('#prompt-assistant-input'); const send = $('#prompt-assistant-send'); if (!promptAssistantSession) { await openPromptAssistantSession(); if (!promptAssistantSession) return }
+  appendPromptAssistant('user', message); if (input) { input.value = ''; input.disabled = true }; if (send) send.disabled = true;
+  try { const data = await agentSessionRequest('/api/agent/message', { owner: promptAssistantOwner, sessionId: promptAssistantSession.id, storyId: 'eldoria', text: message }); await renderPromptAssistantSession(data); $('#prompt-assistant-messages').insertAdjacentHTML('beforeend', '<p class="hint">DSH 正在分析当前预设…</p>'); void waitForPromptAssistantReply(promptAssistantSession.id) } catch (error) { appendPromptAssistant('assistant', `DSH 请求失败：${error instanceof Error ? error.message : String(error)}`) } finally { if (input) input.disabled = false; if (send) send.disabled = false }
+}
+$('#prompt-assistant-session-open').onclick = () => openPromptAssistantSession()
+$('#prompt-assistant-session-new').onclick = async () => { try { const session = await agentSessionRequest('/api/agent/session', { owner: promptAssistantOwner, storyId: 'eldoria' }); await renderPromptAssistantSession(session); await syncPromptAssistantContext(); $('#prompt-assistant-session-modal').close() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
+$('#prompt-assistant-session-model').onclick = async () => { if (!promptAssistantSession) return; try { const data = await agentSessionRequest('/api/agent/models', { owner: promptAssistantOwner, sessionId: promptAssistantSession.id }); const providers = Array.isArray(data.groups) ? data.groups : Array.isArray(data.providers) ? data.providers : []; const current = data.current ?? {}; $('#prompt-assistant-session-provider').innerHTML = providers.map(provider => `<option value="${escape(provider.id ?? provider.provider ?? '')}">${escape(provider.name ?? provider.id ?? provider.provider ?? '供应商')}</option>`).join(''); const updateModels = () => { const provider = providers.find(item => String(item.id ?? item.provider) === $('#prompt-assistant-session-provider').value); $('#prompt-assistant-session-model-select').innerHTML = (provider?.models ?? []).map(model => `<option value="${escape(typeof model === 'string' ? model : model.id)}">${escape(typeof model === 'string' ? model : model.name ?? model.id)}</option>`).join('') }; $('#prompt-assistant-session-provider').onchange = updateModels; updateModels(); $('#prompt-assistant-session-reasoning').value = current.reasoningEffort ?? ''; $('#prompt-assistant-session-model-modal').showModal() } catch (error) { const message = error instanceof Error ? error.message : String(error); if (/模型目录|model/i.test(message)) { $('#prompt-assistant-session-model').disabled = true; $('#prompt-assistant-session-model-label').hidden = false; $('#prompt-assistant-session-model-label').textContent = '当前 sandboxed worker 未暴露宿主模型目录，使用 DSH 默认模型。' } else alert(message) } }
+$('#prompt-assistant-session-model-save').onclick = async () => { if (!promptAssistantSession) return; try { await agentSessionRequest('/api/agent/model', { owner: promptAssistantOwner, sessionId: promptAssistantSession.id, provider: $('#prompt-assistant-session-provider').value, model: $('#prompt-assistant-session-model-select').value, reasoningEffort: $('#prompt-assistant-session-reasoning').value.trim() || undefined }); $('#prompt-assistant-session-model-modal').close() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } }
+$('#prompt-assistant-send').onclick = async () => { const input = $('#prompt-assistant-input'); if (!input?.value.trim()) return; await requestPromptAssistant(input.value.trim()) }
+document.addEventListener('dragstart', event => { const handle = event.target.closest?.('[data-prompt-drag-handle]'); if (!handle) return; const node = handle.closest('.prompt-node'); if (!node) return; draggingPromptNode = Number(node.dataset.nodeIndex); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(draggingPromptNode)); node.classList.add('prompt-node-dragging') })
+document.addEventListener('dragend', event => { const node = event.target.closest?.('.prompt-node'); node?.classList.remove('prompt-node-dragging'); draggingPromptNode = null })
+document.addEventListener('dragover', event => { const target = event.target.closest?.('.prompt-node, .prompt-role-divider'); if (target && draggingPromptNode !== null) { event.preventDefault(); target.classList.add('prompt-node-drag-over') } })
+document.addEventListener('dragleave', event => { event.target.closest?.('.prompt-node, .prompt-role-divider')?.classList.remove('prompt-node-drag-over') })
+document.addEventListener('drop', event => { const target = event.target.closest?.('.prompt-node'); const divider = event.target.closest?.('.prompt-role-divider'); if ((!target && !divider) || draggingPromptNode === null) return; event.preventDefault(); target?.classList.remove('prompt-node-drag-over'); divider?.classList.remove('prompt-node-drag-over'); collectPromptPreset(); const scenario = ensurePromptScenario(editingPromptPreset); const from = draggingPromptNode; const dragged = scenario.nodes[from]; if (!dragged) return; const targetRole = divider ? 'user' : target.dataset.nodeRole; if (dragged.removable === false && targetRole !== dragged.type) { draggingPromptNode = null; renderPromptPresetEditor(); return } if (dragged.removable !== false) dragged.type = targetRole; const orderedCards = [...document.querySelectorAll('.prompt-node')].map(card => Number(card.dataset.nodeIndex)); const systemCount = orderedCards.filter(index => scenario.nodes[index]?.type === 'system').length; const targetIndex = divider ? systemCount : orderedCards.indexOf(Number(target.dataset.nodeIndex)); scenario.nodes.splice(from, 1); const adjusted = targetIndex < 0 ? scenario.nodes.length : targetIndex - (from < targetIndex ? 1 : 0); scenario.nodes.splice(Math.max(0, adjusted), 0, dragged); editingPromptPreset.scenarios = { ...(editingPromptPreset.scenarios ?? {}), [promptPresetScope]: scenario }; draggingPromptNode = null; renderPromptPresetEditor() })
+document.addEventListener('click', event => { const deleteNode = event.target.closest?.('[data-prompt-node-delete]'); if (deleteNode) { collectPromptPreset(); const scenario = ensurePromptScenario(editingPromptPreset); scenario.nodes.splice(Number(deleteNode.dataset.promptNodeDelete), 1); renderPromptPresetEditor(); return } const target = event.target.closest?.('[data-tab]'); if (target) { sidebarTab = target.dataset.tab; render(room) } if (event.target.closest?.('[data-workbench-tab]')) { workbenchTab = event.target.closest('[data-workbench-tab]').dataset.workbenchTab; if (workbenchTab === 'panels') { panelDockView = null; panelDockFetchFailed = false; void refreshPanelDockView() }; applyWorkbenchTab() } const panelAction = event.target.closest?.('[data-panel-action]'); if (panelAction) { const card = panelAction.closest('.panel-card'); const actionId = panelAction.dataset.panelAction; const owner = card?.dataset.panelOwner ?? ''; const confirmText = panelAction.dataset.panelConfirm; if (confirmText && !confirm(confirmText)) return; renderPanelDock(); fetch('/api/core/ui/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actionId, owner, input: {} }) }).then(response => response.json()).then(data => { if (!data.ok) alert(data.error || '面板操作失败'); refreshRoom() }).catch(error => alert(error.message)) } const preset = event.target.closest?.('[data-prompt-preset]'); if (preset) openPromptPreset(preset.dataset.promptPreset); if (event.target.closest?.('#prompt-preset-new')) openPromptPreset(''); const copy = event.target.closest?.('[data-prompt-copy]'); if (copy) { const source = promptPresets.find(item => item.id === copy.dataset.promptCopy); if (source) { editingPromptPreset = structuredClone(source); editingPromptPreset.id = `preset-${Date.now()}`; editingPromptPreset.name = `${source.name} 副本`; editingPromptPreset.enabled = false; $('#prompt-preset-modal').showModal(); renderPromptPresetEditor() } } const remove = event.target.closest?.('[data-prompt-delete]'); if (remove && confirm('删除该提示词预设？')) fetch('/api/prompts/presets?id=' + encodeURIComponent(remove.dataset.promptDelete), { method: 'DELETE' }).then(response => response.json()).then(data => { promptPresets = data.presets ?? promptPresets; render(room) }); const del = event.target.closest?.('[data-regex-delete]'); if (del) { collectPromptPreset(); editingPromptPreset.regexRules.splice(Number(del.dataset.regexDelete), 1); renderPromptPresetEditor() } })
 $('#prompts-edit').onclick = async () => {
   $('#prompts-modal').showModal()
   try {
@@ -1366,7 +1504,7 @@ async function bootApp() {
     return
   }
   // 非核心辅助接口失败不应阻断旧 UI 的操作能力。
-  await Promise.allSettled([loadStories(), loadProviders(), coreInteractionPanel.start()])
+  await Promise.allSettled([loadStories(), loadProviders(), loadPromptPresets(), coreInteractionPanel.start()])
 }
 bootApp()
 const events = new EventSource('/api/events'); events.addEventListener('room', event => { try { render(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] room event render failed', error) } })

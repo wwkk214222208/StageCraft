@@ -17,7 +17,7 @@ import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } 
 import { createStoryPackage, listStoryPackages, loadStoryPackage, resolveStoryAssetFile, saveStoryAsPackage, saveStoryPackage, storyAssetsDir, storyPortraitUrl, type StoryPackage } from './story-packages.ts'
 import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
-import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptsFilePath, setUserPromptsDir, type PromptTemplates } from './prompts.ts'
+import { PROMPT_PRESET_SCOPES, deletePromptPreset, getPromptPresetState, listIdeologyFiles, listPromptPresets, loadGameplayScenario, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptPresetForScope, setPromptsFilePath, setUserPromptsDir, updatePromptPreset, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
 import { CreatorWorkbenchService } from './creator-workbench-service.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
@@ -30,6 +30,32 @@ import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { coreRuntimeCordisPlugin, createStageCraftService, humanCordisPlugin, llmCordisPlugin, solutionCordisPlugin, stageCraftServicePlugin, stateRepositoryCordisPlugin } from './core/cordis-plugins.ts'
 import { RemoteAccessService, isLoopbackAddress, isLoopbackHost, type RemoteAccessOptions } from './remote-access.ts'
 import { DshStorySessionService } from './dsh-story-session.ts'
+
+/** 把 SillyTavern 预设 JSON 转成 StageCraft 预设（本地确定性转换，不调用模型）。 */
+function convertSillyTavernPreset(source: string, message: string): { reply: string; preset: Record<string, unknown>; warnings: string[]; mapping: Array<Record<string, string>> } {
+  let input: any
+  try { input = JSON.parse(source) } catch { throw new Error('ST 预设不是有效 JSON。') }
+  if (!input || typeof input !== 'object' || !Array.isArray(input.prompts)) throw new Error('未找到 ST 预设 prompts 数组。')
+  const byId = new Map(input.prompts.map((item: any) => [String(item.identifier ?? item.id ?? ''), item]))
+  const nativeIdentifiers = new Set(['main', 'nsfw', 'dialogueExamples', 'chatHistory', 'worldInfoBefore', 'worldInfoAfter', 'enhanceDefinitions', 'charDescription', 'charPersonality', 'scenario', 'personaDescription'])
+  const promptOrders = Array.isArray(input.prompt_order) ? input.prompt_order.flatMap((group: any) => Array.isArray(group?.order) ? group.order : []) : []
+  const orderedIds = promptOrders.length ? promptOrders.filter((item: any) => item?.enabled !== false).map((item: any) => String(item.identifier ?? '')) : input.prompts.map((item: any) => String(item.identifier ?? item.id ?? ''))
+  const orderedUniqueIds = [...new Set(orderedIds.filter(id => byId.has(id)))]
+  const allPromptIds = input.prompts.map((item: any) => String(item.identifier ?? item.id ?? '')).filter((id: string) => byId.has(id))
+  const ids = [...orderedUniqueIds, ...allPromptIds.filter((id: string) => !orderedUniqueIds.includes(id))]
+  const importedIds = ids.filter(id => !nativeIdentifiers.has(id))
+  const skippedNative = ids.length - importedIds.length
+  const nodes = importedIds.map((id, index) => { const item = byId.get(id); const role = item.role === 'user' ? 'user' : 'system'; return { id: `st-${id || index + 1}`, name: String(item.name ?? id ?? `ST 节点 ${index + 1}`), content: String(item.content ?? ''), type: role, enabled: item.enabled !== false, editable: true, removable: true } })
+  const regexRules = Array.isArray(input.extensions?.regex_scripts) ? input.extensions.regex_scripts.map((rule: any, index: number) => ({ id: `st-regex-${index + 1}`, name: String(rule.scriptName ?? rule.name ?? `ST 正则 ${index + 1}`), pattern: String(rule.find ?? rule.regex ?? ''), replacement: String(rule.replace ?? rule.replacement ?? ''), enabled: rule.disabled !== true })) : []
+  const preset: Record<string, unknown> = { id: `preset-${Date.now()}`, name: String(input.name ?? 'ST 导入预设'), enabled: false, modes: ['director', 'chat'], nodes, regexRules, scenarios: {} }
+  const warnings = ['已使用本地确定性转换，未让模型重写 ST 预设内容。']
+  const omittedPromptCount = input.prompts.filter((item: any) => !ids.includes(String(item.identifier ?? item.id ?? ''))).length
+  if (omittedPromptCount > 0) warnings.push(`有 ${omittedPromptCount} 个 ST 节点未纳入导入。`)
+  if (skippedNative > 0) warnings.push(`已识别并跳过 ${skippedNative} 个 ST 原生系统字段（按 identifier 字段判断）。`)
+  if (input.squash_system_messages === true) warnings.push('ST 的 squash_system_messages 不直接转换；StageCraft 保留独立节点。')
+  if (input.assistant_prefill || input.continue_prefill) warnings.push('ST 的 prefill/continue 行为不直接转换为提示词节点。')
+  return { reply: `已转换《${String(input.name ?? 'ST 预设')}》：${nodes.length} 个提示词节点、${regexRules.length} 条正则规则。${message ? `请求：${message}` : ''}`, preset, warnings, mapping: nodes.map(node => ({ source: node.id.replace(/^st-/, ''), target: node.id })) }
+}
 
 
 /** Provider replacement transaction: preflight must run before tearing down the old route. */
@@ -537,8 +563,20 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         return json(response, 200, { ok: true, defaults: providerStore.defaults() })
       }
       if (url.pathname === '/api/usage') return json(response, 200, gateway?.usage(true) ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake' })
+      if (url.pathname === '/api/prompts/presets' && request.method === 'GET') return json(response, 200, { ...getPromptPresetState(promptsFilePath), modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], promptTemplates: loadPrompts(promptsFilePath), gameplayScenarios: Object.fromEntries(PROMPT_PRESET_SCOPES.map(scope => [scope, loadGameplayScenario(scope, promptsFilePath)])) })
+      if (url.pathname === '/api/prompts/presets' && request.method === 'PUT') {
+        const body = await readJson(request)
+        if (body.scope && body.activePresetId) return json(response, 200, setPromptPresetForScope(String(body.scope) as import('./prompts.ts').PromptPresetScope, String(body.activePresetId), promptsFilePath))
+        const preset = body.preset && typeof body.preset === 'object' ? body.preset : body
+        return json(response, 200, { ok: true, ...getPromptPresetState(promptsFilePath), presets: updatePromptPreset(preset, promptsFilePath) })
+      }
+      if (url.pathname === '/api/prompts/presets' && request.method === 'DELETE') return json(response, 200, { ok: true, presets: deletePromptPreset(String(url.searchParams.get('id') ?? ''), promptsFilePath) })
+      if (url.pathname === '/api/prompts/import-st' && request.method === 'POST') {
+        const body = await readJson(request)
+        return json(response, 200, { ok: true, result: convertSillyTavernPreset(String(body.source ?? '').slice(0, 8_000_000), String(body.message ?? '')) })
+      }
       if (url.pathname === '/api/prompts' && request.method === 'GET') {
-        return json(response, 200, { files: listIdeologyFiles(promptsFilePath) })
+        return json(response, 200, { files: listIdeologyFiles(promptsFilePath), presets: listPromptPresets(promptsFilePath) })
       }
       if (url.pathname === '/api/prompts' && request.method === 'POST') {
         const body = await readJson(request)
