@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { LoreEntry, PlayerCharacter, Role } from './types.ts'
 
@@ -46,13 +46,14 @@ function normalizeStoryRoles(story: StoryPackage): StoryPackage {
   return story
 }
 
-/** 查找顺序：主目录 → custom/（用户自建）→ default/（默认剧本）→ 附加目录（bundle 镜像） */
+/** 查找顺序：custom/（玩家剧本，AppData）→ 附加目录（程序/仓库文件夹里的默认剧本）→ 主目录 → default/（AppData 副本）。 */
 function storyPath(directory: string, id: string, extraDirectories: string[] = []): string {
   const candidates = [
-    join(directory, `${id}.json`),
     join(directory, 'custom', `${id}.json`),
+    ...extraDirectories.flatMap(dir => [join(dir, `${id}.json`), join(dir, 'default', `${id}.json`)]),
+    join(directory, `${id}.json`),
     join(directory, 'default', `${id}.json`),
-    ...extraDirectories.flatMap(dir => [join(dir, `${id}.json`), join(dir, 'custom', `${id}.json`), join(dir, 'default', `${id}.json`)]),
+    ...extraDirectories.flatMap(dir => [join(dir, 'custom', `${id}.json`)]),
   ]
   for (const candidate of candidates) if (existsSync(candidate)) return candidate
   return candidates[0]
@@ -105,6 +106,43 @@ export function saveStoryPackage(directory: string, story: StoryPackage): void {
   validateStoryPackage(story)
   const path = storyPath(directory, story.id)
   writeFileSync(path, `${JSON.stringify(story, null, 2)}\n`, 'utf8')
+}
+
+/** 新建用户剧本（自定义模板）：默认玩家 + 一位向导角色，写入 custom/，随 listStoryPackages 标记 custom。 */
+export function createStoryPackage(directory: string, input: { title?: string; id?: string; opening?: string; sceneTime?: string; sceneLocation?: string } = {}): StoryPackage {
+  const title = String(input.title ?? '').trim() || '未命名剧本'
+  const id = String(input.id ?? '').trim() || `story-${Date.now()}`
+  const story: StoryPackage = {
+    id,
+    title,
+    opening: String(input.opening ?? '').trim() || `${title}：一个全新的故事即将展开。`,
+    playerCharacter: { name: '玩家', persona: '由玩家自由定义的参与者。', currentState: '刚刚进入当前场景。' },
+    roles: [{
+      id: 'guide',
+      name: '向导',
+      portraitRef: '/assets/default.svg',
+      currentState: '刚刚进入当前场景。',
+      presence: 'present',
+      selfModel: '一位介绍当前世界与背景的向导。',
+    }],
+    ...(input.sceneTime?.trim() ? { sceneTime: input.sceneTime.trim() } : {}),
+    ...(input.sceneLocation?.trim() ? { sceneLocation: input.sceneLocation.trim() } : {}),
+  }
+  validateStoryPackage(story)
+  const dir = join(directory, 'custom')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, `${id}.json`), `${JSON.stringify(story, null, 2)}\n`, 'utf8')
+  return story
+}
+
+/** 另存为：以新 id 把完整剧本写入 custom/（玩家剧本，AppData），保留全部内容；返回新剧本。 */
+export function saveStoryAsPackage(directory: string, story: StoryPackage, newId: string, title?: string): StoryPackage {
+  const copy: StoryPackage = { ...story, id: newId, ...(title?.trim() ? { title: title.trim() } : {}) }
+  validateStoryPackage(copy)
+  const dir = join(directory, 'custom')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, `${newId}.json`), `${JSON.stringify(copy, null, 2)}\n`, 'utf8')
+  return copy
 }
 
 /**
@@ -161,13 +199,13 @@ export function listStoryPackages(directory: string, extraDirectories: string[] 
       })
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
   }
-  // 优先级从低到高：bundle 主目录 → bundle custom → bundle default → 主目录(AppData) → 主目录 custom → 主目录 default。
+  // 优先级从低到高：主目录(AppData 副本) → 主目录 default → 附加目录（程序/仓库文件夹，默认剧本优先）→ 附加目录 custom → 主目录 custom（玩家剧本，最高）。
   // Map 后者覆盖前者，所以最后填充的 AppData/custom 优先级最高。
   const all = [
-    ...extraDirectories.flatMap(dir => [...read(dir), ...read(join(dir, 'custom')).map(entry => ({ ...entry, custom: true })), ...read(join(dir, 'default'))]),
     ...read(directory),
-    ...read(join(directory, 'custom')).map(entry => ({ ...entry, custom: true })),
     ...read(join(directory, 'default')),
+    ...extraDirectories.flatMap(dir => [...read(dir), ...read(join(dir, 'default')), ...read(join(dir, 'custom')).map(entry => ({ ...entry, custom: true }))]),
+    ...read(join(directory, 'custom')).map(entry => ({ ...entry, custom: true })),
   ]
   const byId = new Map<string, { id: string; title: string; custom?: boolean }>()
   for (const entry of all) byId.set(entry.id, { id: entry.id, title: entry.title, ...(entry.custom ? { custom: true } : {}) })

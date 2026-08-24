@@ -9,6 +9,7 @@ let room
 let creatorSession = null
 const creatorOwner = `creator-web:${crypto.randomUUID()}`
 let providers = []
+let storyCatalog = [] // /api/stories 最近一次列表（含 custom 标记：true=玩家自建，false=默认剧本）
 let focalRoleIds = new Set()
 let reconsideringRoleIds = new Set()
 let activeAction = null
@@ -341,7 +342,14 @@ function render(next) {
 
 async function refreshRoom() { const response = await fetch('/api/room'); render(await response.json()) }
 async function api(path, body) { const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!response.ok) { alert((await response.json()).error || '请求失败'); return false }; const data = await response.json(); await refreshRoom(); return data }
-async function loadStories() { const response = await fetch('/api/stories'); const stories = await response.json(); $('#story-select').innerHTML = stories.map(story => `<option value="${escape(story.id)}">${escape(story.title)}${story.custom ? '' : '（默认）'}</option>`).join('') }
+async function loadStories() {
+  const response = await fetch('/api/stories')
+  const stories = await response.json()
+  storyCatalog = stories
+  const options = stories.map(story => `<option value="${escape(story.id)}">${escape(story.title)}${story.custom ? '' : '（默认）'}</option>`).join('')
+  $('#story-select').innerHTML = options
+  $('#story-edit-select').innerHTML = options
+}
 async function loadProviders() { const data = await (await fetch('/api/providers')).json(); providers = data.providers; const usable = providers.filter(provider => provider.hasApiKey); const hasUsable = usable.length > 0; const options = providers.map(provider => `<option value="${escape(provider.id)}">${escape(provider.name)}${provider.hasApiKey ? '（已配置）' : '（无密钥）'}</option>`).join(''); $('#provider-select').innerHTML = options; $('#director-provider-select').innerHTML = options; $('#provider-select').value = data.defaults.defaultRoleProviderId && providers.some(item => item.id === data.defaults.defaultRoleProviderId) ? data.defaults.defaultRoleProviderId : (usable[0]?.id ?? providers[0]?.id ?? ''); $('#director-provider-select').value = data.defaults.directorProviderId && providers.some(item => item.id === data.defaults.directorProviderId) ? data.defaults.directorProviderId : (usable[0]?.id ?? providers[0]?.id ?? ''); updateModels(providers.find(item => item.id === $('#provider-select').value), '#model-select', data.defaults.defaultRoleModel); updateModels(providers.find(item => item.id === $('#director-provider-select').value), '#director-model-select', data.defaults.directorModel); updateThinkingOptions('#director-thinking', $('#director-model-select').value, data.defaults.directorThinkingStrength ?? 'standard'); const selects = ['provider-select', 'model-select', 'director-provider-select', 'director-model-select', 'director-thinking']; selects.forEach(id => { $(`#${id}`).disabled = !hasUsable }); $('#refresh-models').disabled = !hasUsable; $('#provider-unconfigured-hint').hidden = hasUsable; renderProviderList() }
 function renderProviderList() {
   const list = $('#provider-list')
@@ -591,6 +599,24 @@ $('#edit-story').onclick = async event => {
   } catch (error) {
     console.error('[StageCraft] Creator Workbench open failed', error)
     alert(`打开 Creator Workbench 失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    button.disabled = false
+  }
+}
+$('#story-new').onclick = async event => {
+  event.preventDefault()
+  const title = prompt('新剧本标题（留空 = 未命名剧本）：')
+  if (title === null) return
+  const button = event.currentTarget
+  button.disabled = true
+  try {
+    const response = await fetch('/api/stories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || '新建剧本失败。')
+    await loadStories()
+    await openStoryEditor(data.id)
+  } catch (error) {
+    alert(`新建剧本失败：${error instanceof Error ? error.message : String(error)}`)
   } finally {
     button.disabled = false
   }
@@ -860,20 +886,26 @@ $('#creator-session-refresh').onclick = async () => {
   const button = $('#creator-session-refresh'); button.disabled = true
   try { await refreshCreatorStory() } catch (error) { alert(error instanceof Error ? error.message : String(error)) } finally { button.disabled = false }
 }
-async function openStoryEditor() {
-  const storyId = $('#story-select').value
-  if (!storyId) { alert('请先在剧本弹窗中选择剧本。'); return }
+async function openStoryEditor(storyId) {
+  storyId ??= $('#story-select').value
+  if (!storyId) { alert('请先选择剧本。'); return }
   const response = await fetch(`/api/story/get?id=${encodeURIComponent(storyId)}`)
   if (!response.ok) { alert((await response.json()).error || '读取剧本失败。'); return }
   const story = await response.json()
   updateStoryEditorFromPackage(story)
   $('#story-edit-id').textContent = storyId
-  $('#creator-save-state').textContent = '已加载'
+  $('#story-select').value = [...$('#story-select').options].some(option => option.value === storyId) ? storyId : ''
+  $('#story-edit-select').value = [...$('#story-edit-select').options].some(option => option.value === storyId) ? storyId : ''
+  const isDefault = !storyCatalog.find(item => item.id === storyId)?.custom
+  $('#story-edit-save').disabled = isDefault
+  $('#story-delete').disabled = isDefault
+  $('#creator-save-state').textContent = isDefault ? '已加载（默认只读，可另存为）' : '已加载'
   resetCreatorPreview()
   document.querySelectorAll('#creator-story-tree .tree-item').forEach(item => item.classList.toggle('active', item.dataset.workbenchTarget === 'story-package'))
   document.querySelectorAll('.creator-section').forEach(section => { section.hidden = false })
-  $('#story-edit-modal').showModal()
+  if (!$('#story-edit-modal').open) $('#story-edit-modal').showModal()
 }
+$('#story-edit-select').onchange = () => { void openStoryEditor($('#story-edit-select').value) }
 function renderCreatorRoleSummary() {
 
 }
@@ -999,6 +1031,16 @@ $('#story-lore-add').onclick = () => { storyEditLore.push({ name: '新条目', c
 $('#story-edit-save').onclick = event => {
   event.preventDefault()
   const storyId = $('#story-edit-id').textContent
+  if (!storyCatalog.find(item => item.id === storyId)?.custom) { alert('默认剧本只读：修改请用「另存为」保存为新剧本。'); return }
+  const story = collectStoryEditorPackage(storyId)
+  fetch('/api/story/save', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ story }) }).then(async response => {
+    if (!response.ok) { alert((await response.json()).error || '保存失败。'); return }
+    $('#story-edit-modal').close()
+    const selected = $('#story-select').value
+    loadStories().then(() => { $('#story-select').value = selected })
+  })
+}
+function collectStoryEditorPackage(storyId) {
   storyEditLore = [...document.querySelectorAll('#story-lore-list .story-lore-item')].map(item => {
     const name = item.querySelector('.lore-name').value.trim() || '未命名条目'
     const content = item.querySelector('.lore-content').value
@@ -1007,7 +1049,7 @@ $('#story-edit-save').onclick = event => {
   })
   const sceneTime = $('#story-edit-scene-time').value.trim()
   const sceneLocation = $('#story-edit-scene-location').value.trim()
-  const story = {
+  return {
     id: storyId,
     title: $('#story-edit-title').value.trim(),
     opening: $('#story-edit-opening').value,
@@ -1021,12 +1063,39 @@ $('#story-edit-save').onclick = event => {
     roles: storyEditRoles,
     lore: storyEditLore,
   }
-  fetch('/api/story/save', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ story }) }).then(async response => {
-    if (!response.ok) { alert((await response.json()).error || '保存失败。'); return }
+}
+$('#story-save-as').onclick = async event => {
+  event.preventDefault()
+  const title = $('#story-edit-title').value.trim() || '未命名剧本'
+  const newTitle = prompt(`另存为新剧本（输入新标题，默认「${title}」）：`, title)
+  if (newTitle === null) return
+  const button = event.currentTarget
+  button.disabled = true
+  try {
+    const story = collectStoryEditorPackage($('#story-edit-id').textContent)
+    const response = await fetch('/api/story/save-as', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ story, title: newTitle }) })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || '另存为失败。')
+    await loadStories()
+    await openStoryEditor(data.id)
+  } catch (error) { alert(`另存为失败：${error instanceof Error ? error.message : String(error)}`) } finally { button.disabled = false }
+}
+$('#story-delete').onclick = async event => {
+  event.preventDefault()
+  const storyId = $('#story-edit-id').textContent
+  const meta = storyCatalog.find(item => item.id === storyId)
+  if (!meta?.custom) { alert('默认剧本只读，不可删除；只能删除玩家自建剧本。'); return }
+  if (!confirm(`确定删除剧本「${meta.title}」？\n删除后将连同其立绘资产一起移除，不可恢复。`)) return
+  const button = event.currentTarget
+  button.disabled = true
+  try {
+    const response = await fetch(`/api/stories?id=${encodeURIComponent(storyId)}`, { method: 'DELETE' })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || '删除失败。')
+    await loadStories()
     $('#story-edit-modal').close()
-    const selected = $('#story-select').value
-    loadStories().then(() => { $('#story-select').value = selected })
-  })
+    alert(`剧本「${meta.title}」已删除。`)
+  } catch (error) { alert(`删除失败：${error instanceof Error ? error.message : String(error)}`) } finally { button.disabled = false }
 }
 // 对话框关闭键统一委托（type=button + data-dialog-close，不依赖 form 提交）
 document.addEventListener('click', event => { const closer = event.target.closest('[data-dialog-close]'); if (closer) { const dialog = closer.closest('dialog'); if (dialog?.open) dialog.close() } })

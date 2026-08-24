@@ -14,7 +14,7 @@ import { Store } from './store.ts'
 import { NodeSqliteRepository } from './platform/node-sqlite-repository.ts'
 import { RoomRuntime } from './room-runtime.ts'
 import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } from './model-gateway.ts'
-import { listStoryPackages, loadStoryPackage, resolveStoryAssetFile, saveStoryPackage, storyAssetsDir, storyPortraitUrl, type StoryPackage } from './story-packages.ts'
+import { createStoryPackage, listStoryPackages, loadStoryPackage, resolveStoryAssetFile, saveStoryAsPackage, saveStoryPackage, storyAssetsDir, storyPortraitUrl, type StoryPackage } from './story-packages.ts'
 import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
 import { listIdeologyFiles, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptsFilePath, setUserPromptsDir, type PromptTemplates } from './prompts.ts'
@@ -474,7 +474,29 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         saveStoryPackage(storiesRoot, story)
         return json(response, 200, { ok: true })
       }
+      if (url.pathname === '/api/story/save-as' && request.method === 'POST') {
+        const body = await readJson(request)
+        const source = body.story as StoryPackage
+        if (!source?.id) throw new Error('剧本缺少内容。')
+        const saved = saveStoryAsPackage(storiesRoot, source, String(body.id ?? '').trim() || `story-${Date.now()}`, body.title ? String(body.title) : undefined)
+        return json(response, 200, { ok: true, id: saved.id, title: saved.title })
+      }
       if (url.pathname === '/api/stories' && request.method === 'GET') return json(response, 200, listStoryPackages(storiesRoot, bundleStoriesDirs))
+      if (url.pathname === '/api/stories' && request.method === 'POST') {
+        const body = await readJson(request)
+        const story = createStoryPackage(storiesRoot, { title: body.title ? String(body.title) : undefined, ...(body.opening ? { opening: String(body.opening) } : {}), ...(body.sceneTime ? { sceneTime: String(body.sceneTime) } : {}), ...(body.sceneLocation ? { sceneLocation: String(body.sceneLocation) } : {}) })
+        return json(response, 200, { ok: true, id: story.id, title: story.title })
+      }
+      if (url.pathname === '/api/stories' && request.method === 'DELETE') {
+        const id = String(url.searchParams.get('id') ?? '')
+        if (!id) throw new Error('缺少剧本 id。')
+        const target = join(storiesRoot, 'custom', `${id}.json`)
+        if (!existsSync(target)) throw new Error('默认或外部剧本不可删除，仅可删除玩家自建剧本（AppData/custom）。')
+        rmSync(target)
+        const assetsDir = join(storiesRoot, 'custom', `${id}.assets`)
+        if (existsSync(assetsDir)) rmSync(assetsDir, { recursive: true, force: true })
+        return json(response, 200, { ok: true, id })
+      }
       if (url.pathname === '/api/providers' && request.method === 'GET') return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults() })
       if (url.pathname === '/api/providers/save' && request.method === 'POST') {
         const body = await readJson(request)
