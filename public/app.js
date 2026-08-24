@@ -14,6 +14,45 @@ let reconsideringRoleIds = new Set()
 let activeAction = null
 let skipArmed = false
 let sidebarTab = 'roles' // 左侧栏标签：roles | lore
+// URL 导入：拉取为 blob → dataURL → 同样 3:4 裁剪；拉取/跨域失败时回退原 url（后端原样保存）
+async function preparePortraitUrl(url) {
+  try {
+    const response = await fetch(url, { mode: 'cors', redirect: 'follow' })
+    if (!response.ok) return url
+    const blob = await response.blob()
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(blob.type || '')) return url
+    const dataUrl = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => resolve(url); reader.readAsDataURL(blob) })
+    return await cropPortraitToRatio(dataUrl)
+  } catch { return url }
+}
+// 肖像载入时固定中心裁剪：输出 3:4（宽:高）PNG dataURL；任意原图（方形/横版/竖版）都裁到 3:4 再落盘
+function cropPortraitToRatio(dataUrl, ratio = 3 / 4) {
+  return new Promise(resolve => {
+    if (!String(dataUrl).startsWith('data:image/')) return resolve(dataUrl)
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const width = img.naturalWidth
+        const height = img.naturalHeight
+        if (!width || !height) return resolve(dataUrl)
+        let targetWidth = width
+        let targetHeight = height
+        if (width / height > ratio) targetWidth = Math.round(height * ratio)
+        else targetHeight = Math.round(width / ratio)
+        const offsetX = Math.round((width - targetWidth) / 2)
+        const offsetY = Math.round((height - targetHeight) / 2)
+        const canvas = document.createElement('canvas')
+        canvas.width = targetWidth
+        canvas.height = targetHeight
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, offsetX, offsetY, targetWidth, targetHeight, 0, 0, targetWidth, targetHeight)
+        resolve(canvas.toDataURL('image/png'))
+      } catch { resolve(dataUrl) }
+    }
+    img.onerror = () => resolve(dataUrl)
+    img.src = String(dataUrl)
+  })
+}
 let expandedMemoryId = null
 let draggingMemoryId = null
 let expandedStoryMemoryIndex = null
@@ -357,17 +396,22 @@ $('#player-avatar-file').onchange = event => {
   const reader = new FileReader()
   reader.onload = async () => {
     try {
-      const ok = await api('/api/player/avatar', { dataUrl: String(reader.result) })
+      const dataUrl = await cropPortraitToRatio(String(reader.result))
+      const ok = await api('/api/player/avatar', { dataUrl })
       if (ok) { $('#player-avatar-preview').src = ok.portraitRef ?? $('#player-avatar-preview').src; refreshRoom() }
     } finally { event.target.value = '' }
   }
   reader.readAsDataURL(file)
 }
 $('#player-avatar-url').onclick = async () => {
-  const url = prompt('输入图片 URL（将下载为主角肖像）：')
+  const url = prompt('输入图片 URL（将下载为主角肖像并裁剪为 3:4）：')
   if (!url || !url.trim()) return
   try {
-    const ok = await api('/api/player/avatar', { url: url.trim() })
+    const trimmed = url.trim()
+    const prepared = await preparePortraitUrl(trimmed)
+    const ok = prepared.startsWith('data:image/')
+      ? await api('/api/player/avatar', { dataUrl: prepared })
+      : await api('/api/player/avatar', { url: trimmed })
     if (ok) { $('#player-avatar-preview').src = ok.portraitRef ?? $('#player-avatar-preview').src; refreshRoom() }
   } catch { /* api() 已 alert */ }
 }
@@ -1156,7 +1200,8 @@ $('#inspector-avatar-file').onchange = event => {
     try {
       const editing = storyEditRoleIndex !== null
       const storyId = editing ? ($('#story-edit-id').textContent || '').trim() : ''
-      const ok = await api('/api/roles/avatar', { roleId, dataUrl: String(reader.result), ...(editing ? { skipDispatch: true, ...(storyId ? { storyId } : {}) } : {}) })
+      const dataUrl = await cropPortraitToRatio(String(reader.result))
+      const ok = await api('/api/roles/avatar', { roleId, dataUrl, ...(editing ? { skipDispatch: true, ...(storyId ? { storyId } : {}) } : {}) })
       if (ok) {
         $('#inspector-avatar-preview').src = ok.portraitRef ?? $('#inspector-avatar-preview').src
         // 剧本编辑模式：头像写入正在编辑的剧本角色（自包含资产，保存时随剧本包分发）
@@ -1168,13 +1213,17 @@ $('#inspector-avatar-file').onchange = event => {
   reader.readAsDataURL(file)
 }
 $('#inspector-avatar-url').onclick = async () => {
-  const url = prompt('输入图片 URL（将下载为角色头像）：')
+  const url = prompt('输入图片 URL（将下载为角色头像并裁剪为 3:4）：')
   if (!url || !url.trim()) return
   const roleId = $('#inspector-role-id').value
   try {
     const editing = storyEditRoleIndex !== null
     const storyId = editing ? ($('#story-edit-id').textContent || '').trim() : ''
-    const ok = await api('/api/roles/avatar', { roleId, url: url.trim(), ...(editing ? { skipDispatch: true, ...(storyId ? { storyId } : {}) } : {}) })
+    const trimmed = url.trim()
+    const prepared = await preparePortraitUrl(trimmed)
+    const ok = prepared.startsWith('data:image/')
+      ? await api('/api/roles/avatar', { roleId, dataUrl: prepared, ...(editing ? { skipDispatch: true, ...(storyId ? { storyId } : {}) } : {}) })
+      : await api('/api/roles/avatar', { roleId, url: trimmed, ...(editing ? { skipDispatch: true, ...(storyId ? { storyId } : {}) } : {}) })
     if (ok) {
       $('#inspector-avatar-preview').src = ok.portraitRef ?? $('#inspector-avatar-preview').src
       if (editing && storyEditRoles[storyEditRoleIndex]) storyEditRoles[storyEditRoleIndex].portraitRef = ok.portraitRef
@@ -1205,23 +1254,25 @@ function openCreateRoleModal() {
   $('#create-role-modal').showModal()
 }
 $('#new-role-avatar-upload').onclick = () => $('#new-role-avatar-file').click()
-$('#new-role-avatar-file').onchange = event => {
+$('#new-role-avatar-file').onchange = async event => {
   const file = event.target.files?.[0]
   if (!file) return
   if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) { alert('仅支持 png / jpeg / gif / webp 图片。'); event.target.value = ''; return }
   const reader = new FileReader()
-  reader.onload = () => {
-    pendingCreateAvatar = String(reader.result)
+  reader.onload = async () => {
+    pendingCreateAvatar = await cropPortraitToRatio(String(reader.result))
     $('#new-role-avatar-preview').src = pendingCreateAvatar
     event.target.value = ''
   }
   reader.readAsDataURL(file)
 }
-$('#new-role-avatar-url').onclick = () => {
-  const url = prompt('输入图片 URL（将直接作为该角色的肖像地址）：')
+$('#new-role-avatar-url').onclick = async () => {
+  const url = prompt('输入图片 URL（将下载为角色肖像并裁剪为 3:4）：')
   if (!url || !url.trim()) return
-  pendingCreateAvatar = url.trim()
-  $('#new-role-avatar-preview').src = pendingCreateAvatar
+  const trimmed = url.trim()
+  const prepared = await preparePortraitUrl(trimmed)
+  if (prepared.startsWith('data:image/')) { pendingCreateAvatar = prepared; $('#new-role-avatar-preview').src = prepared }
+  else { pendingCreateAvatar = trimmed; $('#new-role-avatar-preview').src = trimmed }
 }
 $('#create-role-save').onclick = event => {
   event.preventDefault()

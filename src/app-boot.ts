@@ -670,7 +670,13 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       if (url.pathname === '/api/roles/create' && request.method === 'POST') {
         const body = await readJson(request)
         const id = String(body.id ?? '').trim() || `role-${Date.now()}`
-        await dispatchManagement('create-role', { role: { id, name: String(body.name ?? '').trim(), portraitRef: String(body.portraitRef ?? '/assets/default.svg'), currentState: String(body.currentState ?? '刚刚进入当前场景。'), presence: ['present', 'absent', 'unavailable'].includes(String(body.presence)) ? String(body.presence) as 'present' | 'absent' | 'unavailable' : 'present', selfModel: String(body.selfModel ?? ''), ...(Array.isArray(body.memories) ? { memories: body.memories as import('./types.ts').InitialMemory[] } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}) } })
+        // 新建角色肖像：dataURL（已前端 3:4 裁剪）或 URL 都落盘为资产文件，portraitRef 存可访问地址
+        let portraitRef = String(body.portraitRef ?? '/assets/default.svg')
+        const rawPortrait = String(body.portraitRef ?? '')
+        if (rawPortrait.startsWith('data:image/') || (/^https?:\/\//i.test(rawPortrait) && rawPortrait !== '/assets/default.svg')) {
+          portraitRef = await saveAvatar(id, rawPortrait.startsWith('data:image/') ? rawPortrait : '', rawPortrait.startsWith('data:image/') ? '' : rawPortrait)
+        }
+        await dispatchManagement('create-role', { role: { id, name: String(body.name ?? '').trim(), portraitRef, currentState: String(body.currentState ?? '刚刚进入当前场景。'), presence: ['present', 'absent', 'unavailable'].includes(String(body.presence)) ? String(body.presence) as 'present' | 'absent' | 'unavailable' : 'present', selfModel: String(body.selfModel ?? ''), ...(Array.isArray(body.memories) ? { memories: body.memories as import('./types.ts').InitialMemory[] } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) as string[] } : {}) } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/roles/delete' && request.method === 'POST') {

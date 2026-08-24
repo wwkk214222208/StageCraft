@@ -2,6 +2,8 @@
 data/
 save/
 providers.json
+data/billing-prices.json
+data/billing-stats.json
 .workbuddy/
 .npm-cache/
 node_modules/
