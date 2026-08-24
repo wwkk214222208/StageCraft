@@ -42,8 +42,8 @@ export class ModelGatewayRouterAdapter implements CoreLlmRouterPlugin {
         onUsage: (value: import('../types.ts').TokenUsage) => { usage = value },
       }
       const result = request.stream === false
-        ? await gateway.complete(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, request.tool, callbacks, { thinkingStrength: request.thinkingStrength, requestId: request.requestId })
-        : await gateway.completeStreaming(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, request.tool, callbacks, {}, { thinkingStrength: request.thinkingStrength, requestId: request.requestId })
+        ? await gateway.complete(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, request.tool, callbacks, { thinkingStrength: request.thinkingStrength, requestId: request.requestId, messages: request.prompt.messages })
+        : await gateway.completeStreaming(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, request.tool, callbacks, {}, { thinkingStrength: request.thinkingStrength, requestId: request.requestId, messages: request.prompt.messages })
       const includeTelemetry = request.metadata?.includeTelemetry === true
       const modelResult: ModelResult = { requestId: request.requestId, output: result, ...(includeTelemetry && thinking ? { thinking } : {}), ...(includeTelemetry && usage ? { usage } : {}) }
       await this.host.submitModelResult(modelResult)

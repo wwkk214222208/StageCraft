@@ -16,8 +16,8 @@ export class ModelGatewayTransport implements ModelTransport {
         onUsage: (value: unknown) => { usage = value },
       }
       const output = request.stream === false
-        ? await this.gateway.complete(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, request.tool, callbacks, { thinkingStrength: request.thinkingStrength, requestId: request.requestId })
-        : await this.gateway.completeStreaming(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, request.tool, callbacks, {}, { thinkingStrength: request.thinkingStrength, requestId: request.requestId })
+        ? await this.gateway.complete(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, request.tool, callbacks, { thinkingStrength: request.thinkingStrength, requestId: request.requestId, messages: request.prompt.messages })
+        : await this.gateway.completeStreaming(request.prompt.system, request.prompt.user, request.contract.id, request.contract.schema, request.tool, callbacks, {}, { thinkingStrength: request.thinkingStrength, requestId: request.requestId, messages: request.prompt.messages })
       return { requestId: request.requestId, output, ...(thinking ? { thinking } : {}), ...(usage ? { usage } : {}) }
     } catch (error) {
       return { requestId: request.requestId, output: null, error: error instanceof Error ? error.message : String(error) }

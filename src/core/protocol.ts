@@ -45,6 +45,7 @@ export interface ModelToolDefinition {
 export interface PromptProgram {
   system: string
   user: string
+  messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string; binding?: string }>
   tools?: unknown[]
   metadata?: {
     capability?: string

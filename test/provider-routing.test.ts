@@ -13,7 +13,7 @@ test('provider configuration persists independent default-role and Director mode
   store.setDefaultRole('cheap', 'small')
   store.setDirector('strong', 'director-x')
   const restored = new ProviderConfigStore(join(root, 'providers.json'))
-  assert.deepEqual(restored.defaults(), { defaultRoleProviderId: 'cheap', defaultRoleModel: 'small', directorProviderId: 'strong', directorModel: 'director-x' })
+  assert.deepEqual(restored.defaults(), { defaultRoleProviderId: 'cheap', defaultRoleModel: 'small', directorProviderId: 'strong', directorModel: 'director-x', assistantProviderId: 'cheap', assistantModel: undefined })
   assert.equal(restored.getDefaultRole()?.name, '廉价服务')
   assert.equal(restored.getDirector()?.name, '强模型服务')
 })

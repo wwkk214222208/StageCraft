@@ -14,7 +14,7 @@ export type RoomMode = 'director' | 'chat'
 /** 思维链强度档位：off = 关闭（不产思考）；brief/standard/deep = 思考深度递增 */
 export type ThinkingStrength = 'off' | 'brief' | 'standard' | 'deep'
 
-/** 单次模型调用的 token 用量（用于前端小字展示；不计费） */
+/** 单次模型调用的 token 用量与可选计费快照。 */
 export interface TokenUsage {
   promptTokens: number
   completionTokens: number
@@ -22,6 +22,8 @@ export interface TokenUsage {
   cachedTokens?: number
   /** 本次调用耗时（毫秒） */
   durationMs?: number
+  /** 按当时价格表计算出的费用，保存快照避免价格修改影响历史消息。 */
+  cost?: { currency: string; total: number; input: number; output: number; cachedInput: number; peak: boolean; provider: string; model: string }
 }
 
 export type ParticipationMode = 'required' | 'optional' | 'excluded'

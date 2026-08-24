@@ -1,5 +1,5 @@
 import type { ConsultationMessage, Decision, Draft, Role } from './types.ts'
-import { loadPrompts, renderPrompt, type PromptTemplates } from './prompts.ts'
+import { applyPromptPreset, isPromptThinkingForcedOff, loadGameplayScenario, loadPrompts, renderPrompt, type PromptTemplates, type PromptPresetScope } from './prompts.ts'
 import { buildThinkingParams } from './thinking-params.ts'
 import type { ModelRequest, ModelResult } from './core/protocol.ts'
 
@@ -28,6 +28,8 @@ export interface ModelGatewayOptions {
   fetchImpl?: typeof fetch
   onSummary?: (text: string) => void
   logRawFinalContent?: boolean
+  onDetail?: (text: string) => void
+  onUsage?: (usage: import('./types.ts').TokenUsage, route: ModelRoute) => import('./types.ts').TokenUsage | void
 }
 
 export interface StreamingCallbacks {
@@ -44,6 +46,7 @@ export interface CompleteOptions {
   thinkingStrength?: import('./types.ts').ThinkingStrength
   /** Core correlation id used only for request-scoped cancellation. */
   requestId?: string
+  messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
 }
 
 export class ModelGateway {
@@ -51,6 +54,8 @@ export class ModelGateway {
   private readonly fetchImpl: typeof fetch
   private readonly onSummary?: (text: string) => void
   private readonly logRawFinalContent: boolean
+  private readonly onDetail?: (text: string) => void
+  private readonly onUsage?: ModelGatewayOptions['onUsage']
   private requests = 0
   private promptTokens = 0
   private completionTokens = 0
@@ -71,6 +76,8 @@ export class ModelGateway {
     this.fetchImpl = options.fetchImpl ?? fetch
     this.onSummary = options.onSummary
     this.logRawFinalContent = options.logRawFinalContent ?? false
+    this.onDetail = options.onDetail
+    this.onUsage = options.onUsage
   }
 
   usage(includeMetrics = false): { route: string; model: string; requests: number; promptTokens: number; completionTokens: number; cachedTokens?: number; totalDurationMs?: number; avgDurationMs?: number } {
@@ -98,10 +105,12 @@ export class ModelGateway {
       const headers = { 'content-type': 'application/json', authorization: `Bearer ${this.route.apiKey}` }
       // 思维链强度：注入 OpenAI 兼容思考参数，或（匹配不上/原生不可用）在 system 末尾追加提示词引导
       const thinking = buildThinkingParams(this.route.model, options.thinkingStrength ?? 'standard')
-      const effectiveSystem = thinking.promptSuffix ? `${system}${thinking.promptSuffix}` : system
-      const messages = [
+      const presetPrompt = applyPromptPreset(system, user, 'director.draft')
+       const effectiveSystem = thinking.promptSuffix ? `${presetPrompt.system}${thinking.promptSuffix}` : presetPrompt.system
+      const messages = options.messages ?? presetPrompt.messages.map((message, index) => index === 0 && message.role === 'system' ? { ...message, content: effectiveSystem } : message)
+       const legacyMessages = [
         { role: 'system', content: effectiveSystem },
-        { role: 'user', content: user },
+        { role: 'user', content: presetPrompt.user },
       ]
       const baseBody = { model: this.route.model, ...(responseFormat ? { response_format: responseFormat } : {}), ...(thinking.body ?? {}), messages }
       const toolBody = tool && this.route.toolCalling !== false
@@ -132,7 +141,7 @@ export class ModelGateway {
         : undefined
       this.promptTokens += body.usage?.prompt_tokens ?? 0
       this.completionTokens += body.usage?.completion_tokens ?? 0
-      if (callUsage) callbacks.onUsage?.({ ...callUsage, durationMs: Date.now() - startedAt })
+      if (callUsage) { const measured = { ...callUsage, durationMs: Date.now() - startedAt }; callbacks.onUsage?.(this.onUsage?.(measured, this.route) ?? measured) }
       const message = body.choices?.[0]?.message
       const toolCall = message?.tool_calls?.[0]
       const toolArguments = toolCall?.function?.arguments
@@ -142,6 +151,7 @@ export class ModelGateway {
       this.onSummary?.(toolArguments ? `模型返回工具参数：${schemaName}` : `模型返回文本内容：${schemaName}`)
       if (!content) throw new Error('Model response did not contain tool arguments or message content.')
       if (this.logRawFinalContent) console.log(`[model final content][${schemaName}]\n${content}\n[/model final content]`)
+       this.onDetail?.(`模型完整返回 [${schemaName}]\n${content}`)
       try {
         return parseModelJson(content) as T
       } catch {
@@ -190,10 +200,12 @@ export class ModelGateway {
       const headers = { 'content-type': 'application/json', authorization: `Bearer ${this.route.apiKey}` }
       // 思维链强度：注入 OpenAI 兼容思考参数，或（匹配不上/原生不可用）在 system 末尾追加提示词引导
       const thinking = buildThinkingParams(this.route.model, options.thinkingStrength ?? 'standard')
-      const effectiveSystem = thinking.promptSuffix ? `${system}${thinking.promptSuffix}` : system
-      const messages = [
+      const presetPrompt = applyPromptPreset(system, user, 'director.draft')
+       const effectiveSystem = thinking.promptSuffix ? `${presetPrompt.system}${thinking.promptSuffix}` : presetPrompt.system
+      const messages = options.messages ?? presetPrompt.messages.map((message, index) => index === 0 && message.role === 'system' ? { ...message, content: effectiveSystem } : message)
+       const legacyMessages = [
         { role: 'system', content: effectiveSystem },
-        { role: 'user', content: user },
+        { role: 'user', content: presetPrompt.user },
       ]
       const streamBody = { stream: true, model: this.route.model, ...(responseFormat ? { response_format: responseFormat } : {}), ...(thinking.body ?? {}), messages }
       const toolBody = tool && this.route.toolCalling !== false
@@ -224,7 +236,7 @@ export class ModelGateway {
         this.promptTokens += body.usage?.prompt_tokens ?? 0
         this.completionTokens += body.usage?.completion_tokens ?? 0
         if (body.usage?.prompt_tokens !== undefined || body.usage?.completion_tokens !== undefined) {
-          callbacks.onUsage?.({ promptTokens: body.usage?.prompt_tokens ?? 0, completionTokens: body.usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}), durationMs: Date.now() - startedAt })
+          { const measured = { promptTokens: body.usage?.prompt_tokens ?? 0, completionTokens: body.usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}), durationMs: Date.now() - startedAt }; callbacks.onUsage?.(this.onUsage?.(measured, this.route) ?? measured) }
         }
         const message = body.choices?.[0]?.message
         const toolCall = message?.tool_calls?.[0]
@@ -235,6 +247,7 @@ export class ModelGateway {
         this.onSummary?.(`模型已返回：${schemaName}`)
         if (!content) throw new Error('Model response did not contain tool arguments or message content.')
         if (this.logRawFinalContent) console.log(`[model final content][${schemaName}]\n${content}\n[/model final content]`)
+       this.onDetail?.(`模型完整返回 [${schemaName}]\n${content}`)
         try {
           return parseModelJson(content) as T
         } catch {
@@ -248,7 +261,7 @@ export class ModelGateway {
       this.promptTokens += usage?.prompt_tokens ?? 0
       this.completionTokens += usage?.completion_tokens ?? 0
       if (usage?.prompt_tokens !== undefined || usage?.completion_tokens !== undefined) {
-        callbacks.onUsage?.({ promptTokens: usage?.prompt_tokens ?? 0, completionTokens: usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}), durationMs: Date.now() - startedAt })
+        { const measured = { promptTokens: usage?.prompt_tokens ?? 0, completionTokens: usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}), durationMs: Date.now() - startedAt }; callbacks.onUsage?.(this.onUsage?.(measured, this.route) ?? measured) }
       }
       const finalContent = toolArguments || content
       this.onSummary?.(toolArguments ? `模型已返回工具参数：${schemaName}` : `模型已返回文本内容：${schemaName}`)
@@ -525,10 +538,20 @@ function formatSceneContext(scene?: { time?: string; location?: string }): strin
 }
 
 /** 世界书注入片段：常开条目（无 roles）+ 指定角色的条目 */
-function formatLoreForRole(lore: LoreEntry[], roleId: string): string {
-  const entries = (lore ?? []).filter(entry => !entry.roles?.length || entry.roles.includes(roleId))
-  if (entries.length === 0) return ''
-  return `世界书条目：\n${entries.map(entry => `【${entry.name}】\n${entry.content}`).join('\n\n')}`
+function formatLoreEntries(entries: LoreEntry[], empty: string): string {
+  if (entries.length === 0) return empty
+  return entries.map(entry => `【${entry.name}】\n${entry.content}`).join('\n\n')
+}
+function formatAlwaysLore(lore: LoreEntry[]): string {
+  return formatLoreEntries((lore ?? []).filter(entry => !entry.roles?.length), '（无常开世界书条目）')
+}
+function formatPrivateRoleLore(lore: LoreEntry[], roleId: string): string {
+  return formatLoreEntries((lore ?? []).filter(entry => Boolean(entry.roles?.length) && entry.roles!.includes(roleId)), '（无非公开角色世界书条目）')
+}
+function renderGameplayPrompt(scope: PromptPresetScope, values: Record<string, string>): { system: string; user: string; messages: Array<{ role: 'system' | 'user'; content: string; binding: string }> } {
+  const components = loadGameplayScenario(scope).components
+  const rendered = components.map(component => ({ role: component.role ?? 'system', content: renderPrompt(component.template ?? '', values).trim(), binding: component.id })).filter(item => item.content)
+  return { system: rendered.filter(item => item.role === 'system').map(item => item.content).join('\n\n'), user: rendered.filter(item => item.role === 'user').map(item => item.content).join('\n\n'), messages: rendered }
 }
 
 /** 导演用的全量世界书（含角色限定与隐秘条目），标注可见范围帮助导演把握哪些是秘密 */
@@ -580,14 +603,19 @@ function formatMemoryTimeline(role: Role): string {
     .join('\n')
 }
 
-export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole: (role: Role) => ModelGateway = () => directorGateway, options: { directorThinkingStrength?: import('./types.ts').ThinkingStrength; directorProviderId?: string; directorModel?: string; requestModel?: (request: ModelRequest) => Promise<ModelResult>; cancelModel?: (requestId?: string) => Promise<void> } = {}) {
+export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole: (role: Role) => ModelGateway = () => directorGateway, options: { directorThinkingStrength?: import('./types.ts').ThinkingStrength; roleThinkingStrength?: import('./types.ts').ThinkingStrength; directorProviderId?: string; directorModel?: string; requestModel?: (request: ModelRequest) => Promise<ModelResult>; cancelModel?: (requestId?: string) => Promise<void> } = {}) {
   const roleGateways = new Set<ModelGateway>()
   const directorThinking = options.directorThinkingStrength
   let coreRequestSequence = 0
   const rawRequestModel = options.requestModel
   if (rawRequestModel) options.requestModel = request => rawRequestModel({ ...request, workflowId: request.workflowId ?? workflowIdForCoreRequest(request) })
   const getRoleGateway = (role: Role) => { const gateway = gatewayForRole(role); roleGateways.add(gateway); return gateway }
-  const requestModel = (request: ModelRequest): Promise<ModelResult> => options.requestModel!({ ...request, workflowId: request.workflowId ?? workflowIdForCoreRequest(request) })
+  const requestModel = (request: ModelRequest): Promise<ModelResult> => {
+    const scope: PromptPresetScope = request.capability === 'prompt-preset.transform' ? 'prompt-preset.transform' : request.capability === 'role.decision' || request.capability === 'role.decision.retry' ? 'director.role-decision' : request.capability === 'director.draft' || request.capability === 'director.draft.retry' ? 'director.draft' : request.capability === 'director.consult' ? 'director.consult' : request.capability === 'role.speech' ? 'chat.role-speech' : request.capability === 'director.chat' ? 'chat.world-director' : 'director.draft'
+    const componentContents = request.prompt.messages ? Object.fromEntries(request.prompt.messages.filter(message => message.binding).map(message => [message.binding, message.content])) : undefined
+     const prompt = request.prompt.messages ? applyPromptPreset(request.prompt.system, request.prompt.user, scope, undefined, componentContents) : applyPromptPreset(request.prompt.system, request.prompt.user, scope)
+    return options.requestModel!({ ...request, workflowId: request.workflowId ?? workflowIdForCoreRequest(request), thinkingStrength: isPromptThinkingForcedOff(scope) ? 'off' : request.thinkingStrength, prompt: { ...request.prompt, ...prompt, messages: prompt.messages } })
+  }
   const requestCore = async <T>(request: ModelRequest, collectUsage?: (usage: import('./types.ts').TokenUsage) => void): Promise<{ output: T; thinking?: string }> => {
     if (!options.requestModel) throw new Error('Core LLM request path is not installed.')
     const result = await requestModel(request)
@@ -602,7 +630,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
     const key = prefixKey(role, lore)
     const cached = prefixCache.get(key)
     if (cached !== undefined) return cached
-    const loreText = formatLoreForRole(lore ?? [], role.id)
+    const loreText = formatPrivateRoleLore(lore ?? [], role.id)
     const prefix = renderPrompt(getPrompts().role.prefix, {
       loreText: loreText ? `${loreText}\n` : '',
       roleName: role.name,
@@ -619,18 +647,10 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       let usage = { promptTokens: 0, completionTokens: 0 }
       const collectThinking = (text: string) => { thinking += text; onThinking?.(text) }
       const collectUsage = (u: { promptTokens: number; completionTokens: number }) => { usage.promptTokens += u.promptTokens; usage.completionTokens += u.completionTokens }
-      const system = renderPrompt(getPrompts().role.system, {
-          prefix: rolePrefix(role, lore),
-          goalsSection: formatGoals(role),
-          scene: formatSceneContext(scene),
-          recentScene: recentScene || '（尚无已批准正文，本回合为开局）',
-          memoryTimeline: formatMemoryTimeline(role),
-          impressions: formatImpressions(role),
-          currentState: role.currentState,
-          publicRoles: publicRoleStates(publicRoles),
-        })
-      const user = renderPrompt(getPrompts().role.user, { contribution: contribution || '玩家空过。' })
-      const coreResult = options.requestModel ? await requestCore<{ brief: string; privateReaction: string; impressions?: Record<string, string> }>({ requestId: `role-decision:${role.id}:${turnIdFromScene(scene)}:${++coreRequestSequence}`, capability: 'role.decision', prompt: { system, user, metadata: { capability: 'role.decision', strategyId: 'stagecraft.director.role-decision' } }, contract: { id: 'role.decision', version: '1.0.0', schema: roleDecisionSchema }, tool: nativeTool('submit_role_decision', '提交角色本轮公开意图和私有即时反应。', roleDecisionSchema), thinkingStrength: role.thinkingStrength, route: { role: role.id, ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { model: role.modelOverride } : {}), purpose: 'director.role-decision' }, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId: scene?.turnId ?? turnIdFromScene(scene), actor: 'role', roleId: role.id } }, stream: true }, collectUsage) : undefined
+      const rendered = renderGameplayPrompt('director.role-decision', { roleName: role.name, selfModel: role.selfModel, alwaysLore: formatAlwaysLore(lore ?? []), privateRoleLore: formatPrivateRoleLore(lore ?? [], role.id), goalsSection: formatGoals(role), scene: formatSceneContext(scene), recentScene: recentScene || '（尚无已批准正文，本回合为开局）', memoryTimeline: formatMemoryTimeline(role), impressions: formatImpressions(role), currentState: role.currentState, publicRoles: publicRoleStates(publicRoles), contribution: contribution || '玩家空过。' })
+      const system = rendered.system
+      const user = rendered.user
+      const coreResult = options.requestModel ? await requestCore<{ brief: string; privateReaction: string; impressions?: Record<string, string> }>({ requestId: `role-decision:${role.id}:${turnIdFromScene(scene)}:${++coreRequestSequence}`, capability: 'role.decision', prompt: { system, user, messages: rendered.messages, metadata: { capability: 'role.decision', strategyId: 'stagecraft.director.role-decision' } }, contract: { id: 'role.decision', version: '1.0.0', schema: roleDecisionSchema }, tool: nativeTool('submit_role_decision', '提交角色本轮公开意图和私有即时反应。', roleDecisionSchema), thinkingStrength: role.thinkingStrength ?? options.roleThinkingStrength, route: { role: role.id, ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { model: role.modelOverride } : {}), purpose: 'director.role-decision' }, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId: scene?.turnId ?? turnIdFromScene(scene), actor: 'role', roleId: role.id } }, stream: true }, collectUsage) : undefined
       if (coreResult?.thinking) thinking = coreResult.thinking
       const result = coreResult?.output ?? await getRoleGateway(role).completeStreaming<{ brief: string; privateReaction: string; impressions?: Record<string, string> }>(system, user, 'role_decision', roleDecisionSchema, { name: 'submit_role_decision', description: '提交角色本轮公开意图和私有即时反应。', parameters: roleDecisionSchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: role.thinkingStrength })
       const normalized = normalizeRoleDecision(result)
@@ -638,7 +658,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       const retrySchema = { type: 'object', additionalProperties: true, properties: { brief: { type: 'string' }, privateReaction: { type: 'string' } }, required: ['brief', 'privateReaction'] }
       const retrySystem = renderPrompt(getPrompts().role.retrySystem, { roleName: role.name })
       const retryUser = renderPrompt(getPrompts().role.retryUser, { contribution: contribution || '玩家空过。' })
-      const retryCoreResult = options.requestModel ? await requestCore<unknown>({ requestId: `role-decision-retry:${role.id}:${turnIdFromScene(scene)}:${++coreRequestSequence}`, capability: 'role.decision.retry', prompt: { system: retrySystem, user: retryUser, metadata: { capability: 'role.decision.retry', strategyId: 'stagecraft.director.role-decision-retry' } }, contract: { id: 'role.decision.retry', version: '1.0.0', schema: retrySchema }, tool: nativeTool('submit_role_decision', '提交角色本轮公开意图和私有即时反应。', retrySchema), thinkingStrength: role.thinkingStrength, route: { role: role.id, ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { model: role.modelOverride } : {}), purpose: 'director.role-decision' }, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId: scene?.turnId ?? turnIdFromScene(scene), actor: 'role', roleId: role.id } }, stream: true }, collectUsage) : undefined
+      const retryCoreResult = options.requestModel ? await requestCore<unknown>({ requestId: `role-decision-retry:${role.id}:${turnIdFromScene(scene)}:${++coreRequestSequence}`, capability: 'role.decision.retry', prompt: { system: retrySystem, user: retryUser, metadata: { capability: 'role.decision.retry', strategyId: 'stagecraft.director.role-decision-retry' } }, contract: { id: 'role.decision.retry', version: '1.0.0', schema: retrySchema }, tool: nativeTool('submit_role_decision', '提交角色本轮公开意图和私有即时反应。', retrySchema), thinkingStrength: role.thinkingStrength ?? options.roleThinkingStrength, route: { role: role.id, ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { model: role.modelOverride } : {}), purpose: 'director.role-decision' }, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId: scene?.turnId ?? turnIdFromScene(scene), actor: 'role', roleId: role.id } }, stream: true }, collectUsage) : undefined
       if (retryCoreResult?.thinking) thinking += retryCoreResult.thinking
       const retry = retryCoreResult?.output ?? await getRoleGateway(role).completeStreaming<unknown>(retrySystem, retryUser, 'minimal_role_decision', retrySchema, { name: 'submit_role_decision', description: '提交角色本轮公开意图和私有即时反应。', parameters: retrySchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: role.thinkingStrength })
       const recovered = normalizeRoleDecision(retry)
@@ -648,7 +668,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
     async draft(turnId: string, contribution: string, decisions: Decision[], roles: Role[], consultations: ConsultationMessage[] = [], playerCharacter?: import('./types.ts').PlayerCharacter, scene?: import('./workers.ts').SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string, previousDraft?: string): Promise<Draft> {
       const briefs = decisions.filter(item => item.status === 'completed' && item.brief).map(item => `${item.roleId}${item.participation === 'required' ? '（焦点角色）' : ''}: ${item.brief}${item.publicIdentity ? `\n  对外身份/形象：${item.publicIdentity}` : ''}`).join('\n')
       const focalRoles = decisions.filter(item => item.participation === 'required').map(item => item.roleId).join('、') || '无'
-      const request = renderPrompt(getPrompts().director.request, {
+      const rendered = renderGameplayPrompt('director.draft', {
         scene: formatSceneContext(scene),
         recentScene: recentScene || '（尚无已批准正文，本回合为开局）',
         previousDraft: previousDraft?.trim() ? `【上一版草稿（当前待修订，仅修订时出现）】\n${previousDraft.trim()}\n` : '',
@@ -662,15 +682,18 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         consultations: consultations?.map(message => `${message.role}: ${message.text}`).join('\n') ?? '无',
         loreText: formatLoreAll(lore ?? []),
         rolePersonas: formatRolePersonas(roles),
+        alwaysLore: formatLoreAll(lore ?? []),
       })
+      const request = rendered.user
+      const system = rendered.system
       let thinking = ''
       let usage = { promptTokens: 0, completionTokens: 0 }
       const collectThinking = (text: string) => { thinking += text; onThinking?.(text) }
       const collectUsage = (u: { promptTokens: number; completionTokens: number }) => { usage.promptTokens += u.promptTokens; usage.completionTokens += u.completionTokens }
       const directorRoute = { ...(options.directorProviderId ? { providerId: options.directorProviderId } : {}), ...(options.directorModel ? { model: options.directorModel } : {}), purpose: 'director.draft' }
-      const coreResult = options.requestModel ? await requestCore<unknown>({ requestId: `director-draft:${turnId}:${++coreRequestSequence}`, capability: 'director.draft', prompt: { system: getPrompts().skills.director, user: request, metadata: { capability: 'director.draft', strategyId: 'stagecraft.director.draft' } }, contract: { id: 'story_draft', version: '1.0.0', schema: directorDraftSchema }, tool: nativeTool('submit_story_draft', '提交可供玩家审批的场景草稿和结构化状态变化。', directorDraftSchema), thinkingStrength: directorThinking, route: directorRoute, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId, actor: 'director' } }, stream: true }, collectUsage) : undefined
+      const coreResult = options.requestModel ? await requestCore<unknown>({ requestId: `director-draft:${turnId}:${++coreRequestSequence}`, capability: 'director.draft', prompt: { system, user: request, messages: rendered.messages, metadata: { capability: 'director.draft', strategyId: 'stagecraft.director.draft' } }, contract: { id: 'story_draft', version: '1.0.0', schema: directorDraftSchema }, tool: nativeTool('submit_story_draft', '提交可供玩家审批的场景草稿和结构化状态变化。', directorDraftSchema), thinkingStrength: directorThinking, route: directorRoute, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId, actor: 'director' } }, stream: true }, collectUsage) : undefined
       if (coreResult?.thinking) thinking = coreResult.thinking
-      const result = coreResult?.output ?? await directorGateway.completeStreaming<unknown>(getPrompts().skills.director, request, 'story_draft', directorDraftSchema, { name: 'submit_story_draft', description: '提交可供玩家审批的场景草稿和结构化状态变化。', parameters: directorDraftSchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: directorThinking })
+      const result = coreResult?.output ?? await directorGateway.completeStreaming<unknown>(system, request, 'story_draft', directorDraftSchema, { name: 'submit_story_draft', description: '提交可供玩家审批的场景草稿和结构化状态变化。', parameters: directorDraftSchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: directorThinking })
       const normalized = normalizeDirectorDraft(result)
       if (normalized) {
         normalized.stateUpdates = normalizeStateUpdateKeys(normalized.stateUpdates, { roleNames: new Map(roles.map(role => [role.name, role.id])), playerName: playerCharacter?.name })
@@ -737,7 +760,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       let usage = { promptTokens: 0, completionTokens: 0 }
       const collectThinking = (text: string) => { thinking += text; onThinking?.(text) }
       const collectUsage = (u: { promptTokens: number; completionTokens: number }) => { usage.promptTokens += u.promptTokens; usage.completionTokens += u.completionTokens }
-      const loreText = formatLoreForRole(lore ?? [], role.id)
+      const loreText = formatPrivateRoleLore(lore ?? [], role.id)
       const worldChangeSchema = {
         type: 'object', additionalProperties: false,
         properties: {
@@ -749,17 +772,12 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         },
       }
       const schema = { type: 'object', additionalProperties: false, properties: { text: { type: 'string', description: '角色此刻的完整发言（台词或带台词的行动描述）' }, worldChange: { type: 'object', additionalProperties: false, description: '可选。仅当你认为剧情需要推进时间、改变地点或引入新人物时才填；没有变更就省略。', properties: worldChangeSchema.properties } }, required: ['text'] }
-      const system = renderPrompt(getPrompts().chat.system, { roleName: role.name, selfModel: role.selfModel, goalsSection: formatGoals(role), ...(loreText ? { worldLore: `相关世界设定：\n${loreText}` } : { worldLore: '' }) })
-      const user = renderPrompt(getPrompts().chat.user, {
-        scene: formatSceneContext(scene) || '（尚未设定场景时间地点）',
-        recentScene: recentScene || '（尚无已批准正文，这是本局第一次发言）',
-        memoryTimeline: formatMemoryTimeline(role),
-        publicRoles: publicRoleStates(publicRoles),
-        contribution: contribution || '玩家没有说话，只是注视着你。',
-      })
+      const rendered = renderGameplayPrompt('chat.role-speech', { roleName: role.name, selfModel: role.selfModel, alwaysLore: formatAlwaysLore(lore ?? []), privateRoleLore: formatPrivateRoleLore(lore ?? [], role.id), goalsSection: formatGoals(role), scene: formatSceneContext(scene) || '（尚未设定场景时间地点）', recentScene: recentScene || '（尚无已批准正文，这是本局第一次发言）', memoryTimeline: formatMemoryTimeline(role), publicRoles: publicRoleStates(publicRoles), contribution: contribution || '玩家没有说话，只是注视着你。' })
+      const system = rendered.system
+      const user = rendered.user
       const result = options.requestModel
         ? await (async () => {
-          const modelResult = await options.requestModel!({ requestId: `chat-speech:${role.id}:${Date.now()}:${++coreRequestSequence}`, capability: 'role.speech', prompt: { system, user, metadata: { capability: 'role.speech', strategyId: 'stagecraft.chat.speech' } }, contract: { id: 'chat.speech', version: '1.0.0', schema }, tool: nativeTool('submit_chat_speech', '提交该角色此刻的完整发言（可选附带世界变更申请）。', schema), thinkingStrength: role.thinkingStrength, route: { role: role.id, ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { model: role.modelOverride } : {}), purpose: 'chat.speech' }, metadata: { includeTelemetry: true, correlation: { mode: 'chat', roomId: scene?.roomId, turnId: scene?.turnId, actor: 'role', roleId: role.id } }, stream: true })
+          const modelResult = await options.requestModel!({ requestId: `chat-speech:${role.id}:${Date.now()}:${++coreRequestSequence}`, capability: 'role.speech', prompt: { system, user, messages: rendered.messages, metadata: { capability: 'role.speech', strategyId: 'stagecraft.chat.speech' } }, contract: { id: 'chat.speech', version: '1.0.0', schema }, tool: nativeTool('submit_chat_speech', '提交该角色此刻的完整发言（可选附带世界变更申请）。', schema), thinkingStrength: role.thinkingStrength ?? options.roleThinkingStrength, route: { role: role.id, ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { model: role.modelOverride } : {}), purpose: 'chat.speech' }, metadata: { includeTelemetry: true, correlation: { mode: 'chat', roomId: scene?.roomId, turnId: scene?.turnId, actor: 'role', roleId: role.id } }, stream: true })
           // Core 路径的增量思考由 Core model.thinking.delta 事件实时桥接；
           // 这里只保留完整值用于持久化，避免在生成完成时重复推送整段。
           if (modelResult.thinking) thinking = modelResult.thinking
@@ -807,17 +825,19 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         },
         required: ['reply'],
       }
-      const system = renderPrompt(getPrompts().chat.directorChatSystem, {
+      const rendered = renderGameplayPrompt('chat.world-director', {
           scene: formatSceneContext({ time: context.sceneTime, location: context.sceneLocation }) || '（尚未设定场景时间地点）',
           recentScene: context.recentScene || '（尚无已批准正文）',
           roles: context.roles.map(role => `${role.name}（${role.id}，${role.presence === 'present' ? '在场' : role.presence === 'absent' ? '离场' : '不可用'}）：${role.currentState}`).join('\n'),
           lore: formatLoreAll(context.lore ?? []),
           history: (context.history ?? []).map(message => `${message.role === 'player' ? '玩家' : '导演'}：${message.text}`).join('\n'),
+           playerText: playerText.trim() || '（玩家没有说话）',
         })
-      const user = renderPrompt(getPrompts().chat.directorChatUser, { playerText: playerText.trim() || '（玩家没有说话）' })
+      const system = rendered.system
+       const user = rendered.user
       const result = options.requestModel
         ? await (async () => {
-          const modelResult = await options.requestModel!({ requestId: `chat-director:${Date.now()}:${++coreRequestSequence}`, capability: 'director.chat', prompt: { system, user, metadata: { capability: 'director.chat', strategyId: 'stagecraft.chat.director' } }, contract: { id: 'chat.director', version: '1.0.0', schema }, tool: nativeTool('submit_director_chat', '提交导演对玩家建议的回复（可选附带世界变更申请与叙述）。', schema), thinkingStrength: directorThinking, route: { ...(options.directorProviderId ? { providerId: options.directorProviderId } : {}), ...(options.directorModel ? { model: options.directorModel } : {}), purpose: 'chat.director' }, metadata: { includeTelemetry: true, correlation: { mode: 'chat', roomId: context.roomId, turnId: context.turnId, actor: 'director' } }, stream: true })
+          const modelResult = await options.requestModel!({ requestId: `chat-director:${Date.now()}:${++coreRequestSequence}`, capability: 'director.chat', prompt: { system, user, messages: rendered.messages, metadata: { capability: 'director.chat', strategyId: 'stagecraft.chat.director' } }, contract: { id: 'chat.director', version: '1.0.0', schema }, tool: nativeTool('submit_director_chat', '提交导演对玩家建议的回复（可选附带世界变更申请与叙述）。', schema), thinkingStrength: directorThinking, route: { ...(options.directorProviderId ? { providerId: options.directorProviderId } : {}), ...(options.directorModel ? { model: options.directorModel } : {}), purpose: 'chat.director' }, metadata: { includeTelemetry: true, correlation: { mode: 'chat', roomId: context.roomId, turnId: context.turnId, actor: 'director' } }, stream: true })
           if (modelResult.thinking) thinking = modelResult.thinking
           if (modelResult.usage) collectUsage(modelResult.usage)
           if (modelResult.error) throw new Error(modelResult.error)

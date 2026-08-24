@@ -31,6 +31,10 @@ interface ProviderConfigFile {
   defaultRoleModel?: string
   directorProviderId?: string
   directorModel?: string
+  assistantProviderId?: string
+  assistantModel?: string
+  roleThinkingStrength?: import('./types.ts').ThinkingStrength
+  assistantThinkingStrength?: import('./types.ts').ThinkingStrength
   directorThinkingStrength?: import('./types.ts').ThinkingStrength
 }
 
@@ -41,6 +45,10 @@ export class ProviderConfigStore {
   private defaultRoleModel: string | undefined
   private directorProviderId: string | undefined
   private directorModel: string | undefined
+  private assistantProviderId: string | undefined
+  private assistantModel: string | undefined
+  private roleThinkingStrength: import('./types.ts').ThinkingStrength | undefined
+  private assistantThinkingStrength: import('./types.ts').ThinkingStrength | undefined
   private directorThinkingStrength: import('./types.ts').ThinkingStrength | undefined
 
   constructor(filePath: string) {
@@ -51,6 +59,10 @@ export class ProviderConfigStore {
     this.defaultRoleModel = file.defaultRoleModel
     this.directorProviderId = file.directorProviderId ?? this.configs[0]?.id
     this.directorModel = file.directorModel
+    this.assistantProviderId = file.assistantProviderId ?? this.defaultRoleProviderId
+    this.assistantModel = file.assistantModel
+    this.roleThinkingStrength = file.roleThinkingStrength
+    this.assistantThinkingStrength = file.assistantThinkingStrength
     this.directorThinkingStrength = file.directorThinkingStrength
   }
 
@@ -59,13 +71,29 @@ export class ProviderConfigStore {
   }
 
   defaults(): Omit<ProviderConfigFile, 'providers'> {
-    return { defaultRoleProviderId: this.defaultRoleProviderId, defaultRoleModel: this.defaultRoleModel, directorProviderId: this.directorProviderId, directorModel: this.directorModel, ...(this.directorThinkingStrength ? { directorThinkingStrength: this.directorThinkingStrength } : {}) }
+    return { defaultRoleProviderId: this.defaultRoleProviderId, defaultRoleModel: this.defaultRoleModel, directorProviderId: this.directorProviderId, directorModel: this.directorModel, assistantProviderId: this.assistantProviderId, assistantModel: this.assistantModel, ...(this.roleThinkingStrength ? { roleThinkingStrength: this.roleThinkingStrength } : {}), ...(this.assistantThinkingStrength ? { assistantThinkingStrength: this.assistantThinkingStrength } : {}), ...(this.directorThinkingStrength ? { directorThinkingStrength: this.directorThinkingStrength } : {}) }
   }
 
   /** 导演思维链强度（缺省 undefined = 跟随默认档位 standard） */
   directorThinking(): import('./types.ts').ThinkingStrength | undefined {
     return this.directorThinkingStrength
   }
+
+  setRoleThinking(strength: import('./types.ts').ThinkingStrength): void {
+    if (!['off', 'brief', 'standard', 'deep'].includes(strength)) throw new Error('无效的思维链强度。')
+    this.roleThinkingStrength = strength
+    this.persist()
+  }
+
+  roleThinking(): import('./types.ts').ThinkingStrength | undefined { return this.roleThinkingStrength }
+
+  setAssistantThinking(strength: import('./types.ts').ThinkingStrength): void {
+    if (!['off', 'brief', 'standard', 'deep'].includes(strength)) throw new Error('无效的思维链强度。')
+    this.assistantThinkingStrength = strength
+    this.persist()
+  }
+
+  assistantThinking(): import('./types.ts').ThinkingStrength | undefined { return this.assistantThinkingStrength }
 
   setDirectorThinking(strength: import('./types.ts').ThinkingStrength): void {
     if (!['off', 'brief', 'standard', 'deep'].includes(strength)) throw new Error('无效的思维链强度。')
@@ -97,6 +125,21 @@ export class ProviderConfigStore {
     this.persist()
     return config
   }
+
+  setAssistant(id: string, model?: string): ProviderConfig {
+    const config = this.get(id)
+    if (!config) throw new Error('Provider 配置不存在。')
+    this.assistantProviderId = id
+    this.assistantModel = model
+    this.persist()
+    return config
+  }
+
+  getAssistant(): ProviderConfig | undefined {
+    return this.get(this.assistantProviderId ?? '') ?? this.getDefaultRole()
+  }
+
+  assistantModelName(): string | undefined { return this.assistantModel }
 
   setDirector(id: string, model?: string): ProviderConfig {
     const config = this.get(id)
