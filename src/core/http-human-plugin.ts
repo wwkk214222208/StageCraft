@@ -69,6 +69,19 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
       this.sendJson(response, 200, { ok: true, view: this.requireCore().getView() })
       return true
     }
+    if (url.pathname === '/api/core/ui/action' && request.method === 'POST') {
+      const body = await this.readJson(request)
+      const core = this.requireCore()
+      const actionId = String(body.actionId ?? '')
+      const input = body.input
+      const owner = String(body.owner ?? '')
+      // CoreRuntimePort 不含 UI 能力；只有实现了 CoreExtensionPort 的 core（如 CoreRuntimeSkeleton）支持。
+      const invoke = (core as { invokeUiAction?: (actionId: string, input: unknown, owner: string) => Promise<unknown> }).invokeUiAction
+      if (typeof invoke !== 'function') throw new Error('UI action is not available on this core.')
+      const output = await invoke(actionId, input, owner)
+      this.sendJson(response, 200, { ok: true, actionId, output: structuredClone(output ?? null) })
+      return true
+    }
     if (url.pathname === '/api/core/events' && request.method === 'GET') {
       response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
       // 首个注释块用于立即刷新 headers；EventSource 会忽略 SSE 注释，协议仍只广播 data 事件。

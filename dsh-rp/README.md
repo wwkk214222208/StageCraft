@@ -13,8 +13,9 @@
 
 DSH 保持 supervisor 身份；StageCraft 支持两个明确的 Cordis 配置模式：
 
-- `runtimeMode: embedded`（默认）：当前自包含开发路径，StageCraft HTTP、SQLite、静态资源与模型连接在 DSH 进程内运行。
-- `runtimeMode: sandboxed`：DSH 仅在宿主 Context 中注册 `ctx.stagecraftDebug`，并启动 `dist/worker.js` 子进程。状态、日志、Core view/event 通过版本化、bounded JSON RPC 流转；可调用 `start`、`stop`、`kill`、`restart`、`recover` 与 `request`。worker 崩溃只更新 supervisor 状态并发送日志/状态事件，不会销毁 DSH Context。
+- `runtimeMode: development`：指定 `syncRepository` 后监听本地源码，变更自动构建、同步 dist 并重启内嵌 StageCraft，适合本地开发。
+- `runtimeMode: embedded`（默认）：常规自包含运行，StageCraft HTTP、SQLite、静态资源与模型连接在 DSH 进程内运行。
+- `runtimeMode: sandboxed`：DSH 仅在宿主 Context 中注册 `ctx.stagecraftDebug`，并启动 `dist/worker.js` 子进程，不启用文件监听。状态、日志、Core view/event 通过版本化、bounded JSON RPC 流转；可调用 `start`、`stop`、`kill`、`restart`、`recover` 与 `request`。worker 崩溃只更新 supervisor 状态并发送日志/状态事件，不会销毁 DSH Context。
 
 `ctx.stagecraftDebug` 是可选调试桥；Inspector 不会自动开启，也不提供默认公网或非 loopback 端点。sandboxed worker 默认只监听内部 stdio RPC，不暴露 StageCraft HTTP。
 
@@ -24,11 +25,11 @@ DSH 保持 supervisor 身份；StageCraft 支持两个明确的 Cordis 配置模
 
 | 命令 | 作用 |
 |---|---|
-| `/stagecraft-reload` | 重启 StageCraft worker（不重启 DSH），加载 dsh-rp 最新构建。可在命令后附一句原因，例如 `/stagecraft-reload 改了开场文案` |
+| `/stagecraft-reload` | 重载 StageCraft（不重启 DSH）；sandboxed 重启 worker，embedded 重建内嵌应用并加载 dsh-rp 最新构建。可在命令后附一句原因，例如 `/stagecraft-reload 改了开场文案` |
 | `/stagecraft` | 在系统默认浏览器打开 StageCraft 页面（`http://127.0.0.1:8799/`） |
 
 - 两个命令都只在 `commands` 服务可用时注册（Web profile 默认可用）；其他 profile 缺该服务时命令不出现。
-- `/stagecraft-reload` 走 worker 的进程内重建（`rebuildComposition`）：关闭旧 composition → 复用同一端口与 RPC 通道重建新 composition，**没有 TCP 端口释放竞态，DSH 主进程全程不动**。若进程内重建失败（如 worker 未就绪），自动回退为杀进程 + 重新 spawn。
+- sandboxed 下 `/stagecraft-reload` 走 worker 的进程内重建（`rebuildComposition`）；embedded/development 下关闭旧应用并在同一 DSH 进程内重建，DSH 主进程不重启。
 - 除命令外，还有等价的外部触发途径：
   - HTTP 端点：`POST http://127.0.0.1:8899/api/stagecraft/reload`（DSH 主进程 webServer 上）
   - CLI：`node dsh-rp/bin/stagecraft-reload.mjs`
@@ -61,17 +62,35 @@ cordis.patch.yml 中的 config 是正式配置入口：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| runtimeMode | embedded | `embedded`（开发兼容）或 `sandboxed`（独立 worker） |
+| runtimeMode | embedded | `development`（监听本地仓库并自动构建/重载）、`sandboxed`（独立 worker）或 `embedded`（常规内嵌） |
 | port | 8799 | embedded 模式的酒馆 HTTP 端口 |
 | host | 127.0.0.1 | HTTP 监听地址 |
 | root | bundle 的 dist/ | 数据、剧本、提示词和静态资源根目录 |
 | remoteEnabled | false | 显式开启开发期局域网配对与 Bearer 鉴权 |
 | remotePairingTtlMs | 300000 | 一次性配对码有效期（毫秒） |
 | remoteSessionTtlMs | 43200000 | 远程会话有效期（毫秒） |
+| syncRepository | 空 | 本地 character-tavern 仓库根目录；例如 `D:/AI/AIRP/character-tavern` |
+| syncOnStart | false（配置仓库后默认 true） | 插件启动前运行本地仓库的 `dsh-rp/scripts/build.mjs` |
+| syncOnReload | false（配置仓库后默认 true） | `/stagecraft-reload` 或 HTTP 热重载前重新构建本地仓库 |
+| watchDebounceMs | 700 | `development` 模式文件变化后的去抖等待时间（毫秒） |
 
 远程入口目前只用于受信任局域网内的开发验证，本身不提供 TLS；跨越不受信任网络时必须由外部 TLS 终结层保护。监听非回环地址但未显式启用 `remoteEnabled` 会拒绝启动。
 
 RP_PORT、HOST、RP_ROOT 仍作为独立开发运行时的兼容回退；DSH 配置字段优先。
+
+### 自动同步本地仓库
+
+开发时可以让插件直接从指定本地仓库构建最新版本，免去手动执行构建和复制：
+
+```yaml
+config:
+  runtimeMode: 'sandboxed'
+  syncRepository: 'D:/AI/AIRP/character-tavern'
+  syncOnStart: true
+  syncOnReload: true
+```
+
+`syncRepository` 必须是仓库根目录，插件会执行 `<仓库>/dsh-rp/scripts/build.mjs`，然后把生成的 `dsh-rp/dist` 复制到当前已安装插件的 `dist`。`development` 模式还会监听仓库的 `src/`、`public/`、`dsh-rp/src/` 和 `dsh-rp/scripts/`，变更经过去抖后自动构建、同步并重启内嵌 StageCraft。`development` 必须配置 `syncRepository`；`sandboxed` 不启用文件监听，`embedded` 是常规内嵌模式。启动同步失败会阻止插件启动；监听同步失败会记录错误并保留当前应用。建议只在本机开发环境启用。也可以使用环境变量 `STAGECRAFT_SYNC_REPOSITORY`，但显式 DSH 配置优先。
 
 ## 许可证与源码
 

@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { build } from 'esbuild'
+import { buildSync } from 'esbuild'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const repositoryRoot = resolve(packageRoot, '..')
@@ -12,7 +12,7 @@ const publicRoot = join(distRoot, 'public')
 rmSync(distRoot, { recursive: true, force: true })
 mkdirSync(publicRoot, { recursive: true })
 
-await build({
+buildSync({
   entryPoints: {
     index: join(packageRoot, 'src', 'index.ts'),
     worker: join(repositoryRoot, 'src', 'debug', 'stagecraft-worker.ts'),
@@ -43,6 +43,7 @@ for (const file of ['default.svg', 'rowan.svg', 'seraphina.png', 'vex.svg', 'sta
 
 mkdirSync(join(distRoot, 'stories'), { recursive: true })
 mkdirSync(join(distRoot, 'prompts'), { recursive: true })
+if (existsSync(join(repositoryRoot, 'prompts', 'gameplay'))) cpSync(join(repositoryRoot, 'prompts', 'gameplay'), join(distRoot, 'prompts', 'gameplay'), { recursive: true })
 // 默认剧本与示范资产目录（stories/default/，自包含 /story-assets/eldoria/... 随包分发）
 cpSync(join(repositoryRoot, 'stories', 'default'), join(distRoot, 'stories', 'default'), { recursive: true })
 cpSync(join(repositoryRoot, 'prompts', 'prompts.json'), join(distRoot, 'prompts', 'prompts.json'))

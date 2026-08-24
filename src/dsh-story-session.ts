@@ -54,7 +54,7 @@ function stripSystemContext(text: string): string | undefined {
   return index >= 0 ? text.slice(index + marker.length).trim() : undefined
 }
 
-export interface DshStorySession { id: string; owner: string; storyId: string; storyTitle: string; createdAt: string; updatedAt: string; nativeId?: string; nativeHandle?: NativeSession; messages: DshStoryMessage[] }
+export interface DshStorySession { id: string; owner: string; storyId: string; storyTitle: string; createdAt: string; updatedAt: string; nativeId?: string; nativeHandle?: NativeSession; messages: DshStoryMessage[]; context?: string }
 export interface DshStoryMessage { role: 'user' | 'system'; text: string; createdAt: string }
 export interface DshStoryCapability { available: boolean; native: boolean; modelSelection: boolean; reason?: string }
 
@@ -122,14 +122,15 @@ export class DshStorySessionService {
       const requestedId = `creator-${randomUUID()}`
       const workspaceId = await this.resolveWorkspace(apiProxy)
       const response = await apiProxy.sessions.create({ rpcId: `creator-create-session-${randomUUID()}`, payload: { sessionId: requestedId, ...(workspaceId ? { workspaceId } : {}) } })
-      const created = this.unwrapRpc(response) as { sessionId?: unknown }
-      nativeId = sessionIdOf(created) ?? requestedId
+      const created = this.unwrapRpc(response)
+      nativeId = sessionIdOf(created) ?? sessionIdOf(response) ?? requestedId
       nativeSession = nativeId ? this.native?.binding?.(nativeId)?.session : undefined
     } else {
-      nativeSession = this.native?.create?.(undefined, {}) as NativeSession | undefined
-      nativeId = sessionIdOf(nativeSession)
+      const requestedId = `creator-${randomUUID()}`
+      nativeSession = this.native?.create?.(requestedId, {}) as NativeSession | undefined
+      nativeId = sessionIdOf(nativeSession) ?? requestedId
     }
-    if (!nativeId) throw new Error('DSH 创建会话未返回有效的 sessionId。')
+    if (!nativeId) throw new Error('DSH 创建会话未返回有效的 sessionId。请确认当前 dsh-rp 运行在 DSH host 内，并已暴露 sessions API。')
     const session: DshStorySession = { id: nativeId, owner: owner.slice(0, 128), storyId, storyTitle: story.title, createdAt: timestamp, updatedAt: timestamp, nativeId, ...(nativeSession ? { nativeHandle: nativeSession } : {}), messages: [] }
     this.sessions.set(session.id, session); return publicSession(session)
   }
@@ -137,8 +138,14 @@ export class DshStorySessionService {
   storyContext(nativeId: string): string {
     const session = [...this.sessions.values()].find(item => (item.nativeId ?? item.id) === nativeId)
     if (!session) return ''
+    if (session.context) return session.context
     const story = this.readStory(session.storyId)
     return `你正在协助编辑剧本文件。当前剧本 ID：${session.storyId}\n当前剧本标题：${story.title}\n剧本文件由 DSH 原生工作区工具负责读写。请直接使用 DSH 原生机制完成用户请求，不要伪造已完成的修改。`
+  }
+  setContext(owner: string, id: string, context: string): DshStorySession {
+    const session = this.require(owner, id)
+    session.context = bounded(context)
+    return publicSession(session)
   }
   async history(owner: string, id: string): Promise<DshStoryMessage[]> {
     const session = this.require(owner, id); const apiProxy = this.currentApiProxy()

@@ -6,6 +6,8 @@ import {
   DEBUG_SANDBOX_PROTOCOL_VERSION,
   type DebugRpcMethod,
   type DebugStream,
+  type HostRpcRequest,
+  type HostRpcResponse,
   type DebugStreamEnvelope,
   type DebugOwner,
   type WorkerRequest,
@@ -30,7 +32,7 @@ export interface WorkerRpcServerOptions {
   input: Readable
   output: Writable
   owner?: DebugOwner
-  createComposition: () => Promise<WorkerComposition>
+  createComposition: (hostRpc: (method: HostRpcRequest['method'], params: Record<string, any>) => Promise<unknown>) => Promise<WorkerComposition>
   now?: () => string
   pid?: number
 }
@@ -50,10 +52,11 @@ export class WorkerRpcServer {
   private readonly output: Writable
   private readonly owner: DebugOwner
   private boundOwner?: Pick<DebugOwner, 'ownerId' | 'sessionId'>
-  private readonly createComposition: () => Promise<WorkerComposition>
+  private readonly createComposition: (hostRpc: (method: HostRpcRequest['method'], params: Record<string, any>) => Promise<unknown>) => Promise<WorkerComposition>
   private readonly now: () => string
   private readonly pid?: number
   private readonly pending = new Map<string, AbortController>()
+  private readonly hostPending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   private readonly subscribers = new Map<DebugStream, Set<(envelope: DebugStreamEnvelope) => void>>()
   private sequence = 0
   private generation = 0
@@ -71,17 +74,24 @@ export class WorkerRpcServer {
     this.createComposition = options.createComposition
     this.now = options.now ?? (() => new Date().toISOString())
     this.pid = options.pid
+    this.hostRpc = options.hostRpc
   }
 
   async start(): Promise<void> {
     this.setStatus('starting')
-    this.composition = await this.createComposition()
+    this.composition = await this.createComposition((method, params) => this.requestHost(method, params))
     this.attachComposition(this.composition)
     this.generation++
     this.setStatus('running')
     this.write({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'ready', generation: this.generation, ...(this.pid ? { pid: this.pid } : {}), changedAt: this.now() })
     this.lineReader = createInterface({ input: this.input })
     this.lineReader.on('line', line => { void this.handleLine(line) })
+  }
+
+  async requestHost(method: HostRpcRequest['method'], params: Record<string, any>): Promise<unknown> {
+    const requestId = `host-${++this.sequence}`
+    const request: HostRpcRequest = { protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'host-request', requestId, method, params }
+    return new Promise((resolve, reject) => { const timer = setTimeout(() => { this.hostPending.delete(requestId); reject(new Error(`DSH host RPC timed out: ${method}`)) }, 15_000); this.hostPending.set(requestId, { resolve, reject, timer }); this.write(request) })
   }
 
   private attachComposition(composition: WorkerComposition): void {
@@ -120,7 +130,7 @@ export class WorkerRpcServer {
     // Windows 下 server.close() 后端口可能未立即释放（TIME_WAIT / 异步 close），
     // 等待一小段让 8799 可重新绑定，避免 EADDRINUSE。
     await new Promise(resolve => setTimeout(resolve, 500))
-    const next = await this.createComposition()
+    const next = await this.createComposition((method, params) => this.requestHost(method, params))
     this.composition = next
     this.attachComposition(next)
     this.generation++
@@ -147,6 +157,7 @@ export class WorkerRpcServer {
     }
     let value: unknown
     try { value = JSON.parse(line) } catch { this.writeError('invalid-frame', 'worker.status', 'Frame is not valid JSON.'); return }
+    if (value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'host-response') { const response = value as HostRpcResponse; const pending = this.hostPending.get(response.requestId); if (!pending) return; this.hostPending.delete(response.requestId); clearTimeout(pending.timer); response.ok ? pending.resolve(response.result) : pending.reject(new Error(response.error?.message ?? 'DSH host RPC failed')); return }
     if (value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'cancel') {
       try {
         validateCancellation(value as RequestCancellation)

@@ -120,6 +120,10 @@ export interface DebugRpcResults {
 
 export type DebugStream = 'logs' | 'worker.status' | 'core.view' | 'core.event'
 
+export type HostRpcMethod = 'sessions.create' | 'sessions.list' | 'sessions.history' | 'sessions.models' | 'sessions.selectModel' | 'sessions.prompt' | 'workspace.create' | 'workspace.list' | 'workspace.archiveSession'
+export interface HostRpcRequest { protocol: typeof DEBUG_SANDBOX_PROTOCOL_VERSION; kind: 'host-request'; requestId: string; method: HostRpcMethod; params: Record<string, JsonValue> }
+export interface HostRpcResponse { protocol: typeof DEBUG_SANDBOX_PROTOCOL_VERSION; kind: 'host-response'; requestId: string; ok: boolean; result?: JsonValue; error?: { message: string } }
+
 export interface WorkerRequest<M extends DebugRpcMethod = DebugRpcMethod> {
   protocol: typeof DEBUG_SANDBOX_PROTOCOL_VERSION
   kind: 'request'

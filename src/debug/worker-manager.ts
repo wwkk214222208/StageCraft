@@ -44,6 +44,7 @@ export interface WorkerManagerOptions {
   now?: () => string
   onStream?: (envelope: DebugStreamEnvelope) => void
   onLog?: (line: string) => void
+  onHostRequest?: (request: import('./sandbox-protocol.ts').HostRpcRequest) => Promise<unknown>
 }
 
 export interface WorkerExit {
@@ -106,6 +107,7 @@ export class WorkerManager {
     this.spawnChild = options.spawnChild ?? ((command, args, spawnOptions) => spawn(command, [...args], { ...spawnOptions, stdio: ['pipe', 'pipe', 'pipe'] }) as unknown as WorkerManagerChild)
     this.onStream = options.onStream
     this.onLog = options.onLog
+    this.onHostRequest = options.onHostRequest
     this.command = options.command ?? DEFAULT_COMMAND
     this.args = options.args ?? DEFAULT_ARGS
     this.cwd = options.cwd
@@ -118,6 +120,7 @@ export class WorkerManager {
   private readonly env?: NodeJS.ProcessEnv
   private readonly onStream?: (envelope: DebugStreamEnvelope) => void
   private readonly onLog?: (line: string) => void
+  private readonly onHostRequest?: (request: import('./sandbox-protocol.ts').HostRpcRequest) => Promise<unknown>
 
   async start(): Promise<WorkerManagerSnapshot> {
     if (this.status === 'running') return this.snapshot()
@@ -249,6 +252,7 @@ export class WorkerManager {
     let value: unknown
     try { value = JSON.parse(line) } catch { return }
     if (!value || typeof value !== 'object') return
+    if ((value as { kind?: unknown }).kind === 'host-request') { const request = value as import('./sandbox-protocol.ts').HostRpcRequest; const handler = this.onHostRequest; if (!handler) { void this.enqueue({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'host-response', requestId: request.requestId, ok: false, error: { message: 'DSH host RPC is unavailable.' } }); return } void handler(request).then(result => this.enqueue({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'host-response', requestId: request.requestId, ok: true, result: result as any })).catch(error => this.enqueue({ protocol: DEBUG_SANDBOX_PROTOCOL_VERSION, kind: 'host-response', requestId: request.requestId, ok: false, error: { message: error instanceof Error ? error.message : String(error) } })); return }
     if ((value as { kind?: unknown }).kind === 'ready') { this.ready = value as WorkerReadyEnvelope; return }
     if ((value as { kind?: unknown }).kind === 'stream') {
       const envelope = value as DebugStreamEnvelope

@@ -15,13 +15,15 @@
  * - root 默认指向打包产物的 dist/，可用 DSH Config 或 RP_ROOT 覆盖。
  */
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { cpSync, existsSync, watch, type FSWatcher } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { startTavern, type TavernApp } from '../../src/app-boot.ts'
 import { WorkerManager, type WorkerManagerSnapshot } from '../../src/debug/worker-manager.ts'
-import type { DebugRpcMethod, DebugRpcParams, DebugRpcResults, DebugStream, DebugStreamEnvelope } from '../../src/debug/sandbox-protocol.ts'
+import type { DebugRpcMethod, DebugRpcParams, DebugRpcResults, DebugStream, DebugStreamEnvelope, HostRpcRequest } from '../../src/debug/sandbox-protocol.ts'
 
 /** Cordis 插件名（profile 行 id）。 */
 export const name = 'rp'
@@ -29,7 +31,7 @@ export const name = 'rp'
 /** 所需服务：无——自包含，不依赖 dsh 任何服务。 */
 export const inject: string[] = []
 
-export type RuntimeMode = 'embedded' | 'sandboxed'
+export type RuntimeMode = 'development' | 'embedded' | 'sandboxed'
 
 export interface StageCraftDebugService {
   readonly mode: RuntimeMode
@@ -62,6 +64,14 @@ export interface Config {
   userDataRoot?: string
   /** Enable development-only bearer-authenticated LAN access (TLS is external). */
   remoteEnabled?: boolean
+  /** Local character-tavern repository root used by development mode watcher. */
+  syncRepository?: string
+  /** Development watcher debounce in milliseconds. */
+  watchDebounceMs?: number
+  /** Rebuild from syncRepository before plugin startup. */
+  syncOnStart?: boolean
+  /** Rebuild from syncRepository before /stagecraft-reload and reload commands. */
+  syncOnReload?: boolean
   /** One-time pairing code lifetime in milliseconds. */
   remotePairingTtlMs?: number
   /** Bearer session lifetime in milliseconds. */
@@ -69,12 +79,16 @@ export interface Config {
 }
 
 export const Config = z.object({
-  runtimeMode: z.union([z.const('embedded'), z.const('sandboxed')]),
+  runtimeMode: z.union([z.const('development'), z.const('embedded'), z.const('sandboxed')]),
   port: z.natural().max(65535),
   host: z.string(),
   root: z.string(),
   userDataRoot: z.string(),
   remoteEnabled: z.boolean(),
+  syncRepository: z.string(),
+  watchDebounceMs: z.natural(),
+  syncOnStart: z.boolean(),
+  syncOnReload: z.boolean(),
   remotePairingTtlMs: z.natural(),
   remoteSessionTtlMs: z.natural(),
 })
@@ -85,10 +99,27 @@ export const Config = z.object({
  */
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const packageRoot = dirname(fileURLToPath(import.meta.url))
+  const syncRepository = config.syncRepository || process.env.STAGECRAFT_SYNC_REPOSITORY || ''
+  const watchDebounceMs = config.watchDebounceMs ?? 700
+  const syncOnStart = config.syncOnStart ?? Boolean(syncRepository)
+  const syncOnReload = config.syncOnReload ?? Boolean(syncRepository)
+  const sync = (): void => {
+    if (!syncRepository) return
+    const repositoryRoot = resolve(syncRepository)
+    const buildScript = join(repositoryRoot, 'dsh-rp', 'scripts', 'build.mjs')
+    if (!existsSync(buildScript)) throw new Error(`StageCraft sync repository is missing dsh-rp/scripts/build.mjs: ${repositoryRoot}`)
+    console.log(`[dsh-rp] syncing local repository: ${repositoryRoot}`)
+    execFileSync(process.execPath, [buildScript], { cwd: join(repositoryRoot, 'dsh-rp'), stdio: 'inherit', env: { ...process.env, SOURCE_REPOSITORY_URL: process.env.SOURCE_REPOSITORY_URL ?? 'local-development' } })
+    const builtRoot = join(repositoryRoot, 'dsh-rp', 'dist')
+    const installRoot = packageRoot.endsWith('/dist') || packageRoot.endsWith('\\dist') ? packageRoot : join(packageRoot, '..', 'dist')
+    if (resolve(builtRoot) !== resolve(installRoot)) cpSync(builtRoot, installRoot, { recursive: true, force: true })
+  }
+  if (syncOnStart) sync()
   const sourceRoot = fileURLToPath(new URL('../..', import.meta.url))
   const defaultRoot = packageRoot.endsWith('/dist') || packageRoot.endsWith('\\dist') ? packageRoot : sourceRoot
   const root = config.root || process.env.RP_ROOT || defaultRoot
   const runtimeMode = config.runtimeMode ?? 'embedded'
+  const developmentMode = runtimeMode === 'development'
   const port = config.port ?? Number(process.env.RP_PORT ?? 8799)
   const host = config.host || process.env.HOST || '127.0.0.1'
   // 用户数据根：插件模式固定放在 AppData（卸载重装不丢存档/进度/供应商配置）。
@@ -97,12 +128,15 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     const base = process.env.APPDATA || (process.platform === 'darwin' ? join(os.homedir(), 'Library', 'Application Support') : process.env.XDG_CONFIG_HOME || join(os.homedir(), '.config'))
     return join(base, 'stagecraft')
   })()
+  if (developmentMode && !syncRepository) throw new Error('development runtimeMode requires syncRepository.')
+  const hostRpc = async (request: HostRpcRequest): Promise<unknown> => { const apiProxy = (ctx as any).get?.('apiProxy', false); const sessions = apiProxy?.sessions; const workspace = apiProxy?.workspace; const target = request.method.startsWith('sessions.') ? sessions : workspace; const method = request.method.replace(/^[^.]+\./, ''); if (!target?.[method]) throw new Error(`DSH 宿主未提供 ${request.method}。`); return target[method](request.params) }
   const manager = runtimeMode === 'sandboxed' ? new WorkerManager({
     command: process.execPath,
     args: [workerEntryPath(packageRoot)],
     cwd: packageRoot,
     env: { STAGECRAFT_ROOT: root, STAGECRAFT_USER_DATA: userDataRoot, RP_PORT: String(port), HOST: host },
     onLog: line => console.error(`[stagecraft.worker] ${line}`),
+    onHostRequest: hostRpc,
   }) : undefined
   const debug: StageCraftDebugService = manager
     ? {
@@ -130,11 +164,30 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   await ctx.effect(async () => {
     ctx.provide('stagecraftDebug', debug)
     const cleanups: Array<() => void> = []
+    let embeddedApp: TavernApp | undefined
+    let embeddedGeneration = 0
+    let restarting = Promise.resolve()
+    const startEmbedded = async (): Promise<void> => { embeddedApp = await startTavern({ root, userDataRoot, port, host, ctx, remoteAccess: { enabled: config.remoteEnabled === true, pairingTtlMs: config.remotePairingTtlMs, sessionTtlMs: config.remoteSessionTtlMs } }) }
+    const restartEmbedded = async (reason: string): Promise<{ status: 'embedded'; reason: string }> => {
+      restarting = restarting.then(async () => { await embeddedApp?.close(); await startEmbedded() })
+      await restarting
+      embeddedGeneration += 1
+      return { status: 'embedded', mode: 'embedded' as const, generation: embeddedGeneration, reason }
+    }
     if (manager) await manager.start()
-    else {
-      // Embedded mode remains the self-contained development path.
-      const app: TavernApp = await startTavern({ root, userDataRoot, port, host, ctx, remoteAccess: { enabled: config.remoteEnabled === true, pairingTtlMs: config.remotePairingTtlMs, sessionTtlMs: config.remoteSessionTtlMs } })
-      cleanups.push(() => void app.close())
+    else { await startEmbedded(); cleanups.push(() => void embeddedApp?.close()) }
+    if (developmentMode) {
+      const repositoryRoot = resolve(syncRepository)
+      const watchedPaths = [join(repositoryRoot, 'src'), join(repositoryRoot, 'public'), join(repositoryRoot, 'dsh-rp', 'src'), join(repositoryRoot, 'dsh-rp', 'scripts')].filter(path => existsSync(path))
+      const watchers: FSWatcher[] = []
+      let timer: NodeJS.Timeout | undefined
+      const scheduleSync = (): void => {
+        if (timer) clearTimeout(timer)
+        timer = setTimeout(() => { void (async () => { try { sync(); await restartEmbedded('development-file-change'); console.log('[dsh-rp] development change synced and restarted') } catch (error) { console.error(`[dsh-rp] development sync failed: ${error instanceof Error ? error.message : String(error)}`) } })() }, watchDebounceMs)
+      }
+      for (const path of watchedPaths) watchers.push(watch(path, { recursive: true }, scheduleSync))
+      console.log(`[dsh-rp] development watcher enabled for ${watchedPaths.join(', ')}`)
+      cleanups.push(() => { if (timer) clearTimeout(timer); for (const watcher of watchers) watcher.close() })
     }
     // 独立控制端点：POST /api/stagecraft/reload —— 重建 worker（或 embedded 下重启应用）。
     // 挂在 DSH 主进程 webServer 上（sandboxed 时 8899），供构建脚本 / dsh 命令触发。
@@ -153,7 +206,8 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
               const body = Buffer.concat(chunks).toString('utf8').trim()
               if (body) { try { reason = JSON.parse(body).reason ?? reason } catch { /* keep default */ } }
             }
-            const snapshot = await debug.restart(reason)
+            if (syncOnReload) sync()
+            const snapshot = developmentMode ? await restartEmbedded(reason) : await debug.restart(reason)
             res.writeHead(200, { 'content-type': 'application/json' })
             res.end(JSON.stringify({ ok: true, ...snapshot }))
           } catch (error) {
@@ -170,12 +224,13 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     if (commands?.register) {
       const disposer = commands.register({
         name: 'stagecraft-reload',
-        description: '重启 StageCraft worker（不重启 DSH），加载 dsh-rp 最新构建',
+        description: '重载 StageCraft（不重启 DSH）；sandboxed 重启 worker，embedded 重建内嵌应用并加载最新构建',
         handler: async invocation => {
           try {
             const reason = invocation.rawInput.trim() || 'slash-command'
-            const snapshot = await debug.restart(reason)
-            return { kind: 'success', text: `StageCraft 已重载：generation ${snapshot.generation}，pid ${snapshot.pid ?? '?'}（${snapshot.status}）` }
+            if (syncOnReload) sync()
+            const snapshot = developmentMode ? await restartEmbedded(reason) : await debug.restart(reason)
+            return { kind: 'success', text: snapshot.status === 'embedded' ? `StageCraft 已重载：第 ${snapshot.generation} 次内嵌重建（embedded）` : `StageCraft 已重载：generation ${snapshot.generation}，pid ${snapshot.pid ?? '?'}（${snapshot.status}）` }
           } catch (error) {
             return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
           }
