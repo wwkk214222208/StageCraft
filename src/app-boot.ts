@@ -6,6 +6,7 @@
  *
  * 本模块负责生产组合根：独立入口创建 Cordis Context，DSH 可传入宿主 Context。
  */
+import { createHash } from 'node:crypto'
 import { appendFileSync, copyFileSync, cpSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { extname, join } from 'node:path'
@@ -857,7 +858,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         return json(response, 200, { ok: true })
       }
       if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/story-assets/')) return asset(response, url.pathname)
-      if (url.pathname === '/' || url.pathname === '/index.html') return staticFile(response, 'index.html', 'text/html; charset=utf-8')
+      if (url.pathname === '/' || url.pathname === '/index.html') return serveIndex(response)
       if (url.pathname === '/app.js') return staticFile(response, 'app.js', 'text/javascript; charset=utf-8')
       if (url.pathname === '/core-client.js') return staticFile(response, 'core-client.js', 'text/javascript; charset=utf-8')
       if (url.pathname === '/core-interactions.js') return staticFile(response, 'core-interactions.js', 'text/javascript; charset=utf-8')
@@ -971,6 +972,25 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     mkdirSync(targetAssets, { recursive: true })
     writeFileSync(join(targetAssets, fileName), buffer)
     return `/assets/${fileName}`
+  }
+
+  /** 内容哈希缓存失效：index 里对 /app.js 等静态资源附加 ?v=<sha256 前 12 位>，
+   *  文件内容一变 URL 就变，浏览器必然重新下载；未变则稳定复用缓存。 */
+  function assetHash(name: string): string {
+    const path = join(publicRoot, name)
+    if (!existsSync(path)) return '0'
+    return createHash('sha256').update(readFileSync(path)).digest('hex').slice(0, 12)
+  }
+
+  function serveIndex(response: ServerResponse): void {
+    const path = join(publicRoot, 'index.html')
+    if (!existsSync(path)) { response.writeHead(404); response.end(); return }
+    const html = readFileSync(path, 'utf8')
+      .replaceAll('__APP_HASH__', assetHash('app.js'))
+      .replaceAll('__STYLE_HASH__', assetHash('style.css'))
+      .replaceAll('__CORE_CSS_HASH__', assetHash('core-interactions.css'))
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    response.end(html)
   }
 
   function staticFile(response: ServerResponse, name: string, type: string): void {
