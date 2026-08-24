@@ -1,0 +1,161 @@
+{
+    "mode":  "director",
+    "scope":  "director.draft",
+    "name":  "导演模式 · 场景草稿",
+    "components":  [
+                       {
+                           "id":  "director.draft.identity",
+                           "name":  "导演身份、创作职责、执行约束与工具输出",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.identity"
+                                            ],
+                           "template":  "你是 StageCraft 的 RP Director。\n\n你的职责是把玩家贡献、公共世界状态和角色主动提交的公开意图编织成一份待审批 Draft。\n\n- 你拥有充分的创作权，可以提出新人物、物品、关系、历史和环境变化。\n- 你的输出永远只是提案，不能把任何内容描述成已经通过审批的事实。\n- 你知道的 ≠ 世界知道的：隐秘信息只能用于核对一致性，不得直接写入正文。\n- 新人物必须通过 roleProposals 提案；新设定必须放进 settingProposals。\n- 角色状态只能填写可观察的外在事实，不能写想法、动机或 Director 推理。\n- 如果批示或设定存在歧义，使用 openQuestions。\n- 被采用、部分采用、延后、阻断或取代的角色意图必须在 intentHandling 中说明。\n\n你必须调用唯一提供的工具提交草稿；不要在普通文本中输出 JSON。",
+                           "dynamic":  true,
+                           "role":  "system"
+                       },
+                       {
+                           "id":  "director.draft.always-lore",
+                           "name":  "常开世界书",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.always-lore"
+                                            ],
+                           "template":  "常开世界书（供你核对与编织，不得把隐秘信息直接写进正文）：\n{alwaysLore}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.role-personas",
+                           "name":  "在场角色公开人设",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.role-personas"
+                                            ],
+                           "template":  "在场角色公开人设（角色卡公开面）：\n{rolePersonas}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.player-persona",
+                           "name":  "玩家角色人设",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.player-persona"
+                                            ],
+                           "template":  "玩家角色：{playerName}\n玩家人设：{playerPersona}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.player-state",
+                           "name":  "玩家当前状态",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.player-state"
+                                            ],
+                           "template":  "玩家当前状态：\n{playerState}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.scene",
+                           "name":  "当前场景",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.scene"
+                                            ],
+                           "template":  "当前场景：\n{scene}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.recent-scene",
+                           "name":  "当前剧情进展",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.recent-scene"
+                                            ],
+                           "template":  "当前剧情进展（上一轮已发生的事，含开局文本）：\n{recentScene}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.role-states",
+                           "name":  "当前角色状态",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.role-states"
+                                            ],
+                           "template":  "当前角色状态（id（姓名）：当前状态）：\n{roleStates}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.player-action",
+                           "name":  "玩家本轮行动",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.player-action"
+                                            ],
+                           "template":  "玩家贡献：\n{contribution}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.focus-roles",
+                           "name":  "焦点角色",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.focus-roles"
+                                            ],
+                           "template":  "焦点角色：{focalRoles}。必须优先回应并编织焦点角色的公开意图，不能忽略它们。",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.role-briefs",
+                           "name":  "角色公开意图",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.role-briefs"
+                                            ],
+                           "template":  "角色公开意图：\n{briefs}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.consultations",
+                           "name":  "导演咨询记录",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.consultations"
+                                            ],
+                           "template":  "导演咨询记录（仅本回合相关）：\n{consultations}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.previous-draft",
+                           "name":  "上一版草稿",
+                           "templatePath":  [
+                                                "director",
+                                                "director.draft.previous-draft"
+                                            ],
+                           "template":  "{previousDraft}",
+                           "dynamic":  true,
+                           "role":  "user"
+                       },
+                       {
+                           "id":  "director.draft.output",
+                           "name":  "草稿输出要求",
+                           "templatePath":  [
+                                                "director",
+                                                "output"
+                                            ],
+                           "template":  "生成正文和变化角色的完整当前状态字符串。stateUpdates 的键必须用角色 id（玩家状态用 player）。如需改变时间/地点填写 sceneUpdates；如需引入新人物使用 roleProposals。正文、角色当前状态、设定提案与意图结算必须彼此一致。",
+                           "dynamic":  true,
+                           "role":  "user"
+                       }
+                   ]
+}

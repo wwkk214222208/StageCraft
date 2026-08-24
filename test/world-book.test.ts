@@ -86,7 +86,7 @@ test('world book injected in prompt: 常开 + 角色条目 + 人物卡 + 记忆'
   if (!(loreIdx >= 0 && ariaIdx >= 0)) console.error('实际 prompts:\n' + captured.join('\n====\n'))
   assert.ok(loreIdx >= 0 && ariaIdx >= 0, `世界书应注入: ${ariaPrompt}`)
   assert.ok(miraIdx === -1, 'Mira 专属条目不应注入 Aria 的 prompt')
-  assert.ok(loreIdx < ariaIdx && ariaIdx < selfIdx && selfIdx < memoryIdx, '顺序应为 常开 < 角色条目 < 人物卡 < 记忆')
+  assert.ok(selfIdx < loreIdx && loreIdx < ariaIdx && ariaIdx < memoryIdx, '顺序应为 人物卡 < 常开世界书 < 角色条目 < 记忆')
 })
 
 test('role prompt prefix is cached across turns', async () => {

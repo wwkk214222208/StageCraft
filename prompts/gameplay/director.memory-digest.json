@@ -1,0 +1,29 @@
+{
+    "mode":  "director",
+    "scope":  "director.memory-digest",
+    "name":  "导演模式 · 记忆消化",
+    "components":  [
+                       {
+                           "id":  "director.memory.system",
+                           "name":  "记忆消化职责、事实边界与精炼规则",
+                           "templatePath":  [
+                                                "role",
+                                                "digestSystem"
+                                            ],
+                           "dynamic":  true,
+                           "role":  "system",
+                           "template":  "你是角色 {roleName} 的「记忆消化」Worker。下面是刚发生的一段已批准场景正文。请提取这条正文中【该角色本人】值得记住的事实要点（他人言行、承诺、关系变化、关键细节），整理为记忆事件。\n【务必精炼】每条记忆只写事实本身，剔除修饰、情绪渲染与推断；能合并的细节合并为一条；与已有记忆重复或可由其直接推出的不记；每条不超过一句话。不要替其他角色记，不要记无关环境描写。只返回 JSON，不要解释。"
+                       },
+                       {
+                           "id":  "director.memory.user",
+                           "name":  "已批准正文与记忆输出格式",
+                           "templatePath":  [
+                                                "role",
+                                                "digestUser"
+                                            ],
+                           "dynamic":  true,
+                           "role":  "user",
+                           "template":  "最近发生的场景正文：\n{sceneText}\n\n请返回 JSON，结构：{\"entries\":[{\"text\":\"记忆事实\"}]}。每条只保留一条简短记忆内容；不要添加类型、重要度、关联人物、置信度、来源或场景 ID。时间由系统使用已批准场景的时间快照写入。\n【务必精炼】每条记忆一句话、点到为止，只记关键事实，不展开、不铺垫、不写情绪与推断；重复或已牢记的不写。"
+                       }
+                   ]
+}

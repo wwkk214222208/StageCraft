@@ -66,12 +66,12 @@ test('director request: 公开人设注入且私有段剥离、固定头在前�
   assert.ok(user.includes('【上一版草稿（当前待修订，仅修订时出现）】'), '上一版草稿应独立成块')
   assert.ok(user.includes('旧草稿正文。'), '上一版草稿正文应注入')
 
-  // fix 8：固定头（世界书/公开人设/任务要求）在可变尾（本回合数据）之前；玩家信息在场景前
+  // fix 8：固定头（常开世界书/公开人设/玩家信息）在可变尾（剧情进展/玩家贡献）之前
   assert.ok(user.indexOf('世界书') < user.indexOf('当前场景：'), '世界书应在当前场景之前')
-  assert.ok(user.indexOf('公开人设') < user.indexOf('本回合数据'), '公开人设应在可变量之前')
-  assert.ok(user.indexOf('任务要求') < user.indexOf('本回合数据'), '任务要求应在本回合数据之前')
+  assert.ok(user.indexOf('公开人设') < user.indexOf('玩家贡献'), '公开人设应在可变量之前')
+  assert.ok(user.indexOf('常开世界书') < user.indexOf('角色公开意图'), '常开世界书应在本回合可变量之前')
   assert.ok(user.indexOf('玩家角色') < user.indexOf('当前场景：'), '玩家信息应在当前场景之前')
-  assert.ok(user.indexOf('本回合数据') < user.indexOf('玩家贡献'), '可变量应集中在尾部')
+  assert.ok(user.indexOf('当前剧情进展') < user.indexOf('玩家贡献'), '可变量应集中在尾部')
 })
 
 /** fix 7 新机制：角色决策输出 identity → normalize → Decision.publicIdentity */

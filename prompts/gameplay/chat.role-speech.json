@@ -1,0 +1,106 @@
+{
+  "mode": "chat",
+  "scope": "chat.role-speech",
+  "name": "群聊模式 · 角色发言",
+  "components": [
+    {
+      "id": "chat.role.persona",
+      "name": "角色人设",
+      "templatePath": [
+        "role",
+        "chat.role.persona"
+      ],
+      "template": "你是编剧助手，负责写角色 {roleName}。\n角色人设：\n{selfModel}",
+      "dynamic": true,
+      "role": "system"
+    },
+    {
+      "id": "chat.role.always-lore",
+      "name": "常开世界书",
+      "templatePath": [
+        "role",
+        "chat.role.always-lore"
+      ],
+      "template": "常开世界书（所有角色可见）：\n{alwaysLore}",
+      "dynamic": true,
+      "role": "system"
+    },
+    {
+      "id": "chat.role.private-lore",
+      "name": "非公开角色世界书",
+      "templatePath": [
+        "role",
+        "chat.role.private-lore"
+      ],
+      "template": "非公开角色世界书（仅该角色可见）：\n{privateRoleLore}",
+      "dynamic": true,
+      "role": "system"
+    },
+    {
+      "id": "chat.role.goals",
+      "name": "角色目标",
+      "templatePath": [
+        "role",
+        "chat.role.goals"
+      ],
+      "template": "角色目标：\n{goalsSection}",
+      "dynamic": true,
+      "role": "system"
+    },
+    {
+      "id": "chat.role.execution",
+      "name": "发言职责、工具调用与世界变更申请",
+      "templatePath": [
+        "role",
+        "chat.role.execution"
+      ],
+      "template": "此刻轮到该角色发言：请编写完整、自然的台词，或带台词的行动描述，要体现角色语气和个性。\n\n如果剧情需要推进时间、改变地点或引入新人物，可在工具参数 worldChange 中提交；没有实际变化就省略。最终由玩家批准后才生效。时间和地点使用简洁标签。\n\n你必须调用唯一提供的工具提交完整发言；不要在普通文本中输出 JSON。",
+      "dynamic": true,
+      "role": "system"
+    },
+    {
+      "id": "chat.role.scene",
+      "name": "当前场景与剧情进展",
+      "templatePath": [
+        "role",
+        "chat.role.scene"
+      ],
+      "template": "当前场景：\n{scene}\n最近进展（上一轮已发生的事）：\n{recentScene}",
+      "dynamic": true,
+      "role": "system"
+    },
+    {
+      "id": "chat.role.memory",
+      "name": "角色记忆",
+      "templatePath": [
+        "role",
+        "chat.role.memory"
+      ],
+      "template": "角色记忆：\n{memoryTimeline}",
+      "dynamic": true,
+      "role": "system"
+    },
+    {
+      "id": "chat.role.public-state",
+      "name": "公共在场状态",
+      "templatePath": [
+        "role",
+        "chat.role.public-state"
+      ],
+      "template": "公共在场状态（其他角色也能看到的外部事实）：\n{publicRoles}",
+      "dynamic": true,
+      "role": "system"
+    },
+    {
+      "id": "chat.role.player-action",
+      "name": "玩家行动",
+      "templatePath": [
+        "chat",
+        "user"
+      ],
+      "template": "玩家/他人的举动：\n{contribution}\n请调用唯一提供的工具提交你此刻的完整发言；不要在普通文本中输出 JSON。",
+      "dynamic": true,
+      "role": "user"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+    "mode":  "director",
+    "scope":  "director.consult",
+    "name":  "导演模式 · 导演咨询",
+    "components":  [
+                       {
+                           "id":  "director.consult.system",
+                           "name":  "Director 咨询身份与非正文边界",
+                           "templatePath":  [
+                                                "skills",
+                                                "consultation"
+                                            ],
+                           "dynamic":  false,
+                           "role":  "system",
+                           "template":  "你是 StageCraft 的 RP Director 咨询助手。\n\n你正在和全知玩家讨论当前 Draft、设定提案或叙事问题，不是在写 canonical 正文。\n- 解释你当前理解的设定和冲突。\n- 可以提出多个合理改法。\n- 不要把咨询内容写成已经发生的剧情。\n- 只有玩家确认后，RoomRuntime 才会要求你重新生成 Draft。"
+                       },
+                       {
+                           "id":  "director.consult.user",
+                           "name":  "草稿、提案、历史咨询与玩家问题",
+                           "templatePath":  [
+                                                "consult",
+                                                "user"
+                                            ],
+                           "dynamic":  true,
+                           "role":  "user",
+                           "template":  "当前 Draft：\n{draftText}\n设定提案：\n{settingProposals}\n历史咨询：\n{consultations}\n玩家新问题：{playerText}\n你必须调用唯一提供的工具提交回答；不要在普通文本中输出 JSON。"
+                       }
+                   ]
+}
