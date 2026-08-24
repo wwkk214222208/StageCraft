@@ -314,5 +314,5 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 
 /* ── 剧本编辑器：剧本切换选择框 ── */
 .creator-workbench-story-pick{display:inline-flex;align-items:center;gap:6px;color:#a9b8dd;font-size:12px;white-space:nowrap;flex-shrink:0}
-.creator-workbench-story-pick select{max-width:170px;padding:4px 6px;border:1px solid #3a4a6e;border-radius:3px;background:#16203a;color:#dce7ff}
+.creator-workbench-story-pick select{max-width:320px;min-width:240px;padding:4px 6px;border:1px solid #3a4a6e;border-radius:3px;background:#16203a;color:#dce7ff}
 @media (max-width:680px){.creator-workbench-story-pick{display:none}}
