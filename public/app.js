@@ -307,7 +307,8 @@ function render(next) {
     button.replaceWith(input)
     input.focus()
   }))
-  const roleCards = room.roles.map(role => {
+  // 沉浸模式（readOnly）：隐藏未在场（absent/unavailable）角色，只显示在场角色
+  const roleCards = room.roles.filter(role => !readOnly || role.presence === 'present').map(role => {
     const focused = focalRoleIds.has(role.id)
     const decision = room.decisions.find(item => item.roleId === role.id)
     const status = focused ? '焦点' : (states[role.presence] ?? '未知')
