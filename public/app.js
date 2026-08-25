@@ -1342,7 +1342,7 @@ $('#submit').onclick = async () => {
     skipArmed = false
   }
   clearThinkingStreams()
-  activeAction = 'turn'; render(room); try { await api('/api/turn', { text, requiredRoleIds: [...focalRoleIds] }) } finally { activeAction = null; skipArmed = false; await refreshRoom() }
+  activeAction = 'turn'; render(room); $('#contribution').value = ''; try { await api('/api/turn', { text, requiredRoleIds: [...focalRoleIds] }) } finally { activeAction = null; skipArmed = false; await refreshRoom() }
 }
 function directorContext() { return `当前玩家编辑草稿：\n${currentDraftText()}\n\n本回合 NPC 临时反应：\n${(room.reactions ?? []).map(item => `${item.roleId}: ${item.text}`).join('\n')}\n\n导演对话记录：\n${(room.consultations ?? []).map(item => `${item.role}: ${item.text}`).join('\n')}` }
 async function directorReconsider() { if (!room.draft || activeAction) return; activeAction = 'director'; render(room); try { await api('/api/consult', { draftId: room.draft.id, text: '请根据本回合信息重新审视并重写草稿。', context: directorContext() }); await api('/api/redraft', { draftId: room.draft.id }) } finally { activeAction = null; await refreshRoom() } }
