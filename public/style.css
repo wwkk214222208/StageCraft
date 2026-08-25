@@ -115,6 +115,13 @@
 /* 侧栏「设置 / 预设」：设置与预设之间的分隔线 */
 #prompts-list .sidebar-settings-card{margin-bottom:0}
 .sidebar-divider{height:1px;background:#34415b;margin:10px 0}
+/* 独立开关统一滑块化：settings-row 内的复选框开关（成组多选如「服务模式」/世界书角色绑定保持复选框） */
+.settings-row input[type=checkbox]{appearance:none;-webkit-appearance:none;width:36px;height:20px;min-width:36px;border-radius:10px;background:#2a3550;border:1px solid #53688f;position:relative;flex:0 0 auto;cursor:pointer;transition:background .2s;margin:0}
+.settings-row input[type=checkbox]::before{content:'';position:absolute;width:14px;height:14px;border-radius:50%;background:#a9b8dd;top:2px;left:2px;transition:left .2s,background .2s}
+.settings-row input[type=checkbox]:checked{background:#4176e6;border-color:#679efe}
+.settings-row input[type=checkbox]:checked::before{left:18px;background:#fff}
+.settings-row input[type=checkbox]:focus-visible{outline:2px solid #4a7bf0}
+#prompt-preset-modal .settings-row input[type=checkbox]{width:36px;height:20px;min-width:36px}
 .world-change-proposal{margin:8px 0;padding:8px 10px;border:1px solid #4868b2;background:#2b3247;border-radius:5px}
 .world-change-proposal .section-title{margin:0 0 6px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .world-change-proposal small{color:#679efe;font-size:11px}
