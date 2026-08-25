@@ -46,11 +46,12 @@ test('StageCraftRepository enumerates every public method and rejects unknown me
 test('first run creates a complete full room snapshot', () => {
   const { store, roomId } = fresh()
   const snapshot = room(store, roomId)
-  assert.deepEqual(Object.keys(snapshot).sort(), ['autoPublish', 'consultations', 'decisions', 'id', 'lore', 'mode', 'phase', 'playerCharacter', 'reactions', 'revision', 'roles', 'sceneLocation', 'sceneTime', 'scenes', 'speechMode', 'storyId', 'title'].sort())
+  assert.deepEqual(Object.keys(snapshot).sort(), ['autoPublish', 'consultations', 'decisions', 'hidePlayerSpeech', 'id', 'lore', 'mode', 'phase', 'playerCharacter', 'reactions', 'revision', 'roles', 'sceneLocation', 'sceneTime', 'scenes', 'speechMode', 'storyId', 'title'].sort())
   assert.equal(snapshot.phase, 'awaiting-player-input')
   assert.equal(snapshot.mode, 'director')
   assert.equal(snapshot.autoPublish, false)
   assert.equal(snapshot.speechMode, 'manual')
+  assert.equal(snapshot.hidePlayerSpeech, false)
   assert.equal(snapshot.roles.length, 2)
   assert.equal(snapshot.scenes[0].text, story.opening)
   assert.deepEqual(snapshot.lore, story.lore)

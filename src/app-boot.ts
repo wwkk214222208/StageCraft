@@ -633,7 +633,8 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         const body = await readJson(request)
         const mode = body.mode === 'chat' || body.mode === 'director' ? body.mode : undefined
         const speechMode = body.speechMode === 'manual' || body.speechMode === 'director' || body.speechMode === 'all' ? body.speechMode : undefined
-        await dispatchManagement('set-room-config', { ...(mode ? { mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}), ...(speechMode ? { speechMode } : {}) })
+        const hidePlayerSpeech = typeof body.hidePlayerSpeech === 'boolean' ? body.hidePlayerSpeech : undefined
+        await dispatchManagement('set-room-config', { ...(mode ? { mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}), ...(speechMode ? { speechMode } : {}), ...(typeof hidePlayerSpeech === 'boolean' ? { hidePlayerSpeech } : {}) })
         return json(response, 200, { ok: true, room: runtime.get(roomId) })
       }
       if (url.pathname === '/api/chat/speak' && request.method === 'POST') {

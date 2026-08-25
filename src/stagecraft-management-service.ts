@@ -11,7 +11,7 @@ export interface StageCraftManagementNotifications {
 export interface StageCraftManagementPort {
   importArchive(roomId: string, archive: { room?: RoomSnapshot }): void
   restart(roomId: string, story: StoryPackage, options?: { mode?: RoomMode; autoPublish?: boolean }): void
-  setRoomConfig(roomId: string, config: { mode?: RoomMode; autoPublish?: boolean; speechMode?: import('./types.ts').ChatSpeechMode }): void
+  setRoomConfig(roomId: string, config: { mode?: RoomMode; autoPublish?: boolean; speechMode?: import('./types.ts').ChatSpeechMode; hidePlayerSpeech?: boolean }): void
   updatePlayerCharacter(roomId: string, player: { name: string; persona: string; currentState: string }): void
   setPlayerAvatar(roomId: string, portraitRef: string): void
   interveneRole(roomId: string, roleId: string, selfModel: string, config?: { providerId?: string; modelOverride?: string; impressions?: Record<string, string>; goals?: string[]; thinkingStrength?: ThinkingStrength }): void
@@ -62,7 +62,7 @@ export class StageCraftManagementService implements StageCraftManagementPort {
     this.changed(roomId)
   }
 
-  setRoomConfig(roomId: string, config: { mode?: RoomMode; autoPublish?: boolean; speechMode?: import('./types.ts').ChatSpeechMode }): void { this.store.setRoomConfig(roomId, config); this.changed(roomId) }
+  setRoomConfig(roomId: string, config: { mode?: RoomMode; autoPublish?: boolean; speechMode?: import('./types.ts').ChatSpeechMode; hidePlayerSpeech?: boolean }): void { this.store.setRoomConfig(roomId, config); this.changed(roomId) }
   updatePlayerCharacter(roomId: string, player: { name: string; persona: string; currentState: string }): void { this.store.updatePlayerCharacter(roomId, player); this.changed(roomId) }
   setPlayerAvatar(roomId: string, portraitRef: string): void { this.store.setPlayerAvatar(roomId, portraitRef); this.changed(roomId) }
 

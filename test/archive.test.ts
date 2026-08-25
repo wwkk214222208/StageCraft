@@ -19,7 +19,7 @@ test('room archive round-trips canonical scenes and roles', async () => {
   runtime.restart(roomId, { id: 'copy', title: '临时', opening: '临时', roles: [] as never[] })
   runtime.importArchive(roomId, archive as { room: ReturnType<typeof runtime.get> })
   const restored = runtime.get(roomId)
-  assert.equal(restored.scenes.length, 2, '存档往返应保留开局 scene + 已批准正文')
+  assert.equal(restored.scenes.length, 3, '存档往返应保留开局 scene + 玩家气泡 + 已批准正文')
   assert.equal(restored.scenes[0].turnId, 'opening')
   assert.equal(restored.roles.find(role => role.id === 'aria')?.name, 'Aria')
 })

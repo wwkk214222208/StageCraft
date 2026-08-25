@@ -168,7 +168,8 @@ test('retryDirector 携带最近已批准正文', async () => {
   assert.ok(runtime.get(roomId).lastError, '首次起草应失败')
   await runtime.retryDirector(roomId)
   assert.equal(runtime.get(roomId).phase, 'awaiting-approval')
-  const latest = runtime.get(roomId).scenes.at(-1)!.text
+  // 最近已批准正文 = 最后一个非玩家场景（玩家气泡不算）
+  const latest = runtime.get(roomId).scenes.find(scene => scene.turnId === 'opening')!.text
   assert.equal(recentScenes[0], latest, '首次起草应携带最近正文（开局）')
   assert.equal(recentScenes[1], latest, '导演重试也应携带最近正文')
 })

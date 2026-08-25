@@ -32,7 +32,7 @@ test('NPC reaction previews are transient and removed after approval', async () 
   runtime.approve(roomId, withDraft.draft!.id, withDraft.draft!.text, {})
   const published = runtime.get(roomId)
   assert.equal(published.reactions.length, 0)
-  assert.equal(published.scenes.length, 2, '批准后 = 开局 scene + 发布正文')
+  assert.equal(published.scenes.length, 3, '批准后 = 开局 scene + 玩家气泡 + 发布正文')
 })
 
 test('cancelling a turn removes its transient reaction previews', async () => {

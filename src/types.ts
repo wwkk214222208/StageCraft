@@ -264,6 +264,8 @@ export interface RoomSnapshot {
   autoPublish: boolean
   /** 群聊发言模式（玩法声明默认 + 玩家按房间覆盖）；导演模式房间忽略 */
   speechMode: ChatSpeechMode
+  /** 导演模式：是否隐藏玩家发言（不记入正文）；默认 false = 记录并显示 */
+  hidePlayerSpeech: boolean
   /** 群聊模式下待审批的台词（仅 phase == awaiting-approval && mode == chat 时存在） */
   speech?: ChatSpeech
   /** 群聊模式下随台词一并待玩家确认的世界变更申请（phase == world-change-approval 时存在） */

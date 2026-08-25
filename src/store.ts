@@ -334,6 +334,7 @@ export class Store implements MemoryStore {
     if (!columns.has('auto_publish')) this.db.exec('ALTER TABLE rooms ADD COLUMN auto_publish INTEGER NOT NULL DEFAULT 0')
     if (!columns.has('speech')) this.db.exec('ALTER TABLE rooms ADD COLUMN speech TEXT')
     if (!columns.has('chat_speech_mode')) this.db.exec("ALTER TABLE rooms ADD COLUMN chat_speech_mode TEXT NOT NULL DEFAULT 'manual'")
+    if (!columns.has('hide_player_speech')) this.db.exec('ALTER TABLE rooms ADD COLUMN hide_player_speech INTEGER NOT NULL DEFAULT 0')
   }
 
   /** 旧库迁移：rooms.pending_world_change（群聊模式待确认的世界变更申请 JSON） */
@@ -560,7 +561,7 @@ export class Store implements MemoryStore {
     this.withTransaction(() => {
       this.db.prepare('DELETE FROM decisions WHERE turn_id IN (SELECT id FROM turns WHERE room_id = ?)').run(roomId)
       for (const table of ['turns', 'drafts', 'scenes', 'consultations', 'pending_mind_updates', 'reaction_previews', 'roles']) this.db.prepare(`DELETE FROM ${table} WHERE room_id = ?`).run(roomId)
-      this.db.prepare('UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, player_portrait_ref = ?, scene_time = ?, scene_location = ?, phase = ?, revision = ?, player_contribution = ?, last_error = ?, lore = ?, story_id = ?, speech = NULL, pending_world_change = NULL, pending_narration = NULL, chat_speech_mode = ? WHERE id = ?').run(source.title, source.playerCharacter?.name ?? '玩家', source.playerCharacter?.persona ?? '由玩家自由定义的参与者。', source.playerCharacter?.currentState ?? '刚刚进入当前场景。', source.playerCharacter?.portraitRef ?? '/assets/default.svg', source.sceneTime ?? null, source.sceneLocation ?? null, source.phase, source.revision, source.playerContribution ?? null, source.lastError ?? null, JSON.stringify(source.lore ?? []), source.storyId ?? null, source.speechMode ?? 'manual', roomId)
+      this.db.prepare('UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, player_portrait_ref = ?, scene_time = ?, scene_location = ?, phase = ?, revision = ?, player_contribution = ?, last_error = ?, lore = ?, story_id = ?, speech = NULL, pending_world_change = NULL, pending_narration = NULL, chat_speech_mode = ?, hide_player_speech = ? WHERE id = ?').run(source.title, source.playerCharacter?.name ?? '玩家', source.playerCharacter?.persona ?? '由玩家自由定义的参与者。', source.playerCharacter?.currentState ?? '刚刚进入当前场景。', source.playerCharacter?.portraitRef ?? '/assets/default.svg', source.sceneTime ?? null, source.sceneLocation ?? null, source.phase, source.revision, source.playerContribution ?? null, source.lastError ?? null, JSON.stringify(source.lore ?? []), source.storyId ?? null, source.speechMode ?? 'manual', source.hidePlayerSpeech ? 1 : 0, roomId)
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       for (const role of source.roles) insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify({}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {}))
       for (const scene of source.scenes) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(scene.id, roomId, scene.turnId, scene.text, scene.sceneTime ?? null, scene.sceneLocation ?? null, scene.createdAt, scene.speaker ?? null)
@@ -691,7 +692,7 @@ export class Store implements MemoryStore {
 
   getRoom(roomId: string): RoomSnapshot | undefined {
     const room = this.db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId) as {
-      id: string; title: string; player_name: string; player_persona: string; player_state: string; player_portrait_ref: string; scene_time: string | null; scene_location: string | null; phase: RoomPhase; revision: number; player_contribution: string | null; last_error: string | null; mode: string; auto_publish: number; speech: string | null; pending_world_change: string | null; pending_narration: string | null; chat_speech_mode: string | null
+      id: string; title: string; player_name: string; player_persona: string; player_state: string; player_portrait_ref: string; scene_time: string | null; scene_location: string | null; phase: RoomPhase; revision: number; player_contribution: string | null; last_error: string | null; mode: string; auto_publish: number; speech: string | null; pending_world_change: string | null; pending_narration: string | null; chat_speech_mode: string | null; hide_player_speech: number
     } | undefined
     if (!room) return undefined
     const roles = this.db.prepare('SELECT * FROM roles WHERE room_id = ? ORDER BY sort_order, rowid').all(roomId).map((row: any) => ({ ...rowToRole(row), memories: this.memoryStore.listNpcMemories(roomId, String(row.id)) }))
@@ -710,6 +711,7 @@ export class Store implements MemoryStore {
       mode: room.mode === 'chat' ? 'chat' : 'director',
       autoPublish: room.auto_publish === 1,
       speechMode: room.chat_speech_mode === 'director' || room.chat_speech_mode === 'all' ? room.chat_speech_mode : 'manual',
+      hidePlayerSpeech: room.hide_player_speech === 1,
       ...(speech ? { speech } : {}),
       ...(pendingWorldChange ? { pendingWorldChange } : {}),
       ...(room.pending_narration ? { pendingNarration: room.pending_narration } : {}),
@@ -751,7 +753,7 @@ export class Store implements MemoryStore {
   listConsultationsForTurn(roomId: string, turnId: string, includeLegacy = true): ConsultationMessage[] {
     const turn = this.db.prepare('SELECT created_at FROM turns WHERE id = ? AND room_id = ?').get(turnId, roomId) as { created_at: string } | undefined
     if (!turn) return []
-    const lastScene = this.db.prepare('SELECT created_at FROM scenes WHERE room_id = ? ORDER BY created_at DESC LIMIT 1').get(roomId) as { created_at: string } | undefined
+    const lastScene = this.db.prepare("SELECT created_at FROM scenes WHERE room_id = ? AND (speaker IS NULL OR speaker != 'player') ORDER BY created_at DESC LIMIT 1").get(roomId) as { created_at: string } | undefined
     const anchor = lastScene?.created_at ?? '1970-01-01T00:00:00.000Z'
     const rows = this.db.prepare(`
       SELECT role, text, usage, thinking, created_at FROM consultations
@@ -996,8 +998,8 @@ export class Store implements MemoryStore {
 
   /** 更新角色当前状态（管理/角色自评/世界变更共用） */
 
-  /** 更新房间游玩配置：模式（导演/群聊）、沉浸模式开关（autoPublish）与群聊发言模式（speechMode） */
-  setRoomConfig(roomId: string, config: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean; speechMode?: import('./types.ts').ChatSpeechMode }): void {
+  /** 更新房间游玩配置：模式（导演/群聊）、沉浸模式开关（autoPublish）、群聊发言模式（speechMode）与导演玩家发言隐藏开关（hidePlayerSpeech） */
+  setRoomConfig(roomId: string, config: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean; speechMode?: import('./types.ts').ChatSpeechMode; hidePlayerSpeech?: boolean }): void {
     const room = this.db.prepare('SELECT phase, mode FROM rooms WHERE id = ?').get(roomId) as { phase: string; mode: string } | undefined
     if (!room) throw new Error('Room not found.')
     const sets: string[] = []
@@ -1013,6 +1015,7 @@ export class Store implements MemoryStore {
       if (config.speechMode !== 'manual' && config.speechMode !== 'director' && config.speechMode !== 'all') throw new Error('无效的群聊发言模式。')
       sets.push('chat_speech_mode = ?'); params.push(config.speechMode)
     }
+    if (config.hidePlayerSpeech !== undefined) { sets.push('hide_player_speech = ?'); params.push(config.hidePlayerSpeech ? 1 : 0) }
     if (sets.length === 0) return
     params.push(roomId)
     this.db.prepare(`UPDATE rooms SET ${sets.join(', ')}, revision = revision + 1 WHERE id = ?`).run(...params)

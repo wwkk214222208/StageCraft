@@ -97,7 +97,7 @@ test('cancelling an active turn ignores late worker results', async () => {
   const room = runtime.get(roomId)
   assert.equal(room.phase, 'awaiting-player-input')
   assert.equal(room.draft, undefined)
-  assert.equal(room.scenes.length, 1, '取消回合不产生 scene，只有开局 scene')
+  assert.equal(room.scenes.length, 2, '取消回合不发布正文，只有开局 scene + 玩家气泡')
 })
 
 test('a second submission cannot overlap an active Room turn', async () => {

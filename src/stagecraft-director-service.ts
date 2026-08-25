@@ -7,6 +7,15 @@ import type { StageCraftDirectorPort } from './core/solutions.ts'
 import type { StageCraftRepository } from './stagecraft-repository.ts'
 import { systemIds, type IdFactory } from './core/platform.ts'
 
+/** 最近已批准正文：跳过玩家发言气泡，取最后一条非玩家（已批准/开场/旁白）scene。 */
+function recentApprovedText(scenes: Array<{ speaker?: string; text: string }>): string | undefined {
+  for (let index = scenes.length - 1; index >= 0; index -= 1) {
+    const scene = scenes[index]
+    if (scene.speaker !== 'player') return scene.text
+  }
+  return undefined
+}
+
 export interface StageCraftDirectorNotifications {
   get(roomId: string): RoomSnapshot
   notify(roomId: string): void
@@ -106,6 +115,8 @@ export class StageCraftDirectorService implements StageCraftDirectorPort {
     this.activeOperations.add(roomId)
     this.cancelledRequests.delete(roomId)
     this.core?.emitDomainEvent(domainEvent('player.contribution.submitted', { roomId, text: input.text }))
+    // 导演模式玩家发言记入正文（气泡样式，与群聊一致）；侧栏「隐藏玩家发言」开启时不记录
+    if (!room.hidePlayerSpeech && input.text.trim()) this.store.addPlayerScene(roomId, input.text)
     try {
       await this.processTurn(roomId, input)
     } finally {
@@ -136,7 +147,7 @@ export class StageCraftDirectorService implements StageCraftDirectorPort {
       try {
         const result = await this.workers.decide(role, decision.participation, input.text, room.roles, { time: room.sceneTime, location: room.sceneLocation, roomId, turnId }, text => {
           this.notifications.thinking(roomId, { actor: 'role', roleId: role.id, turnId, text, done: false })
-        }, room.lore, room.scenes.at(-1)?.text)
+        }, room.lore, recentApprovedText(room.scenes))
         if (this.cancelledTurns.has(turnId)) return { ...decision, status: 'abstained' as const }
         this.notifications.thinking(roomId, { actor: 'role', roleId: role.id, turnId, text: '', done: true })
         const validated = validateDecision(result, decision)
@@ -186,7 +197,7 @@ export class StageCraftDirectorService implements StageCraftDirectorPort {
       const latest = this.notifications.get(roomId)
       const draft = await this.workers.draft(turnId, latest.playerContribution ?? '', latest.decisions, latest.roles, this.store.listConsultationsForTurn(roomId, turnId), latest.playerCharacter, { time: latest.sceneTime, location: latest.sceneLocation, roomId, turnId }, text => {
         this.notifications.thinking(roomId, { actor: 'director', turnId, text, done: false })
-      }, latest.lore, latest.scenes.at(-1)?.text)
+      }, latest.lore, recentApprovedText(latest.scenes))
       this.notifications.thinking(roomId, { actor: 'director', turnId, text: '', done: true })
       if (this.cancelledTurns.has(turnId)) return
       validateDraft(draft, turnId, latest.roles)
@@ -227,7 +238,7 @@ export class StageCraftDirectorService implements StageCraftDirectorPort {
     const turnId = room.decisions.length > 0 ? this.store.getLatestTurnId(roomId) : undefined
     if (!turnId) throw new Error('找不到可重试的回合。')
     try {
-      const draft = await this.workers.draft(turnId, room.playerContribution ?? '', room.decisions, room.roles, this.store.listConsultationsForTurn(roomId, turnId), room.playerCharacter, { time: room.sceneTime, location: room.sceneLocation, roomId, turnId }, text => this.notifications.thinking(roomId, { actor: 'director', turnId, text, done: false }), room.lore, room.scenes.at(-1)?.text)
+      const draft = await this.workers.draft(turnId, room.playerContribution ?? '', room.decisions, room.roles, this.store.listConsultationsForTurn(roomId, turnId), room.playerCharacter, { time: room.sceneTime, location: room.sceneLocation, roomId, turnId }, text => this.notifications.thinking(roomId, { actor: 'director', turnId, text, done: false }), room.lore, recentApprovedText(room.scenes))
       this.notifications.thinking(roomId, { actor: 'director', turnId, text: '', done: true })
       if (this.cancelledTurns.has(turnId)) return
       validateDraft(draft, turnId, room.roles)
@@ -257,7 +268,7 @@ export class StageCraftDirectorService implements StageCraftDirectorPort {
     const turnId = this.store.getLatestTurnId(roomId)
     if (!role || !previous || !turnId) throw new Error('找不到当前角色反应。')
     const reconsideration = feedback.trim() ? `${room.playerContribution ?? ''}\n\n玩家对你刚才的临时反应提出批复：${feedback.trim()}` : (room.playerContribution ?? '')
-    const result = await this.workers.decide(role, previous.participation, reconsideration, room.roles, { time: room.sceneTime, location: room.sceneLocation, roomId, turnId }, text => this.notifications.thinking(roomId, { actor: 'role', roleId, turnId, text, done: false }), room.lore, room.scenes.at(-1)?.text)
+    const result = await this.workers.decide(role, previous.participation, reconsideration, room.roles, { time: room.sceneTime, location: room.sceneLocation, roomId, turnId }, text => this.notifications.thinking(roomId, { actor: 'role', roleId, turnId, text, done: false }), room.lore, recentApprovedText(room.scenes))
     this.notifications.thinking(roomId, { actor: 'role', roleId, turnId, text: '', done: true })
     if (this.cancelledTurns.has(turnId)) return
     const decision = validateDecision(result, previous)
@@ -322,7 +333,7 @@ export class StageCraftDirectorService implements StageCraftDirectorPort {
       const latest = this.notifications.get(roomId)
       const currentDraft = latest.draft!
       const sceneContext = { time: currentDraft.sceneUpdates?.time ?? latest.sceneTime, location: currentDraft.sceneUpdates?.location ?? latest.sceneLocation, roomId, turnId: currentDraft.turnId }
-      const revised = await this.workers.draft(currentDraft.turnId, latest.playerContribution ?? '', latest.decisions, latest.roles, this.store.listConsultationsForTurn(roomId, currentDraft.turnId), latest.playerCharacter, sceneContext, text => this.notifications.thinking(roomId, { actor: 'director', turnId: currentDraft.turnId, text, done: false }), latest.lore, latest.scenes.at(-1)?.text, currentDraft.text)
+      const revised = await this.workers.draft(currentDraft.turnId, latest.playerContribution ?? '', latest.decisions, latest.roles, this.store.listConsultationsForTurn(roomId, currentDraft.turnId), latest.playerCharacter, sceneContext, text => this.notifications.thinking(roomId, { actor: 'director', turnId: currentDraft.turnId, text, done: false }), latest.lore, recentApprovedText(latest.scenes), currentDraft.text)
       this.notifications.thinking(roomId, { actor: 'director', turnId: currentDraft.turnId, text: '', done: true })
       if (this.cancelledTurns.has(currentDraft.turnId)) return
       validateDraft(revised, currentDraft.turnId, latest.roles)
