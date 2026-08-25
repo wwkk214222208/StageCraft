@@ -47,7 +47,7 @@ test('packed DSH bundle is self-contained and runs from a temporary install', as
     assert.ok(files.includes('dist/index.js'))
     assert.ok(files.includes('dist/SOURCE.md'))
     assert.ok(files.includes('dist/public/index.html'))
-    assert.ok(files.includes('dist/stories/eldoria.json'))
+    assert.ok(files.includes('dist/stories/default/eldoria.json'))
     assert.ok(files.every(file => !/(^|\/)(custom|data|save)(\/|$)/.test(file)))
     assert.ok(files.every(file => !file.endsWith('.ts')))
     assert.doesNotMatch(files.join('\n'), /命定之诗/)
