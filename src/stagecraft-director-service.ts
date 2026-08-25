@@ -115,8 +115,8 @@ export class StageCraftDirectorService implements StageCraftDirectorPort {
     this.activeOperations.add(roomId)
     this.cancelledRequests.delete(roomId)
     this.core?.emitDomainEvent(domainEvent('player.contribution.submitted', { roomId, text: input.text }))
-    // 导演模式玩家发言记入正文（气泡样式，与群聊一致）；侧栏「隐藏玩家发言」开启时不记录
-    if (!room.hidePlayerSpeech && input.text.trim()) this.store.addPlayerScene(roomId, input.text)
+    // 导演模式玩家发言始终记入正文（气泡样式，与群聊一致）；侧栏「隐藏玩家发言」只控制前端显示，不影响记录
+    if (input.text.trim()) this.store.addPlayerScene(roomId, input.text)
     try {
       await this.processTurn(roomId, input)
     } finally {

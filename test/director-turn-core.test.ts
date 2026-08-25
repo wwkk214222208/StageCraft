@@ -42,7 +42,7 @@ test('director turn player input and decision approval use Core interactions', a
   }
 })
 
-test('director mode records player speech as a bubble scene by default; hidePlayerSpeech suppresses it', async () => {
+test('director mode always records player speech as a bubble scene; hidePlayerSpeech is a UI-only flag', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-director-turn-'))
   let store: Store | undefined
   let container: import('../src/core/container.ts').DefaultCorePluginContainer | undefined
@@ -61,18 +61,20 @@ test('director mode records player speech as a bubble scene by default; hidePlay
 
     // 默认：提交行动 → 玩家发言以气泡（speaker=player）记入正文
     await runtime.submitTurn(roomId, { text: '我推开木门。' })
-    const defaultLast = store.getRoom(roomId).scenes.at(-1)
-    assert.equal(defaultLast?.speaker, 'player')
-    assert.equal(defaultLast?.text, '我推开木门。')
+    const firstLast = store.getRoom(roomId).scenes.at(-1)
+    assert.equal(firstLast?.speaker, 'player')
+    assert.equal(firstLast?.text, '我推开木门。')
     // 走完本回合：批准决策 → 草稿 → 拒绝草稿 → 回等待输入
     await runtime.proceedToDraft(roomId)
     await runtime.rejectDraft(roomId)
     assert.equal(store.getRoom(roomId).phase, 'awaiting-player-input')
-    // 开启「隐藏玩家发言」后再提交 → 不记录
+    // 开启「隐藏玩家发言」（仅 UI 隐藏显示）→ 仍始终记录
     store.setRoomConfig(roomId, { hidePlayerSpeech: true })
     assert.equal(store.getRoom(roomId).hidePlayerSpeech, true)
     await runtime.submitTurn(roomId, { text: '我后退一步。' })
-    assert.notEqual(store.getRoom(roomId).scenes.at(-1)?.text, '我后退一步。')
+    const hiddenLast = store.getRoom(roomId).scenes.at(-1)
+    assert.equal(hiddenLast?.speaker, 'player')
+    assert.equal(hiddenLast?.text, '我后退一步。')
   } finally {
     await container?.dispose()
     store?.close()
