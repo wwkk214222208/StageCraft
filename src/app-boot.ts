@@ -249,7 +249,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   let llmFiber: Fiber | undefined
   let providerActivation = Promise.resolve()
   function gatewayFromProvider(config: ProviderConfig, model: string): ModelGateway {
-    return new ModelGateway({ name: config.name, baseUrl: config.baseUrl, apiKey: config.apiKey, model, timeoutMs: envRoute.timeoutMs, responseFormat: config.responseFormat, toolCalling: config.toolCalling !== false }, { onSummary: emitDebug, logRawFinalContent: process.env.RP_LOG_MODEL_FINAL_CONTENT === '1', onUsage: (usage, route) => { const cost = billing.record(route.name ?? 'default', route.model, usage); return cost ? { ...usage, cost } : usage } })
+    return new ModelGateway({ name: config.name, baseUrl: config.baseUrl, apiKey: config.apiKey, model, timeoutMs: envRoute.timeoutMs, responseFormat: config.responseFormat, toolCalling: config.toolCalling !== false }, { onSummary: emitDebug, onDetail: emitDebug, logRawFinalContent: process.env.RP_LOG_MODEL_FINAL_CONTENT === '1', onUsage: (usage, route) => { const cost = billing.record(route.name ?? 'default', route.model, usage); return cost ? { ...usage, cost } : usage } })
   }
   async function installProvider(config: ProviderConfig | undefined): Promise<void> {
     // 占位符 apiKey（示例模板）视为未配置，避免用假密钥发起真实模型请求。

@@ -149,6 +149,8 @@ whaleMemeSetting.className = 'settings-row'
 whaleMemeSetting.innerHTML = '开启鲸鱼梗<input id="settings-whale-meme" type="checkbox">'
 const debugSettingRow = document.querySelector('#settings-debug')?.closest('.settings-row')
 const debugSettingHint = debugSettingRow?.nextElementSibling?.matches('.hint') ? debugSettingRow.nextElementSibling : debugSettingRow
+if (debugSettingRow) { const text = [...debugSettingRow.childNodes].find(node => node.nodeType === Node.TEXT_NODE); if (text) text.textContent = '显示控制台'; debugSettingRow.title = '显示模型请求、工具回退和 Debug 详细返回' }
+if (debugSettingHint && debugSettingHint !== debugSettingRow && debugSettingHint.classList.contains('hint')) debugSettingHint.textContent = '在页面底部显示模型请求、工具回退和 Debug 详细返回。'
 debugSettingHint?.after(whaleMemeSetting)
 const roomModeSelect = document.querySelector('#room-mode-select')
 const directorModeOption = roomModeSelect?.querySelector('option[value="director"]')
@@ -167,9 +169,10 @@ const stImportHint = document.querySelector('#st-import-modal .hint')
 if (stImportHint) stImportHint.textContent = '支持 SillyTavern chara_card_v2/v3 JSON 或 PNG 内嵌卡。导入为当前房间的新角色，角色书条目成为世界书。'
 const debugStream = document.querySelector('#debug-stream')
 const debugWindow = document.createElement('section')
+let debugDetailsEnabled = false
 debugWindow.id = 'debug-window'
 debugWindow.hidden = true
-debugWindow.innerHTML = '<header id="debug-window-handle"><strong>运行摘要</strong><button id="debug-window-close" type="button" aria-label="关闭运行摘要">×</button></header>'
+debugWindow.innerHTML = '<header id="debug-window-handle"><strong>控制台</strong><div><button id="debug-toggle" type="button" title="显示或隐藏模型详细返回">Debug</button><button id="debug-window-close" type="button" aria-label="关闭控制台">×</button></div></header>'
 if (debugStream) {
   debugStream.replaceWith(debugWindow)
   debugStream.hidden = false
@@ -517,6 +520,7 @@ $('#app-settings').onclick = () => { $('#settings-auto-publish').checked = !!roo
 $('#settings-auto-publish').onchange = () => api('/api/room-config', { autoPublish: $('#settings-auto-publish').checked })
 $('#settings-token-count').onchange = () => { tokenCountEnabled = $('#settings-token-count').checked; try { localStorage.setItem(TOKEN_PREFS_KEY, tokenCountEnabled ? '1' : '0') } catch {} render(room) }
 $('#settings-debug').onchange = () => { debugWindow.hidden = !$('#settings-debug').checked }
+$('#debug-toggle').onclick = () => { debugDetailsEnabled = !debugDetailsEnabled; $('#debug-toggle').classList.toggle('active', debugDetailsEnabled); debugWindow.classList.toggle('debug-details-on', debugDetailsEnabled) }
 $('#debug-window-close').onclick = () => { debugWindow.hidden = true; $('#settings-debug').checked = false }
 $('#settings-whale-meme').onchange = () => { whaleMemeEnabled = $('#settings-whale-meme').checked; try { localStorage.setItem(WHALE_MEME_PREFS_KEY, whaleMemeEnabled ? '1' : '0') } catch {}; applyWhaleMeme() }
 $('#remote-pairing-code').onclick = async event => {
@@ -1556,7 +1560,7 @@ $('#create-role-save').onclick = event => {
   api('/api/roles/create', payload).then(ok => { if (ok) $('#create-role-modal').close() })
 }
 $('#sync-roles').onclick = event => { event.preventDefault(); api('/api/story/sync-roles', { storyId: $('#story-select').value }).then(ok => { if (ok) alert('已同步到初始剧本') }) }
-const debugEvents = new EventSource('/api/debug-events'); debugEvents.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
+const debugEvents = new EventSource('/api/debug-events'); debugEvents.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); const detail = item.text.startsWith('模型完整返回'); if (!detail || debugDetailsEnabled) stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
 async function bootApp() {
   try {
     const roomResponse = await fetch('/api/room')
