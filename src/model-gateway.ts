@@ -893,7 +893,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
           schema,
           { name: 'submit_role_selection', description: '提交本回合应发言的角色 id 列表。', parameters: schema },
           { onUsage: collectUsage },
-          {}, { thinkingStrength: directorThinking },
+          {}, { thinkingStrength: isPromptThinkingForcedOff('chat.role-selection') ? 'off' : directorThinking },
         )
       const roleIds = Array.isArray(result?.roleIds) ? result.roleIds.map(String).filter(id => context.roles.some(role => role.id === id && role.presence === 'present')) : []
       const reason = typeof result?.reason === 'string' && result.reason.trim() ? result.reason.trim() : undefined

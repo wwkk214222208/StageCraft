@@ -10,6 +10,8 @@ function fixture() { return join(mkdtempSync(join(tmpdir(), 'stagecraft-preset-'
 test('gameplay scenarios expose thinking override metadata', () => {
   const scenario = loadGameplayScenario('director.draft')
   assert.equal(scenario.forceThinkingOff, undefined)
+  // 导演选角（chat.role-selection）默认禁止思维链
+  assert.equal(loadGameplayScenario('chat.role-selection').forceThinkingOff, true)
   const file = fixture()
   updatePromptPreset({ id: 'fast', name: 'Fast', modes: ['director'], scenarios: { 'director.draft': { forceThinkingOff: true, nodes: [], regexRules: [] } }, nodes: [], regexRules: [] }, file)
   assert.equal(getPromptPresetState(file).presets.find(item => item.id === 'fast')?.scenarios?.['director.draft']?.forceThinkingOff, true)

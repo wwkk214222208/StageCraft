@@ -2,6 +2,7 @@
   "mode": "chat",
   "scope": "chat.role-selection",
   "name": "群聊模式 · 导演选角",
+  "forceThinkingOff": true,
   "components": [
     {
       "id": "role-selection.identity",
