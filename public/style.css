@@ -109,8 +109,8 @@
 .billing-peak-toggle input[type=checkbox]::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#a9b8dd;transition:transform .16s,background .16s}
 .billing-peak-toggle input[type=checkbox]:checked{background:#4176e6;border-color:#679efe}
 .billing-peak-toggle input[type=checkbox]:checked::after{transform:translateX(16px);background:#fff}
-/* 群聊发言模式：侧栏模式触发按钮（与「新建人物」同款配色，顶满整行） */
-.chat-mode-actions{width:100%;margin:0 0 10px}
+/* 群聊发言模式：角色列表上方的手动安排按钮（与「新建人物」同款配色，顶满整行） */
+.chat-mode-actions{display:grid;gap:8px;width:100%;margin:0 0 10px}
 .chat-mode-actions button{width:100%;font-size:13px}
 /* 侧栏「设置 / 预设」：设置与预设之间的分隔线 */
 #prompts-list .sidebar-settings-card{margin-bottom:0}

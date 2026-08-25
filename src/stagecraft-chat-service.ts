@@ -112,6 +112,9 @@ export class StageCraftChatService implements StageCraftChatPort {
     this.store.addPlayerScene(roomId, text)
     this.core?.emitDomainEvent(domainEvent('player.contribution.submitted', { roomId, text }))
     this.notifications.notify(roomId)
+    // 发言模式（玩法声明）：director / all —— 玩家提交行动后自动执行导演选角或全体依次发言，无需手动触发。
+    if (room.speechMode === 'director' && this.workers.selectSpeakingRoles) await this.directorDecide(roomId)
+    else if (room.speechMode === 'all') await this.speakAll(roomId)
   }
 
   async speak(roomId: string, roleId: string, feedback = ''): Promise<void> {

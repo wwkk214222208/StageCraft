@@ -52,7 +52,7 @@ test('story gameplay declares chat speechMode which flows into the room and pers
   }
 })
 
-test('director speech mode: director selects roles (no approval of selection), speeches generated and approved one by one', async () => {
+test('director speech mode: submitting a contribution auto-triggers director selection (no approval of selection), speeches approved one by one', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-chat-mode-'))
   let store: Store | undefined
   let setup: ReturnType<typeof chatCore> | undefined
@@ -67,11 +67,8 @@ test('director speech mode: director selects roles (no approval of selection), s
     store.setRoomConfig(roomId, { speechMode: 'director' })
     assert.equal(store.getRoom(roomId).speechMode, 'director')
 
+    // 提交行动后自动执行导演选角并进入首位角色审批（无需手动触发）
     await setup.core.dispatch({ id: 'submit', actor: 'player', type: 'submit-text', payload: { roomId, scope: 'chat', action: 'chat-contribution', text: '玩家推开门走进来。' } })
-    assert.equal(store.getRoom(roomId).phase, 'awaiting-player-input')
-
-    // 导演选角：不需要玩家审批选角，直接进入首位角色发言
-    await setup.core.dispatch({ id: 'decide', actor: 'player', type: 'select-role', payload: { roomId, scope: 'chat', action: 'director-role-selection' } })
     let room = store.getRoom(roomId)
     assert.equal(room.phase, 'awaiting-approval')
     const first = room.speech!
@@ -108,8 +105,8 @@ test('director speech mode: empty role selection falls back to a local random pr
     store = setup.store
     const roomId = setup.roomId
     store.setRoomConfig(roomId, { speechMode: 'director' })
+    // 提交行动后自动导演选角（空选角 → 本地随机兜底一位在场角色）
     await setup.core.dispatch({ id: 'submit', actor: 'player', type: 'submit-text', payload: { roomId, scope: 'chat', action: 'chat-contribution', text: '玩家环顾四周。' } })
-    await setup.core.dispatch({ id: 'decide', actor: 'player', type: 'select-role', payload: { roomId, scope: 'chat', action: 'director-role-selection' } })
     const room = store.getRoom(roomId)
     assert.equal(room.phase, 'awaiting-approval')
     assert.ok(room.speech)
@@ -121,7 +118,37 @@ test('director speech mode: empty role selection falls back to a local random pr
   }
 })
 
-test('all speech mode: every present role speaks in role order, approved one by one', async () => {
+test('manual speech mode: director/everyone buttons still work as manual triggers, submission does not auto-run', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-chat-mode-'))
+  let store: Store | undefined
+  let setup: ReturnType<typeof chatCore> | undefined
+  try {
+    setup = chatCore(root)
+    store = setup.store
+    const roomId = setup.roomId
+    assert.equal(store.getRoom(roomId).speechMode, 'manual')
+    await setup.core.dispatch({ id: 'submit', actor: 'player', type: 'submit-text', payload: { roomId, scope: 'chat', action: 'chat-contribution', text: '玩家说了一句话。' } })
+    // manual 模式：提交后不自动执行
+    assert.equal(store.getRoom(roomId).phase, 'awaiting-player-input')
+    // 手动触发「让导演安排发言」
+    await setup.core.dispatch({ id: 'decide', actor: 'player', type: 'select-role', payload: { roomId, scope: 'chat', action: 'director-role-selection' } })
+    let room = store.getRoom(roomId)
+    assert.equal(room.phase, 'awaiting-approval')
+    await setup.core.dispatch({ id: 'approve', actor: 'player', type: 'approve', payload: { roomId, scope: 'chat', action: 'speech', text: room.speech!.text } })
+    room = store.getRoom(roomId)
+    assert.equal(room.phase, 'awaiting-player-input')
+    // 手动触发「所有人依次发言」
+    await setup.core.dispatch({ id: 'all', actor: 'player', type: 'select-role', payload: { roomId, scope: 'chat', action: 'chat-speech-all' } })
+    room = store.getRoom(roomId)
+    assert.equal(room.phase, 'awaiting-approval')
+  } finally {
+    await setup?.container.dispose()
+    store?.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('all speech mode: submitting a contribution auto-triggers every present role to speak in order, approved one by one', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-chat-mode-'))
   let store: Store | undefined
   let setup: ReturnType<typeof chatCore> | undefined
@@ -133,8 +160,8 @@ test('all speech mode: every present role speaks in role order, approved one by 
     const present = store.getRoom(roomId).roles.filter(role => role.presence === 'present').map(role => role.id)
     assert.ok(present.length >= 2, 'eldoria should have at least two present roles')
 
+    // 提交行动后自动全体依次发言
     await setup.core.dispatch({ id: 'submit', actor: 'player', type: 'submit-text', payload: { roomId, scope: 'chat', action: 'chat-contribution', text: '玩家宣布了一件事。' } })
-    await setup.core.dispatch({ id: 'all', actor: 'player', type: 'select-role', payload: { roomId, scope: 'chat', action: 'chat-speech-all' } })
 
     let room = store.getRoom(roomId)
     const speakers: string[] = []
