@@ -49,25 +49,8 @@ let promptTemplates = null
 let promptGameplayScenarios = {}
 let promptGameplayScenarioForceThinkingOff = false
 const promptPresetScopes = { 'director.role-decision': '导演模式 · 角色决策', 'director.draft': '导演模式 · 场景草稿', 'director.consult': '导演模式 · 导演咨询', 'director.memory-digest': '导演模式 · 记忆消化', 'chat.role-speech': '群聊模式 · 角色发言', 'chat.world-director': '群聊模式 · 世界导演', 'prompt-preset.transform': 'AI 预设助手' }
-const promptSystemParts = {
-  'director.role-decision': ['角色身份与决策职责', '场景、记忆与公共状态', '信息边界与角色私有信息', '工具输出与决策约束'],
-  'director.draft': ['Director 身份与创作职责', '世界书与公开信息边界', '玩家、场景与角色意图上下文', '状态变更与提案规则', '工具输出与审批约束'],
-  'director.consult': ['Director 咨询身份', '非正文与信息边界', '当前草稿、提案与咨询上下文', '工具输出约束'],
-  'director.memory-digest': ['记忆消化职责', '角色视角与事实边界', '已批准正文与精炼规则', '工具输出约束'],
-  'chat.role-speech': ['角色身份与发言职责', '角色设定、目标与世界信息', '场景、记忆与公共状态', '世界变更与工具输出约束'],
-  'chat.world-director': ['世界导演身份与职责', '不替角色发言的边界', '场景、历史与世界状态上下文', '世界变更与工具输出约束'],
-  'prompt-preset.transform': ['预设助手身份与安全边界', '导入内容与转换规则', '工具与输出约束'],
-}
-const promptSystemTemplatePaths = {
-  'director.role-decision': ['role', 'system'],
-  'director.draft': ['skills', 'director'],
-  'director.consult': ['skills', 'consultation'],
-  'director.memory-digest': ['role', 'digestSystem'],
-  'chat.role-speech': ['chat', 'system'],
-  'chat.world-director': ['chat', 'directorChatSystem'],
-  'prompt-preset.transform': ['skills', 'consultation'],
-}
-function gameplayComponents(scope) { return promptGameplayScenarios?.[scope]?.components ?? (promptSystemParts[scope] ?? ['系统规则']).map((name, index) => ({ id: `runtime.${scope}.${index + 1}`, name, templatePath: promptSystemTemplatePaths[scope] ?? [], dynamic: true })) }
+// 玩法组件归属来自后端 gameplayScenarios（/api/prompts/presets）；后端未下发时前端走空态，不再持有 scope→模板 兜底映射。
+function gameplayComponents(scope) { return promptGameplayScenarios?.[scope]?.components ?? [] }
 function defaultPromptEditorNodes(scope) { return gameplayComponents(scope).map(component => ({ id: component.id, name: component.name, content: '', type: component.role === 'user' ? 'user' : 'system', enabled: true, editable: false, runtimeBinding: component.id, removable: false, dynamic: component.dynamic === true })) }
 function readTemplatePath(path, template) { if (typeof template === 'string') return template; let value = promptTemplates; for (const key of path ?? []) value = value?.[key]; return String(value ?? '') }
 function runtimePreview(scope, node) { const component = gameplayComponents(scope).find(item => item.id === (node.runtimeBinding ?? node.id)); return component ? readTemplatePath(component.templatePath, component.template) : '该组件来自当前玩法的固定提示词文件。' }
@@ -437,7 +420,7 @@ function renderPromptPresetEditor() {
   const userNodes = scenario.nodes.map((node, index) => node.type === 'user' ? renderNode(node, index) : '').join('')
   const nodes = `${systemNodes}<div class="prompt-role-divider" data-prompt-divider="user" role="separator" title="拖动私有提示词到此处可切换为用户消息"><span>system / user</span></div>${userNodes}`
   const rules = scenario.regexRules.map((rule, index) => `<article class="prompt-regex" data-regex-index="${index}"><label>名称<input data-regex-field="name" value="${escape(rule.name)}"></label><label>匹配正则<input data-regex-field="pattern" value="${escape(rule.pattern)}"></label><label>替换文本<input data-regex-field="replacement" value="${escape(rule.replacement)}"></label><label class="settings-row">规则启用<input data-regex-field="enabled" type="checkbox"${rule.enabled ? ' checked' : ''}></label><small>仅用于 ST 导入预设的文本替换。</small><button type="button" data-regex-delete="${index}">删除</button></article>`).join('')
-  $('#prompt-preset-nodes').innerHTML = `<h4 class="section-title">提示词节点（拖动排序）</h4>${nodes}<details class="prompt-compatibility" open><summary>ST 正则兼容层</summary><label class="settings-row">启用 ST 正则兼容层<input id="prompt-regex-compatibility" type="checkbox"${preset.compatibility?.regexEnabled === true ? ' checked' : ''}></label><p class="hint">用于兼容导入的 ST 文本替换规则。关闭时规则保留但不会修改发送给模型的提示词。</p>${rules || '<p class="hint">没有兼容规则</p>'}</details>`
+  $('#prompt-preset-nodes').innerHTML = `<h4 class="section-title">提示词节点（拖动排序）</h4>${gameplayComponents(promptPresetScope).length ? '' : '<p class="hint">该玩法暂无可用提示词组件。</p>'}${nodes}<details class="prompt-compatibility" open><summary>ST 正则兼容层</summary><label class="settings-row">启用 ST 正则兼容层<input id="prompt-regex-compatibility" type="checkbox"${preset.compatibility?.regexEnabled === true ? ' checked' : ''}></label><p class="hint">用于兼容导入的 ST 文本替换规则。关闭时规则保留但不会修改发送给模型的提示词。</p>${rules || '<p class="hint">没有兼容规则</p>'}</details>`
   // 默认方案为实体：不可覆盖保存、不可删除；内容可编辑，经「另存为」落盘。
   const presetLocked = preset.id === 'default'
   const saveBtn = $('#prompt-preset-save'); if (saveBtn) { saveBtn.disabled = presetLocked; saveBtn.title = presetLocked ? '默认方案不可覆盖保存，请另存为' : '' }
