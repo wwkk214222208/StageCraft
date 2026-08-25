@@ -243,8 +243,8 @@ function renderThinkingPanel() {
   const entries = [...thinkingStreams.entries()].filter(([, stream]) => !stream.done)
   panel.hidden = entries.length === 0
   panel.innerHTML = entries.map(([key, stream]) => {
-    const open = thinkingPrefs.autoExpand ? 'open' : ''
-    return `<details class="thinking-block" ${open} data-thinking="${escape(key)}"><summary>💭 ${escape(thinkingLabel(key))} 思考中</summary><pre>${escape(stream.text)}</pre></details>`
+    // 生成中实时展开；done 后移出本面板，正文里的已完成思维链由 thinkingBlockHtml 按 autoExpand 决定（默认折叠）
+    return `<details class="thinking-block" open data-thinking="${escape(key)}"><summary>💭 ${escape(thinkingLabel(key))} 思考中</summary><pre>${escape(stream.text)}</pre></details>`
   }).join('')
 }
 function applyThinkingEvent(event) {
