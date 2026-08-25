@@ -14,7 +14,7 @@
 
 StageCraft 是一个自托管、插件化的多角色角色扮演（RP）运行时，配套一个 Web 工作台。它想成为比 SillyTavern 更好上手的生态：创作者能低门槛地做角色和剧本，玩家不用配置、打开就能玩。
 
-- 名称：`stagecraft`，版本 `0.1.0`，`private`，协议 **AGPL-3.0-only**。
+- 名称：`stagecraft`，版本 `0.3.0`，`private`，协议 **AGPL-3.0-only**。
 - 运行形态：① 独立 Node 服务；② 作为 **dsh 插件**（经 `dsh-rp` 适配壳）；③ 安卓（远程模式 APK / Termux 本地，**当前暂不推荐**，UI 布局问题待修）。
 
 ## 已实现
@@ -23,6 +23,13 @@ StageCraft 是一个自托管、插件化的多角色角色扮演（RP）运行�
 
 - **角色独立身份**：每角色独立记忆 / 性格 / 目标，且可单独指定 provider + model（`role.modelOverride` / `role.providerId`；`resolveRouteModel`）。
 - **OOC 即时修正（肘击 = intervene）**：对单个角色重新决策，可携带修正后的人设 / 记忆 / 印象 / 目标（`POST /api/roles/intervene`；`room-runtime.interveneRole`）。
+- **群聊发言模式（玩法声明）**：手动 / 导演决定部分角色发言 / 所有人依次发言；`story.gameplay.chat.speechMode` 声明默认，提交行动后自动执行，侧栏「设置与预设」可切换并持久化；导演选角无需审批，台词逐个生成逐个审批，空选角本地随机兜底（`src/stagecraft-chat-service.ts`）。
+- **计费**：按模型价格表记账（基础 / 缓存 / 峰谷价格，`peakExcludesWeekends` 周末不计峰值），`/api/billing` 读写，前端「计费与价格」弹窗（`src/billing.ts`）。
+- **提示词预设管理**：预设增删改 / 另存为 / ST 导入、私设条目服务端持久（`/api/prompts/private-toggles`，群聊作用域同样生效）、玩法场景提示词由后端 `gameplayScenarios` 下发（前端无 scope→模板 硬编码兜底，缺失走空态）。
+- **沉浸模式玩法声明**：`story.gameplay.<mode>.autoPublish` 声明默认值，左侧栏开关随时切换并持久化；沉浸模式隐藏未在场角色。
+- **导演模式玩家发言记入正文**（气泡样式，始终记录；左侧栏可仅隐藏显示，不影响落盘）。
+- **思维链精细化控制**：玩法声明 `forceThinkingOff` 强制关闭（含导演选角），`thinking-params.ts` 按模型家族差异化设置（DeepSeek / GLM / 豆包 `thinking:disabled`、OpenAI `reasoning_effort:none`、Gemini `minimal`、Kimi `low`、Claude / 未知提示词引导）；正文输出完毕后思维链默认折叠。
+- **Debug 控制台**：网关 `onDetail` 下发模型完整返回与最终提交提示词，前端 Debug 开关过滤详情（`src/model-gateway.ts` / `src/thinking-params.ts`）。
 - **开放插件架构**：Core 为唯一状态权威，四层插件边界（人机交互 / 核心运行时 / 玩法方案 / LLM 路由）（`src/core/`；`docs/architecture.md`）。
 - **DSH 辅助剧本编辑**：生成 / 润色 / 一致性检查 / 扩开场（`src/dsh-story-bridge.ts`；`creator-workbench-*.ts`）。
 - **崩溃安全**：状态变化一次 SQLite 事务提交（`src/core/state-transaction.ts`）。
@@ -101,8 +108,9 @@ src/
 android/                     安卓工程（远程模式 APK；本地运行在路线图中）
 dsh-rp/                      dsh 适配壳（见其 README）
 public/                      前端（原生 JS / CSS）
-stories/eldoria.json         默认剧本
-prompts/prompts.json         提示词分组（role / director / consult / skills / chat，共 5 组）
+stories/default/eldoria.json   默认剧本（含 eldoria.assets/ 角色肖像）
+prompts/prompts.json           提示词分组（role / director / consult / skills / chat）
+prompts/gameplay/              玩法场景提示词（各 scope 组件 + templatePath，后端下发）
 scripts/build-android-core.mjs
 ```
 
