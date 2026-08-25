@@ -155,6 +155,19 @@ pnpm test           # node --experimental-strip-types --test --test-concurrency=
 
 **作为 dsh 插件**：`dsh --profile <name>` 在 `RP_PORT`（默认 **8799**）启动，核心代码与独立运行一致，仅换入口。详见 `dsh-rp/README.md`。
 
+**手机远程访问（安卓配对）**：
+
+```bash
+# 独立模式：启用远程访问（监听 0.0.0.0，生成配对码，非本机请求需 Bearer 授权）
+RP_REMOTE=1 node --experimental-strip-types src/server.ts
+# 可选：自定义监听地址 / 配对码有效期 / 会话有效期
+HOST=0.0.0.0 RP_REMOTE=1 RP_REMOTE_PAIRING_TTL_MS=300000 RP_REMOTE_SESSION_TTL_MS=43200000 node --experimental-strip-types src/server.ts
+```
+
+- 启用后在设置弹窗点「生成手机配对码」，安卓端输入 PC 局域网地址 + 配对码完成配对，配对后通过 `/api/remote/pair` 换取的 Bearer token 访问后端（实时通道 `/api/core/events`）。
+- dsh 插件模式：配置 `remoteEnabled: true`（并确保监听地址可被手机访问）。
+- 非 loopback 请求访问 `/api`、`/assets`、`/custom` 均需授权；`HOST=0.0.0.0` 而远程访问未启用时启动会报错（安全护栏）。
+
 **安卓**：
 
 - 远程模式 APK（连接你自己的StageCraft服务）：构建产物见 `android/` 工程。
