@@ -126,6 +126,13 @@ export class RemoteAccessPolicy {
     return this.sessions.delete(hashSecret(token))
   }
 
+  /** 吊销全部会话（本机操作员应急 / 清除所有已配对手机）。 */
+  revokeAllSessions(): number {
+    const count = this.sessions.size
+    this.sessions.clear()
+    return count
+  }
+
   private isLimited(clientKey: string, now: number): boolean {
     const state = this.failures.get(clientKey)
     if (!state) return false
@@ -161,6 +168,7 @@ export class RemoteAccessService {
   get authenticateLoopback(): boolean { return this.policy.authenticateLoopback }
   createPairingCode(): PairingCode { return this.policy.createPairingCode() }
   revokeSession(token: string): boolean { return this.policy.revokeSession(token) }
+  revokeAllSessions(): number { return this.policy.revokeAllSessions() }
 
   authorizeRequest(request: IncomingMessage): boolean {
     const header = request.headers.authorization

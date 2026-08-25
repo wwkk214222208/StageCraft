@@ -384,9 +384,17 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     try {
       if (await remoteAccess.handlePairing(request, response, url)) return
-      const protectedPath = ['/api', '/assets', '/custom'].some(prefix => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
+      const protectedPath = ['/api', '/assets', '/custom', '/story-assets'].some(prefix => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
       const requiresAuthorization = protectedPath && (remoteAccess.authenticateLoopback || !isLoopbackAddress(request.socket.remoteAddress))
       if (requiresAuthorization && !remoteAccess.authorizeRequest(request)) return json(response, 401, { error: 'Unauthorized' })
+      // 会话吊销：带 Bearer token = 该会话自注销；本机（loopback）无 token 调用 = 清空所有已配对会话。
+      if (url.pathname === '/api/remote/revoke' && request.method === 'POST') {
+        const header = request.headers.authorization
+        const match = typeof header === 'string' ? header.match(/^Bearer\s+([^\s]+)$/i) : undefined
+        if (match) remoteAccess.revokeSession(match[1])
+        else remoteAccess.revokeAllSessions()
+        return json(response, 200, { ok: true })
+      }
       if (url.pathname === '/api/room') return json(response, 200, publicRoomSnapshot(runtime.get(url.searchParams.get('id') ?? roomId)))
       
       // 新架构：Core Runtime 协议端点由 HumanCoreInteractionPlugin 处理。

@@ -192,6 +192,7 @@ test('desktop pairing-code operator entry is loopback-only and visible in settin
   assert.match(policy, /\/api\/remote\/pairing-code/)
   assert.match(policy, /!isLoopbackAddress\(request\.socket\.remoteAddress\)/)
   assert.match(html, /id="remote-pairing-code"/)
-  assert.match(html, /远程访问必须在启动配置中预先开启/)
+  assert.match(html, /RP_REMOTE=1/)
+  assert.match(html, /id="remote-pairing-revoke"/)
   assert.match(app, /fetch\('\/api\/remote\/pairing-code', \{ method: 'POST'/)
 })

@@ -61,6 +61,42 @@ test('app remote boundary protects API, command, SSE and private assets with pai
   }
 })
 
+test('remote sessions can be revoked (self-revoke and operator clear-all)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-remote-access-'))
+  const app = await startTavern({
+    root: repositoryRoot, dataDir: join(root, 'data'), saveRoot: join(root, 'save'), port: 0, host: '127.0.0.1',
+    remoteAccess: { enabled: true },
+  })
+  const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`
+  try {
+    const pair = async (): Promise<string> => {
+      const codeResponse = await fetch(`${base}/api/remote/pairing-code`, { method: 'POST' })
+      assert.equal(codeResponse.status, 200)
+      const { code } = await codeResponse.json() as { code: string }
+      const exchange = await fetch(`${base}/api/remote/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }) })
+      assert.equal(exchange.status, 200)
+      const { token } = await exchange.json() as { token: string }
+      return token
+    }
+    const tokenA = await pair()
+    const tokenB = await pair()
+    assert.equal(app.remoteAccess.policy.authorize(tokenA), true)
+    assert.equal(app.remoteAccess.policy.authorize(tokenB), true)
+    // 自注销：带 Bearer 调用 /api/remote/revoke → 仅 tokenA 失效
+    const revokeSelf = await fetch(`${base}/api/remote/revoke`, { method: 'POST', headers: { authorization: `Bearer ${tokenA}` } })
+    assert.equal(revokeSelf.status, 200)
+    assert.equal(app.remoteAccess.policy.authorize(tokenA), false)
+    assert.equal(app.remoteAccess.policy.authorize(tokenB), true)
+    // 操作员清空：本机无 token 调用 → 全部会话失效
+    const revokeAll = await fetch(`${base}/api/remote/revoke`, { method: 'POST' })
+    assert.equal(revokeAll.status, 200)
+    assert.equal(app.remoteAccess.policy.authorize(tokenB), false)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('non-loopback bearer cannot create an operator pairing code', async () => {
   const service = new (await import('../src/remote-access.ts')).RemoteAccessService({ enabled: true, randomBytes: size => new Uint8Array(size).fill(3) })
   const pairing = service.createPairingCode()

@@ -555,6 +555,18 @@ $('#remote-pairing-code').onclick = async event => {
   }
 }
 
+$('#remote-pairing-revoke').onclick = async event => {
+  event.preventDefault()
+  if (!confirm('将注销所有已配对的手机会话（手机需重新配对）。继续？')) return
+  try {
+    const response = await fetch('/api/remote/revoke', { method: 'POST' })
+    if (!response.ok) throw new Error('清除失败。')
+    alert('已清除所有已配对会话。')
+  } catch (error) {
+    $('#remote-pairing-error').textContent = error instanceof Error ? error.message : '清除失败。'
+  }
+}
+
 // ── ST 角色卡导入（兼容旧房间导入与 Creator Workbench 预览） ──
 let stImportFile = null
 $('#st-import-open').onclick = () => { stImportFile = null; $('#st-import-file').value = ''; $('#st-import-run').disabled = true; $('#st-import-preview').innerHTML = '<p class="hint">选择 JSON 或 PNG 角色卡后显示解析结果。</p>'; $('#st-import-modal').showModal() }
