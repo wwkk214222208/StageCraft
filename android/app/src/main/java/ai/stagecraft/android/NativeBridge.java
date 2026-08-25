@@ -31,6 +31,7 @@ public final class NativeBridge implements AutoCloseable {
     private volatile boolean ready;
     private volatile boolean closed;
     private volatile boolean userDisconnected;
+    private volatile String activeCredential;
     private final EmbeddedCoreArtifact.Verification embeddedCore;
     private final AndroidCompositionOperations compositionOperations;
 
@@ -44,6 +45,11 @@ public final class NativeBridge implements AutoCloseable {
 
     @JavascriptInterface public boolean localCoreAllowed() {
         return embeddedCore.valid();
+    }
+
+    /** 当前已配对会话的 Bearer token（仅供 StageCraftWebViewClient 注入，不暴露给页面 JS）。 */
+    public String currentCredential() {
+        return activeCredential;
     }
 
     @JavascriptInterface public synchronized String invokeSync(String operation, String inputJson) {
@@ -142,7 +148,9 @@ public final class NativeBridge implements AutoCloseable {
         cancelPairRequest();
         connectionGeneration.incrementAndGet();
         closeConnection();
+        activeCredential = null;
         sessionStore.clearSession();
+        activity.runOnUiThread(() -> ((MainActivity) activity).showPairingPage());
         emit(authRequiredMessage("本机会话已清除，请重新配对。"));
     }
 
@@ -172,6 +180,7 @@ public final class NativeBridge implements AutoCloseable {
             if (saved == null) { emit(authRequiredMessage("请输入电脑上显示的一次性配对码。")); return; }
             try {
                 URI address = ServerAddressValidator.validate(saved.address(), saved.allowInsecureHttp());
+                activeCredential = saved.credential();
                 emit(restoredMessage(saved.address(), saved.allowInsecureHttp()));
                 installConnection(address, saved.credential());
             } catch (IllegalArgumentException error) {
@@ -207,6 +216,7 @@ public final class NativeBridge implements AutoCloseable {
             if (closed || operation != operationGeneration.get()) return;
             String normalized = address.toString();
             sessionStore.save(normalized, allowInsecureHttp, credential);
+            activeCredential = credential;
             emit(restoredMessage(normalized, allowInsecureHttp));
             installConnection(address, credential);
         } catch (Exception error) {
@@ -230,11 +240,13 @@ public final class NativeBridge implements AutoCloseable {
                 if (installedGeneration != connectionGeneration.get()) return;
                 connectionGeneration.incrementAndGet();
                 sessionStore.clearSession();
+                activeCredential = null;
                 closeConnection();
-                emit(authRequiredMessage("会话已过期或被撤销，请重新配对。"));
+                activity.runOnUiThread(() -> ((MainActivity) activity).showPairingPage());
             }
         });
         connection = next;
+        activity.runOnUiThread(() -> ((MainActivity) activity).showRemoteUi(address.toString()));
         if (foreground) next.connect();
         else next.pause();
     }

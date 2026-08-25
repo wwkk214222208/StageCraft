@@ -36,9 +36,20 @@ public final class MainActivity extends Activity {
         EmbeddedCoreArtifact.Verification embeddedCore = EmbeddedCoreArtifact.verify(this);
         bridge = new NativeBridge(this, webView, new RemoteSessionStore(this), embeddedCore);
         webView.addJavascriptInterface(bridge, "StageCraftNative");
-        webView.setWebViewClient(new LocalAssetWebViewClient(this));
+        webView.setWebViewClient(new StageCraftWebViewClient(this, () -> bridge.currentCredential()));
         setContentView(webView);
-        webView.loadUrl(LocalAssetWebViewClient.ORIGIN + "/index.html");
+        webView.loadUrl(StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html");
+    }
+
+    /** 配对成功 / 会话恢复后：切换到 PC 完整 Web UI（令牌由 StageCraftWebViewClient 注入）。 */
+    void showRemoteUi(String address) {
+        if (address == null || address.isEmpty()) return;
+        webView.loadUrl(address);
+    }
+
+    /** 会话失效 / 清除后：回到本地配对页。 */
+    void showPairingPage() {
+        webView.loadUrl(StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html");
     }
 
     @Override protected void onStart() {

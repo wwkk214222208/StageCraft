@@ -21,6 +21,17 @@ The embedded path is deliberately limited to the shared, platform-neutral Core s
 
 The WebView loads only `https://appassets.androidplatform.net/` resources intercepted from packaged assets. File/content access, cookies, DOM storage, mixed content, popups, remote frames, and release WebView debugging are disabled. Remote bearer sessions remain Java-only and are encrypted with Android Keystore AES-GCM. Commands are single-attempt; SSE is established before authoritative view fetch; foreground recovery performs a full resync.
 
+## Remote full-UI mode (方案 A)
+
+配对成功或会话恢复后，`MainActivity.showRemoteUi(...)` 直接让 WebView 加载 **PC 端完整 Web UI**（`http://<LAN-IP>:<port>/`），不再使用本地最小 renderer：
+
+- `StageCraftWebViewClient` 在 `shouldInterceptRequest` 里：
+  - 主页面 HTML 用 Bearer 拉取，并在 `<head>` 注入 bootstrap 脚本（早于 `app.js` 执行），补丁 `fetch` / `XMLHttpRequest` / `EventSource` 自动携带 `Authorization: Bearer`；
+  - 图片等无头请求（`/assets`、`/custom`、`/story-assets`）用 Bearer 重新拉取返回；
+  - 已带 Authorization 的 GET 与 POST/PUT 等带 body 请求原样交给 WebView 处理。
+- 原生 `RemoteCoreConnection` 继续作为**授权看门狗**：SSE 收到 401 → `onUnauthorized` → 清会话并回到本地配对页。
+- 本地资产（配对页 / 嵌入核心模式）仍由同一客户端拦截服务。
+
 ## Build and verification
 
 The standard Gradle 8.9 wrapper and AGP 8.7.3 contract are checked in. With the required AGP artifact available in the Gradle cache and SDK 35 installed:
