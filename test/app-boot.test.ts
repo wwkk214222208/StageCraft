@@ -96,6 +96,31 @@ test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', asy
     const stories = await storiesRes.json() as unknown[]
     assert.ok(Array.isArray(stories))
 
+    // 计费：价格表读取/保存、/api/usage 携带累计统计、清空累计
+    const billingRes = await fetch(`${base}/api/billing`)
+    assert.equal(billingRes.status, 200)
+    const billing = await billingRes.json() as { prices: { version: number; rates: Array<{ provider: string; model: string; inputPerMillion: number }> }; stats: { totalCost: number; requests: number } }
+    assert.equal(billing.prices.version, 1)
+    assert.equal(billing.stats.totalCost, 0)
+    const pricePut = await fetch(`${base}/api/billing/prices`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: 1, rates: [{ provider: '测试源', model: '测试模型', currency: 'RMB', inputPerMillion: 1, outputPerMillion: 2, cachedInputPerMillion: 0.25 }] }) })
+    assert.equal(pricePut.status, 200)
+    const saved = await pricePut.json() as { prices: { rates: Array<{ provider: string; model: string; inputPerMillion: number }> }; stats: { requests: number } }
+    assert.equal(saved.prices.rates.length, 1)
+    assert.equal(saved.prices.rates[0].provider, '测试源')
+    assert.equal(saved.prices.rates[0].model, '测试模型')
+    assert.equal(saved.prices.rates[0].inputPerMillion, 1)
+    assert.equal(saved.stats.requests, 0)
+    const usageRes = await fetch(`${base}/api/usage`)
+    assert.equal(usageRes.status, 200)
+    const usage = await usageRes.json() as { billing?: { totalCost: number; requests: number } }
+    assert.ok(usage.billing)
+    assert.equal(typeof usage.billing.requests, 'number')
+    const resetRes = await fetch(`${base}/api/billing/reset`, { method: 'POST' })
+    assert.equal(resetRes.status, 200)
+    const reset = await resetRes.json() as { totalCost: number; requests: number }
+    assert.equal(reset.requests, 0)
+    assert.equal(reset.totalCost, 0)
+
     // 静态首页
     const indexRes = await fetch(`${base}/`)
     assert.equal(indexRes.status, 200)

@@ -77,6 +77,38 @@
 .provider-row-actions{display:flex;gap:4px;flex-shrink:0}
 .provider-row-actions button{padding:3px 7px;font-size:11px}
 .provider-form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+/* 计费与价格 */
+#billing-modal{width:640px;max-width:94vw;border:1px solid #3a4a6e;border-radius:8px;background:#222a3d;color:#e4edfd;box-shadow:0 6px 28px rgba(0,0,0,.55)}
+.billing-panel{display:flex;flex-direction:column;gap:10px;max-height:86vh;overflow:auto;padding:14px}
+.billing-panel header{display:flex;align-items:center;justify-content:space-between;padding:0 0 8px;border-bottom:1px solid #34415b}
+.billing-panel header h3{margin:0;color:#b7c8fe;font:600 15px Georgia,serif}
+.billing-summary{display:flex;align-items:baseline;gap:10px;border:1px solid #3a4a6e;border-radius:6px;background:#1f2739;padding:8px 10px}
+.billing-summary strong{font:700 18px Georgia,serif;color:#e4edfd}
+.billing-summary span{color:#8fa1c9;font-size:12px}
+.billing-section-heading{display:flex;align-items:center;justify-content:space-between}
+.billing-section-heading h4{margin:0;color:#b7c8fe;font:600 13px Georgia,serif}
+.billing-panel .hint{color:#7f90b8;font-size:11px;margin:0}
+.billing-breakdown{max-height:180px;overflow:auto}
+.billing-breakdown table{width:100%;border-collapse:collapse;font-size:12px}
+.billing-breakdown th,.billing-breakdown td{border:1px solid #3a4a6e;padding:4px 6px;text-align:left}
+.billing-breakdown th{background:#232c43;color:#b7c8fe;font-weight:600}
+.billing-rate-list{display:grid;gap:8px;max-height:300px;overflow:auto}
+.billing-rate{border:1px solid #3a4a6e;border-radius:6px;background:#1f2739;padding:8px 10px}
+.billing-rate header{display:flex;align-items:center;justify-content:space-between;border:0;padding:0}
+.billing-rate header strong{color:#b7c8fe;font:600 13px Georgia,serif}
+.billing-rate-delete{background:none;border:0;color:#ff9d8a;cursor:pointer;font-size:12px;padding:2px 6px}
+.billing-rate-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.billing-rate-grid label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#a9b8dd}
+.billing-rate-grid input,.billing-rate-grid select{background:#1b2133;color:#e4edfd;border:1px solid #34415b;border-radius:3px;padding:5px 7px;font:inherit}
+.billing-tier{border:1px solid #3a4a6e;border-radius:5px;background:#222a3d;margin-top:8px}
+.billing-tier summary{cursor:pointer;padding:6px 8px;color:#b7c8fe;font-size:12px;font-weight:600}
+.billing-tier .billing-rate-grid{padding:8px}
+#billing-modal footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;height:auto;border:0;padding:0;background:none}
+.billing-peak-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:#a9b8dd}
+.billing-peak-toggle input[type=checkbox]{appearance:none;width:38px;height:22px;position:relative;margin:0;border:1px solid #53688f;border-radius:999px;background:#26334d;vertical-align:middle;cursor:pointer}
+.billing-peak-toggle input[type=checkbox]::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#a9b8dd;transition:transform .16s,background .16s}
+.billing-peak-toggle input[type=checkbox]:checked{background:#4176e6;border-color:#679efe}
+.billing-peak-toggle input[type=checkbox]:checked::after{transform:translateX(16px);background:#fff}
 .world-change-proposal{margin:8px 0;padding:8px 10px;border:1px solid #4868b2;background:#2b3247;border-radius:5px}
 .world-change-proposal .section-title{margin:0 0 6px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .world-change-proposal small{color:#679efe;font-size:11px}

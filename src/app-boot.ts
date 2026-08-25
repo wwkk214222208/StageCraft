@@ -25,6 +25,7 @@ import { CoreRuntimeSkeleton } from './core/runtime.ts'
 import { ModelGatewayRouterAdapter } from './core/model-router-adapter.ts'
 import { DefaultCorePluginContainer } from './core/container.ts'
 import { HttpHumanCorePlugin } from './core/http-human-plugin.ts'
+import { BillingStore } from './billing.ts'
 import { StageCraftSolutionPlugin } from './core/solutions.ts'
 import { StoreCoreStateRepository } from './core/store-state-repository.ts'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
@@ -117,6 +118,7 @@ export interface TavernApp {
   container: DefaultCorePluginContainer
   roomId: string
   gateway: ModelGateway | undefined
+  billing: BillingStore
   providerStore: ProviderConfigStore
   server: Server
   /** Local operator API for pairing-code creation and session revocation. */
@@ -155,6 +157,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const bundleStoriesDirs: string[] = userDataRoot ? [join(root, 'stories')] : []
   const saveRoot = userDataRoot ? join(userDataRoot, 'save') : options.saveRoot ?? join(root, 'save')
   const dataDir = userDataRoot ? join(userDataRoot, 'data') : options.dataDir ?? join(root, 'data')
+  const billing = new BillingStore(join(dataDir, 'billing-prices.json'), join(dataDir, 'billing-stats.json'))
   // 提示词模板始终来自包内（只读发布资源）；用户自定义提示词（custom）落在 userDataRoot。
   const promptsFilePath = options.promptsFilePath ?? join(root, 'prompts', 'prompts.json')
   const host = options.host ?? process.env.HOST ?? '127.0.0.1'
@@ -246,7 +249,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   let llmFiber: Fiber | undefined
   let providerActivation = Promise.resolve()
   function gatewayFromProvider(config: ProviderConfig, model: string): ModelGateway {
-    return new ModelGateway({ name: config.name, baseUrl: config.baseUrl, apiKey: config.apiKey, model, timeoutMs: envRoute.timeoutMs, responseFormat: config.responseFormat, toolCalling: config.toolCalling !== false }, { onSummary: emitDebug, logRawFinalContent: process.env.RP_LOG_MODEL_FINAL_CONTENT === '1' })
+    return new ModelGateway({ name: config.name, baseUrl: config.baseUrl, apiKey: config.apiKey, model, timeoutMs: envRoute.timeoutMs, responseFormat: config.responseFormat, toolCalling: config.toolCalling !== false }, { onSummary: emitDebug, logRawFinalContent: process.env.RP_LOG_MODEL_FINAL_CONTENT === '1', onUsage: (usage, route) => { const cost = billing.record(route.name ?? 'default', route.model, usage); return cost ? { ...usage, cost } : usage } })
   }
   async function installProvider(config: ProviderConfig | undefined): Promise<void> {
     // 占位符 apiKey（示例模板）视为未配置，避免用假密钥发起真实模型请求。
@@ -566,7 +569,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         await activateProvider()
         return json(response, 200, { ok: true, defaults: providerStore.defaults() })
       }
-      if (url.pathname === '/api/usage') return json(response, 200, gateway?.usage(true) ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake' })
+      if (url.pathname === '/api/usage') { const usage = gateway?.usage(true) ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake' }; return json(response, 200, { ...usage, billing: billing.getStats() }) }
+      if (url.pathname === '/api/billing' && request.method === 'GET') return json(response, 200, { prices: billing.getPrices(), stats: billing.getStats() })
+      if (url.pathname === '/api/billing/prices' && request.method === 'PUT') { const body = await readJson(request); return json(response, 200, { prices: billing.savePrices(body), stats: billing.getStats() }) }
+      if (url.pathname === '/api/billing/reset' && request.method === 'POST') { billing.resetStats(); return json(response, 200, billing.getStats()) }
       if (url.pathname === '/api/prompts/presets' && request.method === 'GET') { const presetState = getPromptPresetState(promptsFilePath); return json(response, 200, { ...presetState, presets: mergePrivateToggles(presetState.presets, loadPrivateToggles(promptsFilePath)), modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], promptTemplates: loadPrompts(promptsFilePath), gameplayScenarios: Object.fromEntries(PROMPT_PRESET_SCOPES.map(scope => [scope, loadGameplayScenario(scope, promptsFilePath)])) }) }
       if (url.pathname === '/api/prompts/private-toggles' && request.method === 'GET') return json(response, 200, loadPrivateToggles(promptsFilePath))
       if (url.pathname === '/api/prompts/private-toggles' && request.method === 'PUT') {
@@ -1094,6 +1100,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     core,
     roomId,
     get gateway() { return gateway },
+    billing,
     providerStore,
     container,
     server,
