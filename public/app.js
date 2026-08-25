@@ -5,6 +5,25 @@ const coreClient = new CoreClient()
 const coreInteractionPanel = new CoreInteractionPanel({ client: coreClient })
 window.stagecraftCore = coreClient
 
+// 独立启动（无 DSH 宿主）时关闭依赖 DSH 会话的组件：剧本助手与预设助手。
+const standaloneMode = globalThis.__STAGECRAFT_STANDALONE__ === true
+if (standaloneMode) {
+  // 剧本编辑器/预设管理器内的 DSH 助手：原位保留布局，内容替换为「未接入 DSH」提示（接入后自动开启）。
+  const creatorPreview = document.querySelector('.creator-preview')
+  if (creatorPreview) {
+    creatorPreview.querySelector('.creator-agent-session-bar')?.remove()
+    creatorPreview.querySelector('#creator-agent-preview')?.remove()
+    creatorPreview.querySelector('#creator-session-chat')?.remove()
+    creatorPreview.insertAdjacentHTML('beforeend', '<div class="creator-empty-state"><strong>未接入 DSH</strong><p>当前为独立启动，未连接 DeepSeek Harness（DSH）宿主；接入 DSH 后运行，剧情编辑助手自动开启。</p></div>')
+  }
+  document.querySelector('.prompt-preset-editor')?.insertAdjacentHTML('afterbegin', '<p class="prompt-standalone-note">AI 预设助手需要 DSH（DeepSeek Harness）宿主环境：接入 DSH 并重启后自动开启，届时此处显示助手栏。</p>')
+  for (const selector of ['#creator-session-modal', '#creator-session-model-modal', '.prompt-preset-assistant', '#prompt-assistant-session-modal', '#prompt-assistant-session-model-modal']) {
+    document.querySelector(selector)?.remove()
+  }
+  // 预设管理器去掉助手栏后改为两栏布局（左管理 + 中编排），不留空白列。
+  document.querySelector('.prompt-preset-workspace')?.classList.add('compact')
+}
+
 let room
 let creatorSession = null
 const creatorOwner = `creator-web:${crypto.randomUUID()}`

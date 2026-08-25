@@ -135,6 +135,8 @@ export function parsePort(value: string | number | undefined, name = 'PORT'): nu
 
 export async function startTavern(options: TavernOptions = {}): Promise<TavernApp> {
   const ctx = options.ctx ?? new Context()
+  // 独立启动（src/server.ts）无 DSH 宿主：剧本助手与提示词预设管理依赖 DSH 会话，独立模式关闭。
+  const isStandalone = options.ctx === undefined
   const appFibers: Fiber[] = []
   const trackFiber = (fiber: Fiber): Fiber => { appFibers.push(fiber); return fiber }
   const untrackFiber = (fiber: Fiber): void => {
@@ -455,6 +457,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         return json(response, 200, { ok: true, revision, branch: name, files: listSaves() })
       }
       if (url.pathname === '/api/story/get' && request.method === 'GET') return json(response, 200, loadStoryPackage(storiesRoot, String(url.searchParams.get('id') ?? ''), bundleStoriesDirs))
+      if (isStandalone && url.pathname.startsWith('/api/agent/') && url.pathname !== '/api/agent/capability') return json(response, 503, { error: '独立模式未启用 DSH 会话功能（剧本助手 / 预设助手）。' })
       if (url.pathname === '/api/agent/capability' && request.method === 'GET') return json(response, 200, dshStorySessions.capability())
       if (url.pathname === '/api/agent/session' && request.method === 'GET') {
         return json(response, 200, await dshStorySessions.list(String(url.searchParams.get('owner') ?? ''), url.searchParams.get('storyId') ?? undefined))
@@ -989,6 +992,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       .replaceAll('__APP_HASH__', assetHash('app.js'))
       .replaceAll('__STYLE_HASH__', assetHash('style.css'))
       .replaceAll('__CORE_CSS_HASH__', assetHash('core-interactions.css'))
+      .replaceAll('__MODE_FLAG__', isStandalone ? 'true' : 'false')
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
     response.end(html)
   }

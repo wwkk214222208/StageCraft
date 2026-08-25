@@ -321,7 +321,7 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 #prompt-preset-modal .prompt-preset-close{position:absolute;top:10px;right:10px;z-index:5;width:30px;height:30px;padding:0;border:1px solid #53688f;border-radius:50%;background:#202d46;color:#dce7ff;font-size:20px;line-height:26px}
 #prompt-preset-modal .prompt-preset-close:hover{background:#344d76;color:#fff}
 #prompt-preset-modal::backdrop{background:#080d18cc;backdrop-filter:blur(3px)}
-#prompt-preset-modal .prompt-preset-workspace{display:grid;grid-template-columns:minmax(190px,20fr) minmax(420px,48fr) minmax(320px,32fr);gap:0;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden}
+#prompt-preset-modal .prompt-preset-workspace{display:grid;grid-template-columns:minmax(190px,20fr) minmax(420px,48fr) minmax(320px,32fr);gap:0;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden}#prompt-preset-modal .prompt-preset-workspace.compact{grid-template-columns:minmax(190px,24fr) minmax(0,76fr)}
 #prompt-preset-modal .prompt-preset-manager,#prompt-preset-modal .prompt-preset-editor{border-right:1px solid #34415b}
 #prompt-preset-modal .prompt-preset-assistant{min-width:0;min-height:0;overflow:hidden}
 #prompt-preset-modal .prompt-preset-manager{display:flex;flex-direction:column;gap:12px;padding:16px;border-right:1px solid #34415b;background:#141d2e;overflow-x:hidden;overflow-y:auto;min-height:0;overscroll-behavior:contain}
@@ -397,4 +397,5 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 #prompt-preset-modal .prompt-assistant-message b{display:block;margin-bottom:3px;color:#9eafd4;font-size:11px}
 #prompt-preset-modal .prompt-preset-assistant textarea{height:clamp(72px,14vh,150px);min-height:72px;max-height:150px;resize:vertical}
 #prompt-preset-modal .prompt-assistant-send{flex:0 0 auto}
+#prompt-preset-modal .prompt-standalone-note{flex:0 0 auto;border:1px dashed #44506a;border-radius:6px;background:#1a2430;color:#9fb2dd;padding:8px 10px;font-size:12px;line-height:1.5;margin:0 0 8px}
 @media (max-width:980px){#prompt-preset-modal{width:96vw;height:90vh;max-width:96vw;max-height:90vh}#prompt-preset-modal .prompt-preset-workspace{grid-template-columns:minmax(180px,34fr) minmax(0,66fr);grid-template-rows:minmax(0,1fr);overflow:hidden}#prompt-preset-modal .prompt-preset-assistant{grid-column:1 / -1;grid-row:2;border-top:1px solid #34415b;border-left:0;min-height:280px}#prompt-preset-modal .prompt-preset-workspace{grid-template-rows:minmax(0,1fr) minmax(280px,.8fr)}}
