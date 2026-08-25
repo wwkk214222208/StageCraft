@@ -95,3 +95,21 @@ test('ST regex literal syntax is applied when compatibility is enabled', () => {
   setPromptPresetForScope('director.draft', 'regex', file)
   assert.deepEqual(applyPromptPreset('FOO', 'foo', 'director.draft', file).messages.map(item => item.content), ['bar', 'bar'])
 })
+
+test('collect-shaped scenario (order without privateNodes) keeps private nodes on roundtrip', () => {
+  const file = fixture()
+  // 前端 collectPromptPreset 产物形态：有 order 与 nodes，但没有 privateNodes 字段。
+  updatePromptPreset({ id: 'collect', name: 'Collect', modes: ['director'], scenarios: { 'director.draft': {
+    order: ['director.draft.identity', 'director.draft.output', 'user-a', 'user-b'],
+    nodes: [
+      { id: 'director.draft.identity', name: '身份', content: '', type: 'system', enabled: true, editable: false, removable: false, runtimeBinding: 'director.draft.identity' },
+      { id: 'director.draft.output', name: '输出', content: '', type: 'user', enabled: true, editable: false, removable: false, runtimeBinding: 'director.draft.output' },
+      { id: 'user-a', name: '私设A', content: '内容A', type: 'user', enabled: true, editable: true, removable: true },
+      { id: 'user-b', name: '私设B', content: '内容B', type: 'user', enabled: false, editable: true, removable: true },
+    ],
+    regexRules: [],
+  } }, nodes: [], regexRules: [] }, file)
+  const loaded = getPromptPresetState(file).presets.find(item => item.id === 'collect')?.scenarios?.['director.draft']
+  const privates = loaded?.nodes.filter(node => node.type === 'user' && node.removable !== false) ?? []
+  assert.deepEqual(privates.map(node => `${node.id}:${node.content}:${node.enabled}`), ['user-a:内容A:true', 'user-b:内容B:false'])
+})

@@ -135,7 +135,8 @@ function normalizeScenario(source: Partial<PromptScenario> | undefined, scope: P
   if (Array.isArray(source?.order)) {
     const systems = runtimeSystemNodes(scope)
     const systemById = new Map(systems.map(node => [node.id, node]))
-    const privateNodes = Array.isArray(source.privateNodes) ? source.privateNodes.filter(node => node?.type !== 'system').map((node, index) => ({ id: String(node.id ?? `user-${index}`), name: String(node.name ?? '私有提示词'), content: String(node.content ?? ''), type: 'user' as const, enabled: node.enabled !== false, editable: true, removable: true })) : []
+    const privateSource = Array.isArray(source.privateNodes) ? source.privateNodes : (Array.isArray(source.nodes) && source.nodes.length ? source.nodes.filter(node => node?.type === 'user' && node.removable !== false) : [])
+    const privateNodes = privateSource.filter(node => node?.type !== 'system').map((node, index) => ({ id: String(node.id ?? `user-${index}`), name: String(node.name ?? '私有提示词'), content: String(node.content ?? ''), type: 'user' as const, enabled: node.enabled !== false, editable: true, removable: true }))
     const privateById = new Map(privateNodes.map(node => [node.id, node]))
     const nodes = source.order.map(String).map(id => systemById.get(id) ?? privateById.get(id)).filter((node): node is PromptNode => Boolean(node))
     for (const system of systems) if (!nodes.some(node => node.id === system.id)) nodes.push(system)
