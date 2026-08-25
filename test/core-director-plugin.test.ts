@@ -17,6 +17,12 @@ import { ModelGateway, createRealWorkers } from '../src/model-gateway.ts'
 import { fakeWorkers, type WorkerSet } from '../src/workers.ts'
 import { switchProviderSafely } from '../src/app-boot.ts'
 import type { CoreLlmRouterHost } from '../src/core/plugins.ts'
+import { setPromptsFilePath, setUserPromptsDir } from '../src/prompts.ts'
+
+// 隔离 prompts 模块共享状态：本文件不依赖本机用户预设数据（isPromptThinkingForcedOff / readPromptPresetState 的落盘位置）
+const isolatedPromptsRoot = mkdtempSync(join(tmpdir(), 'stagecraft-director-isolated-'))
+setPromptsFilePath(join(isolatedPromptsRoot, 'prompts.json'))
+setUserPromptsDir(join(isolatedPromptsRoot, 'custom'))
 
 const storiesRoot = fileURLToPath(new URL('../stories', import.meta.url))
 
