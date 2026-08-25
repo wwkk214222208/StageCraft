@@ -23,8 +23,13 @@ export interface StoryPackage {
 }
 
 /** 玩法级声明配置。各玩法模式在此声明自己的领域默认值（玩家可覆盖并持久化）。 */
+export interface StoryModeGameplay {
+  /** 沉浸模式默认（autoPublish：跳过审批，AI 主导） */
+  autoPublish?: boolean
+}
 export interface StoryGameplayConfig {
-  chat?: {
+  director?: StoryModeGameplay
+  chat?: StoryModeGameplay & {
     /** 群聊发言模式：手动发言 / 导演决定发言角色 / 所有人依次发言 */
     speechMode?: import('./types.ts').ChatSpeechMode
   }

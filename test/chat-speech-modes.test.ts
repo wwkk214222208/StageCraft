@@ -118,6 +118,30 @@ test('director speech mode: empty role selection falls back to a local random pr
   }
 })
 
+test('story gameplay declares per-mode autoPublish (immersive) default', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-chat-mode-'))
+  const store = new Store(join(root, 'state.sqlite'))
+  const base = loadStoryPackage(fileURLToPath(new URL('../stories', import.meta.url)), 'eldoria')
+  try {
+    const chatStory = { ...base, id: 'eldoria-chat-immersive', gameplay: { chat: { autoPublish: true } } }
+    const chatRoom = store.seed(chatStory)
+    store.restartRoom(chatRoom, chatStory, { mode: 'chat' })
+    assert.equal(store.getRoom(chatRoom).autoPublish, true)
+    const directorStory = { ...base, id: 'eldoria-director-immersive', gameplay: { director: { autoPublish: true } } }
+    const directorRoom = store.seed(directorStory)
+    store.restartRoom(directorRoom, directorStory, { mode: 'director' })
+    assert.equal(store.getRoom(directorRoom).autoPublish, true)
+    // 未声明：默认关闭
+    const plain = { ...base, id: 'eldoria-plain' }
+    const plainRoom = store.seed(plain)
+    store.restartRoom(plainRoom, plain, { mode: 'chat' })
+    assert.equal(store.getRoom(plainRoom).autoPublish, false)
+  } finally {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('manual speech mode: director/everyone buttons still work as manual triggers, submission does not auto-run', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-chat-mode-'))
   let store: Store | undefined
