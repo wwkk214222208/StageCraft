@@ -108,6 +108,7 @@ export class ModelGateway {
       const presetPrompt = applyPromptPreset(system, user, 'director.draft')
        const effectiveSystem = thinking.promptSuffix ? `${presetPrompt.system}${thinking.promptSuffix}` : presetPrompt.system
       const messages = options.messages ?? presetPrompt.messages.map((message, index) => index === 0 && message.role === 'system' ? { ...message, content: effectiveSystem } : message)
+      this.onDetail?.(`模型提交提示词 [${schemaName}]\n${messages.map(message => `${message.role}:\n${message.content}`).join('\n\n---\n\n')}`)
        const legacyMessages = [
         { role: 'system', content: effectiveSystem },
         { role: 'user', content: presetPrompt.user },
@@ -203,6 +204,7 @@ export class ModelGateway {
       const presetPrompt = applyPromptPreset(system, user, 'director.draft')
        const effectiveSystem = thinking.promptSuffix ? `${presetPrompt.system}${thinking.promptSuffix}` : presetPrompt.system
       const messages = options.messages ?? presetPrompt.messages.map((message, index) => index === 0 && message.role === 'system' ? { ...message, content: effectiveSystem } : message)
+      this.onDetail?.(`模型提交提示词 [${schemaName}]\n${messages.map(message => `${message.role}:\n${message.content}`).join('\n\n---\n\n')}`)
        const legacyMessages = [
         { role: 'system', content: effectiveSystem },
         { role: 'user', content: presetPrompt.user },

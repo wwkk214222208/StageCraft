@@ -1560,7 +1560,7 @@ $('#create-role-save').onclick = event => {
   api('/api/roles/create', payload).then(ok => { if (ok) $('#create-role-modal').close() })
 }
 $('#sync-roles').onclick = event => { event.preventDefault(); api('/api/story/sync-roles', { storyId: $('#story-select').value }).then(ok => { if (ok) alert('已同步到初始剧本') }) }
-const debugEvents = new EventSource('/api/debug-events'); debugEvents.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); const detail = item.text.startsWith('模型完整返回'); if (!detail || debugDetailsEnabled) stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
+const debugEvents = new EventSource('/api/debug-events'); debugEvents.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); const detail = item.text.startsWith('模型完整返回') || item.text.startsWith('模型提交提示词'); if (!detail || debugDetailsEnabled) stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
 async function bootApp() {
   try {
     const roomResponse = await fetch('/api/room')
