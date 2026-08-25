@@ -24,3 +24,20 @@ test('billing creates defaults, calculates peak/off-peak and persists aggregates
   assert.equal(store.getStats().byProvider[0].model, '*')
   assert.equal(JSON.parse(readFileSync(join(dir, 'stats.json'), 'utf8')).totalCost, 43)
 })
+
+test('billing peak pricing can exclude weekends', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'stagecraft-billing-'))
+  const store = new BillingStore(join(dir, 'prices.json'), join(dir, 'stats.json'))
+  store.savePrices({ version: 1, rates: [{ provider: 'p', model: 'wk', currency: 'RMB', inputPerMillion: 1, outputPerMillion: 2, peak: { inputPerMillion: 9, outputPerMillion: 9 }, peakHours: [{ start: '00:00', end: '23:59' }], peakPricingEnabled: true, peakExcludesWeekends: true }] })
+  // 2025-01-04 是周六：排除周末 → 周末不再按峰值计费，回落基础价 1+2
+  const saturday = store.record('p', 'wk', { promptTokens: 1_000_000, completionTokens: 1_000_000 }, new Date('2025-01-04T12:00:00'))
+  assert.equal(saturday?.peak, false)
+  assert.equal(saturday?.total, 3)
+  // 2025-01-06 是周一：仍在峰值时段 → 按峰值价 9+9
+  const monday = store.record('p', 'wk', { promptTokens: 1_000_000, completionTokens: 1_000_000 }, new Date('2025-01-06T12:00:00'))
+  assert.equal(monday?.peak, true)
+  assert.equal(monday?.total, 18)
+  // 关闭排除后，周末同样按峰值计费
+  store.savePrices({ version: 1, rates: [{ provider: 'p', model: 'wk', currency: 'RMB', inputPerMillion: 1, outputPerMillion: 2, peak: { inputPerMillion: 9, outputPerMillion: 9 }, peakHours: [{ start: '00:00', end: '23:59' }], peakPricingEnabled: true, peakExcludesWeekends: false }] })
+  assert.equal(store.record('p', 'wk', { promptTokens: 1_000_000, completionTokens: 1_000_000 }, new Date('2025-01-04T12:00:00'))?.total, 18)
+})

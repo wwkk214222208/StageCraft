@@ -13,6 +13,7 @@ export interface BillingRate {
   offPeak?: { inputPerMillion?: number; outputPerMillion?: number; cachedInputPerMillion?: number }
   peakHours?: Array<{ start: string; end: string }>
   peakPricingEnabled?: boolean
+  peakExcludesWeekends?: boolean
 }
 
 export interface BillingPriceFile { version: 1; rates: BillingRate[] }
@@ -31,12 +32,12 @@ function normalizePrice(value: unknown): BillingPriceFile {
   const rates = Array.isArray(source.rates) ? source.rates : []
   return { version: 1, rates: rates.map(item => {
     const raw = item as BillingRate
-    return { provider: String(raw.provider ?? ''), model: String(raw.model ?? ''), currency: 'RMB', inputPerMillion: number(raw.inputPerMillion), outputPerMillion: number(raw.outputPerMillion), cachedInputPerMillion: number(raw.cachedInputPerMillion), ...(raw.peak ? { peak: { inputPerMillion: number(raw.peak.inputPerMillion), outputPerMillion: number(raw.peak.outputPerMillion), cachedInputPerMillion: number(raw.peak.cachedInputPerMillion) } } : {}), ...(raw.offPeak ? { offPeak: { inputPerMillion: number(raw.offPeak.inputPerMillion), outputPerMillion: number(raw.offPeak.outputPerMillion), cachedInputPerMillion: number(raw.offPeak.cachedInputPerMillion) } } : {}), ...(Array.isArray(raw.peakHours) ? { peakHours: raw.peakHours.map(hour => ({ start: String(hour.start), end: String(hour.end) })) } : {}), peakPricingEnabled: raw.peakPricingEnabled === undefined ? (Array.isArray(raw.peakHours) && raw.peakHours.length > 0) : raw.peakPricingEnabled === true }
+    return { provider: String(raw.provider ?? ''), model: String(raw.model ?? ''), currency: 'RMB', inputPerMillion: number(raw.inputPerMillion), outputPerMillion: number(raw.outputPerMillion), cachedInputPerMillion: number(raw.cachedInputPerMillion), ...(raw.peak ? { peak: { inputPerMillion: number(raw.peak.inputPerMillion), outputPerMillion: number(raw.peak.outputPerMillion), cachedInputPerMillion: number(raw.peak.cachedInputPerMillion) } } : {}), ...(raw.offPeak ? { offPeak: { inputPerMillion: number(raw.offPeak.inputPerMillion), outputPerMillion: number(raw.offPeak.outputPerMillion), cachedInputPerMillion: number(raw.offPeak.cachedInputPerMillion) } } : {}), ...(Array.isArray(raw.peakHours) ? { peakHours: raw.peakHours.map(hour => ({ start: String(hour.start), end: String(hour.end) })) } : {}), peakPricingEnabled: raw.peakPricingEnabled === undefined ? (Array.isArray(raw.peakHours) && raw.peakHours.length > 0) : raw.peakPricingEnabled === true, peakExcludesWeekends: raw.peakExcludesWeekends === true }
   }).filter(rate => rate.provider && rate.model) }
 }
 function persist(path: string, value: unknown): void { mkdirSync(dirname(path), { recursive: true }); const temp = `${path}.tmp`; writeFileSync(temp, JSON.stringify(value, null, 2), 'utf8'); renameSync(temp, path) }
 function minute(value: string): number { const match = /^(\d{1,2}):(\d{2})$/.exec(value); return match ? Number(match[1]) * 60 + Number(match[2]) : -1 }
-function isPeak(rate: BillingRate, date: Date): boolean { const hours = rate.peakHours ?? []; const now = date.getHours() * 60 + date.getMinutes(); return hours.some(item => { const start = minute(item.start); const end = minute(item.end); if (start < 0 || end < 0 || start === end) return false; return start < end ? now >= start && now < end : now >= start || now < end }) }
+function isPeak(rate: BillingRate, date: Date): boolean { if (rate.peakExcludesWeekends === true) { const day = date.getDay(); if (day === 0 || day === 6) return false } const hours = rate.peakHours ?? []; const now = date.getHours() * 60 + date.getMinutes(); return hours.some(item => { const start = minute(item.start); const end = minute(item.end); if (start < 0 || end < 0 || start === end) return false; return start < end ? now >= start && now < end : now >= start || now < end }) }
 function bucket(list: BillingBucket[], provider: string, model: string, byModel: boolean): BillingBucket { let item = list.find(value => byModel ? value.provider === provider && value.model === model : value.provider === provider); if (!item) { item = { provider, model: byModel ? model : '*', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 }; list.push(item) }; return item }
 
 export class BillingStore {
