@@ -8,7 +8,7 @@
 /* ── 追加：左侧栏标签 / 世界书 / 存档 / 原始剧本编辑（不修改第 1 行）── */
 .section-title{font:600 13px system-ui;color:#b7c8fe;margin:8px 0 4px}
 .sidebar-tabs{display:flex;gap:6px;margin-bottom:10px;border-bottom:1px solid #2f3c58;padding-bottom:8px}
-.sidebar-tabs button{flex:1;background:none;color:#a9b8dd;border:1px solid #2f3c58;border-radius:4px;padding:6px 8px;font-size:13px}
+.sidebar-tabs button{flex:1;background:none;color:#a9b8dd;border:1px solid #2f3c58;border-radius:4px;padding:6px 8px;font-size:13px;white-space:normal;line-height:1.35}
 .sidebar-tabs button:hover{background:#313a52;color:#b7c8fe}
 .sidebar-tabs button.active{background:#3a4c78;color:#b7c8fe;border-color:#5686fe}
 .lore-add{width:100%;background:#2c3f63;color:#e4edfd;border:1px solid #4868b2;margin-bottom:10px;font-size:13px}
@@ -109,6 +109,12 @@
 .billing-peak-toggle input[type=checkbox]::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#a9b8dd;transition:transform .16s,background .16s}
 .billing-peak-toggle input[type=checkbox]:checked{background:#4176e6;border-color:#679efe}
 .billing-peak-toggle input[type=checkbox]:checked::after{transform:translateX(16px);background:#fff}
+/* 群聊发言模式：侧栏模式触发按钮 */
+.chat-mode-actions{display:flex;gap:8px;margin:0 0 10px}
+.chat-mode-actions .primary{background:#3a5fae}
+/* 侧栏「设置 / 预设」：设置与预设之间的分隔线 */
+#prompts-list .sidebar-settings-card{margin-bottom:0}
+.sidebar-divider{height:1px;background:#34415b;margin:10px 0}
 .world-change-proposal{margin:8px 0;padding:8px 10px;border:1px solid #4868b2;background:#2b3247;border-radius:5px}
 .world-change-proposal .section-title{margin:0 0 6px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .world-change-proposal small{color:#679efe;font-size:11px}

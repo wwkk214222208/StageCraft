@@ -1,4 +1,4 @@
-import type { RoomMode, RoomPhase, SubmitTurnInput, WorldChangeRequest } from '../types.ts'
+import type { RoomMode, RoomPhase, SubmitTurnInput, WorldChangeRequest, ChatSpeechMode } from '../types.ts'
 import type { InteractionRequest, WorkflowDefinition, WorkflowInstance } from './protocol.ts'
 import type { CoreCommandHandler, CoreSolutionPlugin, CoreSolutionProjectionProvider, CoreSolutionHost, CoreStateProjectionProvider, Disposable } from './plugins.ts'
 import { defaultStateCategories, projectRoomSnapshot } from './state.ts'
@@ -10,17 +10,22 @@ export const chatSpeechWorkflow: WorkflowDefinition = {
   id: 'stagecraft.chat.speech', version: '1.0.0', initialStep: 'awaiting-player-input',
   steps: {
     'awaiting-player-input': { id: 'awaiting-player-input', actions: [{ type: 'human-interaction', interactionKind: 'text', label: '提交行动' }] },
+    'director-selecting-roles': { id: 'director-selecting-roles', actions: [{ type: 'model-interaction', capability: 'director.role-selection', contractId: 'chat.role-selection', promptProfile: 'chat.role-selection', stream: true }] },
     'role-speaking': { id: 'role-speaking', actions: [{ type: 'model-interaction', capability: 'role.speech', contractId: 'chat.speech', promptProfile: 'chat.speech', stream: true }] },
     'awaiting-approval': { id: 'awaiting-approval', actions: [{ type: 'human-interaction', interactionKind: 'approval', label: '批准台词' }] },
     'world-change-approval': { id: 'world-change-approval', actions: [{ type: 'human-interaction', interactionKind: 'approval', label: '批准世界变更' }] },
   },
   transitions: [
     { from: 'awaiting-player-input', event: 'role.speech.requested', to: 'role-speaking' },
+    { from: 'awaiting-player-input', event: 'director.role-selection.requested', to: 'director-selecting-roles' },
+    { from: 'director-selecting-roles', event: 'roles.selected', to: 'role-speaking' },
     { from: 'role-speaking', event: 'role.speech.generated', to: 'awaiting-approval' },
     { from: 'role-speaking', event: 'world-change.proposed', to: 'world-change-approval' },
     { from: 'role-speaking', event: 'speech.approved', to: 'awaiting-player-input' },
+    { from: 'awaiting-approval', event: 'role.speech.requested', to: 'role-speaking' },
     { from: 'awaiting-approval', event: 'world-change.proposed', to: 'world-change-approval' },
     { from: 'awaiting-approval', event: 'speech.approved', to: 'awaiting-player-input' },
+    { from: 'world-change-approval', event: 'role.speech.requested', to: 'role-speaking' },
     { from: 'world-change-approval', event: 'world-change.approved', to: 'awaiting-player-input' },
     { from: 'world-change-approval', event: 'speech.approved', to: 'awaiting-player-input' },
     { from: 'world-change-approval', event: 'speech.rejected', to: 'awaiting-player-input' },
@@ -67,6 +72,8 @@ export const directorTurnWorkflow: WorkflowDefinition = {
 export interface StageCraftChatPort {
   submitContribution?(roomId: string, text: string): Promise<void>
   speak(roomId: string, roleId: string, feedback?: string): Promise<void>
+  speakAll?(roomId: string): Promise<void>
+  directorDecide?(roomId: string): Promise<void>
   approveSpeech(roomId: string, text: string, worldChange?: WorldChangeRequest | null): Promise<void>
   rejectSpeech(roomId: string): Promise<void>
   retrySpeak?(roomId: string): Promise<void>
@@ -90,7 +97,7 @@ export interface StageCraftDirectorPort {
 }
 
 const chatSpeechPhaseToStep: Partial<Record<RoomPhase, string>> = {
-  'awaiting-player-input': 'awaiting-player-input', 'role-speaking': 'role-speaking', 'awaiting-approval': 'awaiting-approval', 'world-change-approval': 'world-change-approval',
+  'awaiting-player-input': 'awaiting-player-input', 'director-selecting-roles': 'director-selecting-roles', 'role-speaking': 'role-speaking', 'awaiting-approval': 'awaiting-approval', 'world-change-approval': 'world-change-approval',
 }
 
 function instance(room: WorkflowRoom, definition: WorkflowDefinition, step: string, status: WorkflowInstance['status'], locals: Record<string, unknown> = {}): WorkflowInstance {
@@ -198,7 +205,7 @@ function stagecraftManagementCommandHandler(management: StageCraftManagementPort
       const operation = String(payload.operation)
       switch (operation) {
         case 'import-archive': if (!isRecord(payload.archive) || !isRecord(payload.archive.room)) throw new Error('Import requires a room archive.'); return management.importArchive(roomId, payload.archive as { room?: import('../types.ts').RoomSnapshot })
-        case 'set-room-config': if (payload.mode !== undefined && payload.mode !== 'chat' && payload.mode !== 'director') throw new Error('Invalid room mode.'); return management.setRoomConfig(roomId, { mode: payload.mode as 'chat' | 'director' | undefined, autoPublish: typeof payload.autoPublish === 'boolean' ? payload.autoPublish : undefined })
+        case 'set-room-config': if (payload.mode !== undefined && payload.mode !== 'chat' && payload.mode !== 'director') throw new Error('Invalid room mode.'); if (payload.speechMode !== undefined && payload.speechMode !== 'manual' && payload.speechMode !== 'director' && payload.speechMode !== 'all') throw new Error('Invalid chat speech mode.'); return management.setRoomConfig(roomId, { mode: payload.mode as 'chat' | 'director' | undefined, autoPublish: typeof payload.autoPublish === 'boolean' ? payload.autoPublish : undefined, ...(typeof payload.speechMode === 'string' ? { speechMode: payload.speechMode as ChatSpeechMode } : {}) })
         case 'update-player-character': return management.updatePlayerCharacter(roomId, { name: String(payload.name ?? ''), persona: String(payload.persona ?? ''), currentState: String(payload.currentState ?? '') })
         case 'set-player-avatar': return management.setPlayerAvatar(roomId, String(payload.portraitRef ?? ''))
         case 'intervene-role': if (!nonEmptyString(payload.roleId) || typeof payload.selfModel !== 'string') throw new Error('Role intervention requires roleId and selfModel.'); return management.interveneRole(roomId, String(payload.roleId), payload.selfModel, payload.config && typeof payload.config === 'object' ? payload.config as Parameters<StageCraftManagementPort['interveneRole']>[3] : {})
@@ -245,7 +252,7 @@ function stagecraftChatCommandHandler(chat: StageCraftChatPort, defaultRoomId?: 
       const action = String(payload.action ?? '')
       const interaction = command.interactionId ?? ''
       const chatInteraction = interaction.endsWith(':role-select') || interaction.endsWith(':speech-approval') || interaction.endsWith(':world-change-approval') || interaction.endsWith(':director-suggestion')
-      const chatPayload = payload.scope === 'chat' || payload.mode === 'chat' || ['chat-speech', 'speech', 'world-change', 'director-chat', 'cancel-turn'].includes(action)
+      const chatPayload = payload.scope === 'chat' || payload.mode === 'chat' || ['chat-speech', 'chat-speech-all', 'director-role-selection', 'speech', 'world-change', 'director-chat', 'cancel-turn'].includes(action)
       if (command.type === 'select-role' || command.type === 'choose') return payload.scope !== 'director' && payload.mode !== 'director' && (chatInteraction || chatPayload || !payload.scope)
       if (command.type === 'cancel' || command.type === 'retry') return chatInteraction || chatPayload
       if (command.type === 'submit-text') return interaction.endsWith(':director-suggestion') || action === 'director-chat' || action === 'chat-contribution'
@@ -260,6 +267,8 @@ function stagecraftChatCommandHandler(chat: StageCraftChatPort, defaultRoomId?: 
       const roomId = roomIdOf(command, payload)
       if (!roomId) throw new Error('Chat command requires roomId.')
       if (command.type === 'select-role' || command.type === 'choose') {
+        if (action === 'chat-speech-all') { if (!chat.speakAll) throw new Error('Chat speech-all is not supported.'); await chat.speakAll(roomId); return }
+        if (action === 'director-role-selection') { if (!chat.directorDecide) throw new Error('Director role selection is not supported.'); await chat.directorDecide(roomId); return }
         await chat.speak(roomId, String(payload.roleId ?? ''), String(payload.feedback ?? ''))
         return
       }

@@ -1,7 +1,7 @@
 import type { CoreSolutionHost, Disposable, CoreSolutionPlugin } from './plugins.ts'
 import type { RoomRuntime } from '../room-runtime.ts'
 import type { HumanCommand } from './protocol.ts'
-import type { RoomMode, ThinkingStrength, WorldChangeRequest } from '../types.ts'
+import type { RoomMode, ThinkingStrength, WorldChangeRequest, ChatSpeechMode } from '../types.ts'
 
 export interface CoreCommandContext {
   runtime: RoomRuntime
@@ -46,6 +46,8 @@ export async function dispatchLegacyCommand(context: CoreCommandContext, command
       if (payload.action === 'director-chat') { await runtime.directorChat(roomId, String(payload.text ?? '')); return }
       await runtime.submitTurn(roomId, { text: String(payload.text ?? '') }); return
     case 'select-role':
+      if (payload.action === 'chat-speech-all') { await runtime.speakAll(roomId); return }
+      if (payload.action === 'director-role-selection') { await runtime.directorDecide(roomId); return }
       await runtime.speak(roomId, String(payload.roleId ?? '')); return
     case 'cancel':
       runtime.cancelTurn(roomId); return
@@ -85,6 +87,7 @@ export async function dispatchLegacyCommand(context: CoreCommandContext, command
         runtime.setRoomConfig(roomId, {
           mode: payload.mode === 'chat' || payload.mode === 'director' ? payload.mode as RoomMode : undefined,
           autoPublish: typeof payload.autoPublish === 'boolean' ? payload.autoPublish : undefined,
+          speechMode: payload.speechMode === 'manual' || payload.speechMode === 'director' || payload.speechMode === 'all' ? payload.speechMode as ChatSpeechMode : undefined,
         })
         return
       }

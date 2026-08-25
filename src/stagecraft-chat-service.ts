@@ -123,21 +123,102 @@ export class StageCraftChatService implements StageCraftChatPort {
     const role = room.roles.find(item => item.id === roleId)
     if (!role) throw new Error('角色不存在。')
     if (role.presence !== 'present') throw new Error('该角色当前不在场，不能发言。')
+    await this.startSpeechQueue(roomId, [roleId], feedback)
+  }
+
+  /** 发言模式「所有人依次发言」：所有在场角色按列表顺序逐个生成台词、逐个审批。 */
+  async speakAll(roomId: string): Promise<void> {
+    this.ensureActive()
+    if (this.activeTurns.has(roomId)) throw new Error('A turn is already being processed for this room.')
+    const room = this.notifications.get(roomId)
+    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
+    if (room.phase !== 'awaiting-player-input') throw new Error(`Room is busy: ${room.phase}`)
+    const present = room.roles.filter(item => item.presence === 'present')
+    if (!present.length) throw new Error('当前没有在场的角色可以发言。')
+    await this.startSpeechQueue(roomId, present.map(role => role.id))
+  }
+
+  /** 发言模式「导演决定部分角色发言」：世界导演选角（选角本身不需玩家审批），随后逐个生成、逐个审批台词。 */
+  async directorDecide(roomId: string): Promise<void> {
+    this.ensureActive()
+    if (this.activeTurns.has(roomId)) throw new Error('A turn is already being processed for this room.')
+    const room = this.notifications.get(roomId)
+    if (room.mode !== 'chat') throw new Error('当前不是群聊模式。')
+    if (room.phase !== 'awaiting-player-input') throw new Error(`Room is busy: ${room.phase}`)
+    const present = room.roles.filter(item => item.presence === 'present')
+    if (!present.length) throw new Error('当前没有在场的角色。')
+    if (!this.workers.selectSpeakingRoles) throw new Error('当前模型服务不支持导演选角。')
+    this.activeTurns.add(roomId)
+    const turnId = this.ids.create('director')
+    this.cancelledRequests.delete(roomId)
+    this.turnIds.set(roomId, turnId)
+    this.cancelledTurns.delete(turnId)
+    this.store.setRoomPhase(roomId, 'director-selecting-roles')
+    this.core?.emitDomainEvent(domainEvent('director.role-selection.requested', { roomId, turnId }))
+    this.notifications.notify(roomId)
+    try {
+      const latest = this.notifications.get(roomId)
+      const result = await this.workers.selectSpeakingRoles({
+        playerContribution: latest.playerContribution ?? '',
+        roles: latest.roles,
+        scene: { time: latest.sceneTime, location: latest.sceneLocation },
+        recentScene: latest.scenes.at(-1)?.text,
+        lore: latest.lore,
+        roomId, turnId,
+      })
+      if (this.cancelledTurns.has(turnId)) return
+      const selected = Array.isArray(result.roleIds) ? result.roleIds.filter(id => latest.roles.some(role => role.id === id && role.presence === 'present')) : []
+      if (!selected.length) {
+        // 导演未选出角色（或返回空集）：本地随机兜底一位在场角色发言。
+        const pool = latest.roles.filter(role => role.presence === 'present')
+        selected.push(pool[Math.floor(Math.random() * pool.length)].id)
+      }
+      this.core?.emitDomainEvent(domainEvent('roles.selected', { roomId, roleIds: selected, turnId }))
+      await this.startSpeechQueue(roomId, selected)
+    } catch (error) {
+      this.notifications.thinking(roomId, { actor: 'director', turnId, text: '', done: true })
+      if (this.cancelledTurns.has(turnId)) return
+      this.store.setRoomPhase(roomId, 'awaiting-player-input')
+      this.store.failRoom(roomId, `导演选角失败：${String(error)}`)
+      this.notifications.notify(roomId)
+    } finally {
+      this.activeTurns.delete(roomId)
+      this.turnIds.delete(roomId)
+      this.cancelledTurns.delete(turnId)
+      this.cancelledRequests.delete(roomId)
+    }
+  }
+
+  /** 开启一个发言回合：把 roleIds 作为参与角色写入回合，逐个生成、逐个审批。 */
+  private async startSpeechQueue(roomId: string, roleIds: string[], feedback = ''): Promise<void> {
+    const room = this.notifications.get(roomId)
     this.activeTurns.add(roomId)
     const turnId = this.ids.create()
     this.cancelledRequests.delete(roomId)
     this.turnIds.set(roomId, turnId)
     this.cancelledTurns.delete(turnId)
-    this.store.createTurn(roomId, turnId, room.playerContribution ?? '', [{ roleId, participation: 'required', status: 'pending' }], 'role-speaking')
-    this.core?.emitDomainEvent(domainEvent('role.speech.requested', { roomId, roleId, turnId }))
+    this.store.createTurn(roomId, turnId, room.playerContribution ?? '', roleIds.map(roleId => ({ roleId, participation: 'required', status: 'pending' })), 'role-speaking')
+    const first = roleIds[0]
+    this.core?.emitDomainEvent(domainEvent('role.speech.requested', { roomId, roleId: first, turnId }))
     this.notifications.notify(roomId)
     try {
-      const latest = this.notifications.get(roomId)
-      const speaking = latest.roles.find(item => item.id === roleId)!
-      const contribution = latest.playerContribution ?? ''
-      const contributionText = contribution.trim() ? contribution : '玩家没有说话，只是注视着你。'
-      const speechInstruction = feedback.trim() ? `${contributionText}\n\n玩家对上一版台词的批复意见：${feedback.trim()}\n请根据批复重新生成更合适的台词。` : contributionText
-      if (!this.workers.speak) throw new Error('当前模型服务不支持群聊发言协议。')
+      await this.generateSpeech(roomId, first, turnId, feedback)
+    } finally {
+      this.activeTurns.delete(roomId)
+      this.turnIds.delete(roomId)
+    }
+  }
+
+  /** 生成并保存单个角色的台词（当前回合发言队列中的一员）。 */
+  private async generateSpeech(roomId: string, roleId: string, turnId: string, feedback = ''): Promise<void> {
+    const latest = this.notifications.get(roomId)
+    const speaking = latest.roles.find(item => item.id === roleId)
+    if (!speaking) throw new Error('角色不存在。')
+    const contribution = latest.playerContribution ?? ''
+    const contributionText = contribution.trim() ? contribution : '玩家没有说话，只是注视着你。'
+    const speechInstruction = feedback.trim() ? `${contributionText}\n\n玩家对上一版台词的批复意见：${feedback.trim()}\n请根据批复重新生成更合适的台词。` : contributionText
+    if (!this.workers.speak) throw new Error('当前模型服务不支持群聊发言协议。')
+    try {
       const result = await this.workers.speak(speaking, speechInstruction, latest.roles, { time: latest.sceneTime, location: latest.sceneLocation, roomId, turnId }, text => {
         this.notifications.thinking(roomId, { actor: 'role', roleId, turnId, text, done: false })
       }, latest.lore, latest.scenes.at(-1)?.text)
@@ -157,10 +238,19 @@ export class StageCraftChatService implements StageCraftChatPort {
       this.store.saveDecision(turnId, { roleId, participation: 'required', status: 'unavailable', error: String(error) })
       this.store.failRoom(roomId, `角色发言失败：${String(error)}`)
       this.notifications.notify(roomId)
-    } finally {
-      this.activeTurns.delete(roomId)
-      this.turnIds.delete(roomId)
     }
+  }
+
+  /** 审批后推进同回合的下一位发言角色；队列为空则回合结束。 */
+  private async continueSpeechQueue(roomId: string, turnId: string): Promise<void> {
+    const room = this.notifications.get(roomId)
+    if (room.mode !== 'chat' || !turnId) return
+    const next = (room.decisions ?? []).find(decision => decision.status === 'pending')
+    if (!next) return
+    this.store.setRoomPhase(roomId, 'role-speaking')
+    this.core?.emitDomainEvent(domainEvent('role.speech.requested', { roomId, roleId: next.roleId, turnId }))
+    this.notifications.notify(roomId)
+    await this.generateSpeech(roomId, next.roleId, turnId)
   }
 
   async rejectSpeech(roomId: string): Promise<void> {
@@ -199,6 +289,7 @@ export class StageCraftChatService implements StageCraftChatPort {
     this.core?.emitDomainEvent(domainEvent('scene.published', { roomId, speaker: speech.roleId, text: text.trim() }))
     this.notifications.notify(roomId)
     await this.digestAfterSpeech(roomId, [playerText, text.trim()].filter(Boolean).join('\n'), 'role_reaction', worldChangeId)
+    await this.continueSpeechQueue(roomId, speech.turnId)
   }
 
   async directorChat(roomId: string, text: string): Promise<void> {
@@ -296,7 +387,7 @@ export class StageCraftChatService implements StageCraftChatPort {
     for (const requestId of requestIds) this.coreRequestContexts.delete(requestId)
     const room = this.notifications.get(roomId)
     const directorChatActive = this.activeDirectorChats.has(roomId)
-    const cancellablePhase = ['collecting-decisions', 'drafting', 'consulting-director', 'role-speaking', 'world-change-approval'].includes(room.phase)
+    const cancellablePhase = ['collecting-decisions', 'drafting', 'consulting-director', 'role-speaking', 'world-change-approval', 'director-selecting-roles'].includes(room.phase)
     if (!directorChatActive && !cancellablePhase) return
     this.cancelledRequests.add(roomId)
     if (this.workers.supportsRequestCancellation) {

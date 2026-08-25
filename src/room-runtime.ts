@@ -119,6 +119,16 @@ export class RoomRuntime {
     return this.chatService.speak(roomId, roleId, feedback)
   }
 
+  /** 群聊发言模式「所有人依次发言」：所有在场角色按顺序逐个发言、逐个审批。 */
+  async speakAll(roomId: string): Promise<void> {
+    return this.chatService.speakAll(roomId)
+  }
+
+  /** 群聊发言模式「导演决定发言角色」：世界导演选角后逐个发言、逐个审批。 */
+  async directorDecide(roomId: string): Promise<void> {
+    return this.chatService.directorDecide(roomId)
+  }
+
   /** 群聊模式：拒绝待审批台词及其附带世界变更，不发布正文。 */
   async rejectSpeech(roomId: string): Promise<void> {
     return this.chatService.rejectSpeech(roomId)

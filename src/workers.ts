@@ -36,6 +36,17 @@ export interface DirectorChatContext {
   turnId?: string
 }
 
+/** 群聊模式「导演决定本回合发言角色」所需的房间上下文摘要 */
+export interface RoleSelectionContext {
+  playerContribution?: string
+  roles: Role[]
+  scene?: { time?: string; location?: string }
+  recentScene?: string
+  lore?: LoreEntry[]
+  roomId?: string
+  turnId?: string
+}
+
 export interface WorkerSet {
   decide(role: Role, participation: Decision['participation'], contribution: string, publicRoles?: Role[], scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[]): Promise<Decision>
   draft(turnId: string, contribution: string, decisions: Decision[], roles: Role[], consultations?: ConsultationMessage[], playerCharacter?: PlayerCharacter, scene?: SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string, previousDraft?: string): Promise<Draft>
@@ -51,6 +62,8 @@ export interface WorkerSet {
    * 由角色自己的发言描写覆盖，不需要导演补写。
    */
   directorChat?(playerText: string, context: DirectorChatContext, onThinking?: (text: string) => void): Promise<{ reply: string; thinking?: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string; usage?: import('./types.ts').TokenUsage }>
+  /** 群聊模式：世界导演决定本回合哪些角色发言（选角本身不需玩家审批；返回空列表时由服务端本地随机兜底一位在场角色）。 */
+  selectSpeakingRoles?(context: RoleSelectionContext, onThinking?: (text: string) => void): Promise<{ roleIds: string[]; reason?: string; usage?: import('./types.ts').TokenUsage }>
   /** request-scoped cancellation is required for Core; legacy workers may only support all-active cancellation. */
   cancel?(requestId?: string): void
   supportsRequestCancellation?: boolean
@@ -63,6 +76,7 @@ export const fakeWorkers: WorkerSet = {
   digest: runFakeDigest,
   speak: runFakeSpeak,
   directorChat: runFakeDirectorChat,
+  selectSpeakingRoles: runFakeRoleSelection,
 }
 
 /** 群聊导演对话的 fake：默认不产世界变更，仅给出自然语言回复 */
@@ -73,6 +87,17 @@ export async function runFakeDirectorChat(playerText: string, _context: Director
     reply: `（导演）关于「${focus}」：我记下了。你可以继续描述你希望推进的时间、场景变化、人物进出场或新人物，我会整理成世界变更申请供你确认。`,
     usage: { promptTokens: 900, completionTokens: 50 },
   }
+}
+
+/** 群聊导演选角的 fake：优先选与玩家行动相关的在场角色，兜底选第一个在场角色。 */
+export async function runFakeRoleSelection(context: RoleSelectionContext): Promise<{ roleIds: string[]; reason?: string; usage?: import('./types.ts').TokenUsage }> {
+  await delay(300)
+  const present = context.roles.filter(role => role.presence === 'present')
+  if (!present.length) return { roleIds: [], usage: { promptTokens: 900, completionTokens: 20 } }
+  const focus = (context.playerContribution ?? '').trim()
+  const mentioned = present.filter(role => role.name && focus && focus.includes(role.name)).map(role => role.id)
+  const roleIds = mentioned.length ? mentioned : [present[0].id]
+  return { roleIds, reason: mentioned.length ? '被玩家行动点名。' : '由导演按剧情节奏安排。', usage: { promptTokens: 900, completionTokens: 20 } }
 }
 
 /** 群聊发言的 fake：完整对话式发言（一段有来有往的台词/行动），不是一句话动作 */

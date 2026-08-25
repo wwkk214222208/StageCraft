@@ -7,9 +7,18 @@ export type RoomPhase =
   | 'role-speaking'
   /** 群聊模式：角色台词附带的世界变更申请待玩家确认（与台词审批绑定，批准台词时一并落地） */
   | 'world-change-approval'
+  /** 群聊模式：导演正在决定本回合哪些角色发言（选角本身不需玩家审批） */
+  | 'director-selecting-roles'
 
 /** 游玩模式：director = 导演模式（现状流程）；chat = 无导演串行群聊（角色发言→审批→在场消化） */
 export type RoomMode = 'director' | 'chat'
+
+/**
+ * 群聊「发言模式」（玩法声明，`story.gameplay.chat.speechMode`，玩家可按房间覆盖并持久化）：
+ * manual = 手动点角色发言（现状）；director = 玩家提交行动后由世界导演决定本回合发言角色；
+ * all = 玩家提交行动后所有在场角色按列表顺序依次发言。
+ */
+export type ChatSpeechMode = 'manual' | 'director' | 'all'
 
 /** 思维链强度档位：off = 关闭（不产思考）；brief/standard/deep = 思考深度递增 */
 export type ThinkingStrength = 'off' | 'brief' | 'standard' | 'deep'
@@ -253,6 +262,8 @@ export interface RoomSnapshot {
   mode: RoomMode
   /** 沉浸模式：跳过审批，玩家输入后自动走完并发布（AI 主导） */
   autoPublish: boolean
+  /** 群聊发言模式（玩法声明默认 + 玩家按房间覆盖）；导演模式房间忽略 */
+  speechMode: ChatSpeechMode
   /** 群聊模式下待审批的台词（仅 phase == awaiting-approval && mode == chat 时存在） */
   speech?: ChatSpeech
   /** 群聊模式下随台词一并待玩家确认的世界变更申请（phase == world-change-approval 时存在） */

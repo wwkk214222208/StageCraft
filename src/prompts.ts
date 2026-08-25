@@ -36,9 +36,9 @@ export interface PromptRegexRule {
   enabled: boolean
 }
 
-export type PromptPresetScope = 'director.role-decision' | 'director.draft' | 'director.consult' | 'director.memory-digest' | 'chat.role-speech' | 'chat.world-director' | 'prompt-preset.transform'
+export type PromptPresetScope = 'director.role-decision' | 'director.draft' | 'director.consult' | 'director.memory-digest' | 'chat.role-speech' | 'chat.world-director' | 'chat.role-selection' | 'prompt-preset.transform'
 
-export const PROMPT_PRESET_SCOPES: PromptPresetScope[] = ['director.role-decision', 'director.draft', 'director.consult', 'director.memory-digest', 'chat.role-speech', 'chat.world-director', 'prompt-preset.transform']
+export const PROMPT_PRESET_SCOPES: PromptPresetScope[] = ['director.role-decision', 'director.draft', 'director.consult', 'director.memory-digest', 'chat.role-speech', 'chat.world-director', 'chat.role-selection', 'prompt-preset.transform']
 
 /** 模式 ID 鐢辫繍琛屾椂娉ㄥ唽锛涢璁炬牸寮忎笉闄愬埗鏈潵妯″紡銆?*/
 export type PromptMode = string
@@ -77,6 +77,7 @@ const gameplayDefaults: Record<PromptPresetScope, { mode: PromptMode; name: stri
   'director.memory-digest': { mode: 'director', name: '导演模式 · 记忆消化', components: [] },
   'chat.role-speech': { mode: 'chat', name: '群聊模式 · 角色发言', components: [] },
   'chat.world-director': { mode: 'chat', name: '群聊模式 · 世界导演', components: [] },
+  'chat.role-selection': { mode: 'chat', name: '群聊模式 · 导演选角', components: [] },
   'prompt-preset.transform': { mode: 'system', name: '提示词预设助手', components: [] },
 }
 export function loadGameplayScenario(scope: PromptPresetScope, filePath?: string): GameplayScenario {
@@ -94,6 +95,7 @@ const runtimeSystemLabels: Record<PromptPresetScope, string[]> = {
   'director.memory-digest': ['记忆消化职责', '角色视角与事实边界', '已批准正文与精炼规则', '工具输出约束'],
   'chat.role-speech': ['角色人设、世界设定、目标与发言边界', '场景、记忆、公共状态与玩家行动'],
   'chat.world-director': ['世界导演身份与职责', '不替角色发言的边界', '场景、历史与世界状态上下文', '世界变更与工具输出约束'],
+  'chat.role-selection': ['导演选角身份与职责', '玩家行动与角色在场清单', '选角决策与输出格式'],
   'prompt-preset.transform': ['预设助手安全与转换规则', '玩家请求与导入的 ST 预设'],
 }
 function runtimeSystemNodes(scope: PromptPresetScope, filePath?: string): PromptNode[] {
@@ -109,6 +111,7 @@ function defaultPromptNodes(scope: PromptPresetScope): PromptNode[] {
   'director.memory-digest': ['记忆消化职责', '角色视角与事实边界', '已批准正文与精炼规则', '工具输出约束'],
   'chat.role-speech': ['角色人设、世界设定、目标与发言边界', '场景、记忆、公共状态与玩家行动'],
   'chat.world-director': ['世界导演身份与职责', '不替角色发言的边界', '场景、历史与世界状态上下文', '世界变更与工具输出约束'],
+  'chat.role-selection': ['导演选角职责', '玩家行动与角色清单'],
   'prompt-preset.transform': ['预设助手安全与转换规则', '玩家请求与导入的 ST 预设'],
   }
  return [...runtimeSystemNodes(scope), { id: 'stagecraft-user', name: labels[scope][1], content: '', type: 'user', enabled: true, editable: false, removable: false }]

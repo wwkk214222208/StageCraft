@@ -613,7 +613,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
   if (rawRequestModel) options.requestModel = request => rawRequestModel({ ...request, workflowId: request.workflowId ?? workflowIdForCoreRequest(request) })
   const getRoleGateway = (role: Role) => { const gateway = gatewayForRole(role); roleGateways.add(gateway); return gateway }
   const requestModel = (request: ModelRequest): Promise<ModelResult> => {
-    const scope: PromptPresetScope = request.capability === 'prompt-preset.transform' ? 'prompt-preset.transform' : request.capability === 'role.decision' || request.capability === 'role.decision.retry' ? 'director.role-decision' : request.capability === 'director.draft' || request.capability === 'director.draft.retry' ? 'director.draft' : request.capability === 'director.consult' ? 'director.consult' : request.capability === 'role.speech' ? 'chat.role-speech' : request.capability === 'director.chat' ? 'chat.world-director' : 'director.draft'
+    const scope: PromptPresetScope = request.capability === 'prompt-preset.transform' ? 'prompt-preset.transform' : request.capability === 'role.decision' || request.capability === 'role.decision.retry' ? 'director.role-decision' : request.capability === 'director.draft' || request.capability === 'director.draft.retry' ? 'director.draft' : request.capability === 'director.consult' ? 'director.consult' : request.capability === 'role.speech' ? 'chat.role-speech' : request.capability === 'director.chat' ? 'chat.world-director' : request.capability === 'director.role-selection' ? 'chat.role-selection' : 'director.draft'
     const componentContents = request.prompt.messages ? Object.fromEntries(request.prompt.messages.filter(message => message.binding).map(message => [message.binding, message.content])) : undefined
      const prompt = request.prompt.messages ? applyPromptPreset(request.prompt.system, request.prompt.user, scope, undefined, componentContents) : applyPromptPreset(request.prompt.system, request.prompt.user, scope)
     return options.requestModel!({ ...request, workflowId: request.workflowId ?? workflowIdForCoreRequest(request), thinkingStrength: isPromptThinkingForcedOff(scope) ? 'off' : request.thinkingStrength, prompt: { ...request.prompt, ...prompt, messages: prompt.messages } })
@@ -859,6 +859,45 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       const worldChange = normalizeWorldChange(result?.worldChange)
       const narration = typeof result?.narration === 'string' && result.narration.trim() ? result.narration.trim() : undefined
       return { reply, ...(thinking ? { thinking } : {}), usage, ...(worldChange ? { worldChange } : {}), ...(worldChange && narration ? { narration } : {}) }
+    },
+    async selectSpeakingRoles(context: import('./workers.ts').RoleSelectionContext, onThinking?: (text: string) => void): Promise<{ roleIds: string[]; reason?: string; usage?: import('./types.ts').TokenUsage }> {
+      let usage = { promptTokens: 0, completionTokens: 0 }
+      const collectUsage = (u: { promptTokens: number; completionTokens: number }) => { usage.promptTokens += u.promptTokens; usage.completionTokens += u.completionTokens }
+      const schema = {
+        type: 'object', additionalProperties: false,
+        properties: {
+          roleIds: { type: 'array', description: '本回合应发言的在场角色 id 列表；无人需要发言时返回空数组。', items: { type: 'string' } },
+          reason: { type: 'string', description: '给玩家看的简短选角理由（可省略）' },
+        },
+        required: ['roleIds'],
+      }
+      const rendered = renderGameplayPrompt('chat.role-selection', {
+        contribution: context.playerContribution?.trim() || '（玩家没有说话，只是注视着众人。）',
+        scene: formatSceneContext(context.scene) || '（尚未设定场景时间地点）',
+        recentScene: context.recentScene || '（尚无已批准正文，这是本局第一次发言）',
+        roles: context.roles.map(role => `${role.id}（${role.name}，${role.presence === 'present' ? '在场' : role.presence === 'absent' ? '离场' : '不可用'}）：${role.currentState}`).join('\n'),
+      })
+      const system = rendered.system
+      const user = rendered.user
+      const result = options.requestModel
+        ? await (async () => {
+          const modelResult = await options.requestModel!({ requestId: `chat-role-selection:${Date.now()}:${++coreRequestSequence}`, capability: 'director.role-selection', prompt: { system, user, messages: rendered.messages, metadata: { capability: 'director.role-selection', strategyId: 'stagecraft.chat.speech' } }, contract: { id: 'chat.role-selection', version: '1.0.0', schema }, tool: nativeTool('submit_role_selection', '提交本回合应发言的角色 id 列表。', schema), thinkingStrength: directorThinking, route: { ...(options.directorProviderId ? { providerId: options.directorProviderId } : {}), ...(options.directorModel ? { model: options.directorModel } : {}), purpose: 'chat.role-selection' }, metadata: { includeTelemetry: true, correlation: { mode: 'chat', roomId: context.roomId, turnId: context.turnId, actor: 'director' } }, stream: true })
+          if (modelResult.usage) collectUsage(modelResult.usage)
+          if (modelResult.error) throw new Error(modelResult.error)
+          return modelResult.output as { roleIds?: string[]; reason?: string }
+        })()
+        : await directorGateway.completeStreaming<{ roleIds?: string[]; reason?: string }>(
+          system,
+          user,
+          'chat_role_selection',
+          schema,
+          { name: 'submit_role_selection', description: '提交本回合应发言的角色 id 列表。', parameters: schema },
+          { onUsage: collectUsage },
+          {}, { thinkingStrength: directorThinking },
+        )
+      const roleIds = Array.isArray(result?.roleIds) ? result.roleIds.map(String).filter(id => context.roles.some(role => role.id === id && role.presence === 'present')) : []
+      const reason = typeof result?.reason === 'string' && result.reason.trim() ? result.reason.trim() : undefined
+      return { roleIds, ...(reason ? { reason } : {}), usage }
     },
   }
 }

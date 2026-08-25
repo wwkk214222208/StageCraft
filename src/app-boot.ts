@@ -632,12 +632,21 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       if (url.pathname === '/api/room-config' && request.method === 'POST') {
         const body = await readJson(request)
         const mode = body.mode === 'chat' || body.mode === 'director' ? body.mode : undefined
-        await dispatchManagement('set-room-config', { ...(mode ? { mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}) })
+        const speechMode = body.speechMode === 'manual' || body.speechMode === 'director' || body.speechMode === 'all' ? body.speechMode : undefined
+        await dispatchManagement('set-room-config', { ...(mode ? { mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}), ...(speechMode ? { speechMode } : {}) })
         return json(response, 200, { ok: true, room: runtime.get(roomId) })
       }
       if (url.pathname === '/api/chat/speak' && request.method === 'POST') {
         const body = await readJson(request)
         await core.dispatch({ id: `legacy-chat-speak-${Date.now()}`, actor: 'player', type: 'select-role', payload: { roomId, scope: 'chat', action: 'chat-speech', roleId: String(body.roleId ?? ''), feedback: String(body.feedback ?? '') } })
+        return json(response, 200, { ok: true })
+      }
+      if (url.pathname === '/api/chat/director-decide' && request.method === 'POST') {
+        await core.dispatch({ id: `legacy-chat-director-decide-${Date.now()}`, actor: 'player', type: 'select-role', payload: { roomId, scope: 'chat', action: 'director-role-selection' } })
+        return json(response, 200, { ok: true })
+      }
+      if (url.pathname === '/api/chat/speak-all' && request.method === 'POST') {
+        await core.dispatch({ id: `legacy-chat-speak-all-${Date.now()}`, actor: 'player', type: 'select-role', payload: { roomId, scope: 'chat', action: 'chat-speech-all' } })
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/chat/approve-speech' && request.method === 'POST') {
