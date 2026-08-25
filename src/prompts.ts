@@ -394,3 +394,34 @@ export function loadPrompts(filePath = process.env.PROMPTS_FILE ?? getPromptsFil
 export function renderPrompt(template: string, values: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (match, key: string) => values[key] !== undefined ? values[key] : match)
 }
+
+/* 私设条目开关：独立于预设文件持久（用户数据目录/prompts/private-toggles.json）。
+ * 预设文件里的 enabled 仅作为加载时的初始开关状态；此处覆盖保存当前开关状态（服务端持久）。 */
+function privateTogglesFilePath(filePath?: string): string {
+  return join(dirname(customDir(filePath)), 'private-toggles.json')
+}
+export type PromptToggleState = Record<string, Record<string, boolean>>
+export function loadPrivateToggles(filePath?: string): PromptToggleState {
+  try { return JSON.parse(readFileSync(privateTogglesFilePath(filePath), 'utf8')) as PromptToggleState } catch { return {} }
+}
+export function savePrivateToggle(filePath: string | undefined, presetId: string, nodeId: string, enabled: boolean): PromptToggleState {
+  const toggles = loadPrivateToggles(filePath)
+  toggles[presetId] = toggles[presetId] ?? {}
+  toggles[presetId][nodeId] = enabled
+  mkdirSync(dirname(privateTogglesFilePath(filePath)), { recursive: true })
+  writeFileSync(privateTogglesFilePath(filePath), JSON.stringify(toggles, null, 2))
+  return toggles
+}
+/** 应用开关覆盖：把 private-toggles 里的开关状态合并进各预设节点 enabled（不写回预设文件）。 */
+export function mergePrivateToggles(presets: PromptPreset[], toggles: PromptToggleState): PromptPreset[] {
+  return presets.map(preset => {
+    const over = toggles[preset.id]
+    if (!over || !preset.scenarios) return preset
+    const scenarios: Partial<Record<PromptPresetScope, PromptScenario>> = {}
+    for (const [scope, scenario] of Object.entries(preset.scenarios) as [PromptPresetScope, PromptScenario][]) {
+      if (!scenario?.nodes?.length) { scenarios[scope] = scenario; continue }
+      scenarios[scope] = { ...scenario, nodes: scenario.nodes.map(node => over[node.id] === undefined ? node : { ...node, enabled: over[node.id] }) }
+    }
+    return { ...preset, scenarios }
+  })
+}

@@ -18,7 +18,7 @@ import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } 
 import { createStoryPackage, listStoryPackages, loadStoryPackage, resolveStoryAssetFile, saveStoryAsPackage, saveStoryPackage, storyAssetsDir, storyPortraitUrl, type StoryPackage } from './story-packages.ts'
 import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
-import { PROMPT_PRESET_SCOPES, deletePromptPreset, getPromptPresetState, listIdeologyFiles, listPromptPresets, loadGameplayScenario, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptPresetForScope, setPromptsFilePath, setUserPromptsDir, updatePromptPreset, type PromptTemplates } from './prompts.ts'
+import { PROMPT_PRESET_SCOPES, deletePromptPreset, getPromptPresetState, listIdeologyFiles, listPromptPresets, loadGameplayScenario, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptPresetForScope, setPromptsFilePath, setUserPromptsDir, updatePromptPreset, loadPrivateToggles, savePrivateToggle, mergePrivateToggles, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
 import { CreatorWorkbenchService } from './creator-workbench-service.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
@@ -567,7 +567,17 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         return json(response, 200, { ok: true, defaults: providerStore.defaults() })
       }
       if (url.pathname === '/api/usage') return json(response, 200, gateway?.usage(true) ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake' })
-      if (url.pathname === '/api/prompts/presets' && request.method === 'GET') return json(response, 200, { ...getPromptPresetState(promptsFilePath), modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], promptTemplates: loadPrompts(promptsFilePath), gameplayScenarios: Object.fromEntries(PROMPT_PRESET_SCOPES.map(scope => [scope, loadGameplayScenario(scope, promptsFilePath)])) })
+      if (url.pathname === '/api/prompts/presets' && request.method === 'GET') { const presetState = getPromptPresetState(promptsFilePath); return json(response, 200, { ...presetState, presets: mergePrivateToggles(presetState.presets, loadPrivateToggles(promptsFilePath)), modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], promptTemplates: loadPrompts(promptsFilePath), gameplayScenarios: Object.fromEntries(PROMPT_PRESET_SCOPES.map(scope => [scope, loadGameplayScenario(scope, promptsFilePath)])) }) }
+      if (url.pathname === '/api/prompts/private-toggles' && request.method === 'GET') return json(response, 200, loadPrivateToggles(promptsFilePath))
+      if (url.pathname === '/api/prompts/private-toggles' && request.method === 'PUT') {
+        const body = await readJson(request)
+        const presetId = String(body.presetId ?? '')
+        const nodeId = String(body.nodeId ?? '')
+        if (!presetId || !nodeId) throw new Error('缺少 presetId 或 nodeId。')
+        const toggles = savePrivateToggle(promptsFilePath, presetId, nodeId, body.enabled === true)
+        const presetState = getPromptPresetState(promptsFilePath)
+        return json(response, 200, { ok: true, presets: mergePrivateToggles(presetState.presets, toggles) })
+      }
       if (url.pathname === '/api/prompts/presets' && request.method === 'PUT') {
         const body = await readJson(request)
         if (body.scope && body.activePresetId) return json(response, 200, setPromptPresetForScope(String(body.scope) as import('./prompts.ts').PromptPresetScope, String(body.activePresetId), promptsFilePath))
