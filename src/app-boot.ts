@@ -572,6 +572,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         const body = await readJson(request)
         if (body.scope && body.activePresetId) return json(response, 200, setPromptPresetForScope(String(body.scope) as import('./prompts.ts').PromptPresetScope, String(body.activePresetId), promptsFilePath))
         const preset = body.preset && typeof body.preset === 'object' ? body.preset : body
+        if ((preset as { id?: string })?.id === 'default') throw new Error('默认方案不可覆盖保存，请另存为。')
         return json(response, 200, { ok: true, ...getPromptPresetState(promptsFilePath), presets: updatePromptPreset(preset, promptsFilePath) })
       }
       if (url.pathname === '/api/prompts/presets' && request.method === 'DELETE') return json(response, 200, { ok: true, presets: deletePromptPreset(String(url.searchParams.get('id') ?? ''), promptsFilePath) })
