@@ -138,7 +138,11 @@ function normalizeScenario(source: Partial<PromptScenario> | undefined, scope: P
   if (Array.isArray(source?.order)) {
     const systems = runtimeSystemNodes(scope)
     const systemById = new Map(systems.map(node => [node.id, node]))
-    const privateSource = Array.isArray(source.privateNodes) ? source.privateNodes : (Array.isArray(source.nodes) && source.nodes.length ? source.nodes.filter(node => node?.type === 'user' && node.removable !== false) : [])
+    // 以调用方提交的全量 nodes 为准推导私设（编辑器可能携带陈旧的空 privateNodes，忽略 nodes 会丢新增私设）；
+    // 仅当未提供 nodes（collect 落盘格式 order+privateNodes）时才回退到 privateNodes。
+    const privateSource = Array.isArray(source.nodes) && source.nodes.length
+      ? source.nodes.filter(node => node?.type === 'user' && node.removable !== false)
+      : Array.isArray(source.privateNodes) ? source.privateNodes : []
     const privateNodes = privateSource.filter(node => node?.type !== 'system').map((node, index) => ({ id: String(node.id ?? `user-${index}`), name: String(node.name ?? '私有提示词'), content: String(node.content ?? ''), type: 'user' as const, enabled: node.enabled !== false, editable: true, removable: true }))
     const privateById = new Map(privateNodes.map(node => [node.id, node]))
     const nodes = source.order.map(String).map(id => systemById.get(id) ?? privateById.get(id)).filter((node): node is PromptNode => Boolean(node))

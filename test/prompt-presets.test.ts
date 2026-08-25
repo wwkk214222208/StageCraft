@@ -39,6 +39,27 @@ test('scope selection and ordered messages are independent', () => {
   assert.equal(getPromptPresetState(file).activeByScope['director.draft'], 'a')
 })
 
+test('chat scope private nodes persist across save and reload (stale empty privateNodes must not drop new entries)', () => {
+  const file = fixture()
+  // 首次保存：chat.role-speech 无私设节点
+  updatePromptPreset({ id: 'chat-preset', name: 'Chat', modes: ['chat'], scenarios: { 'chat.role-speech': { nodes: [
+    { id: 'chat.role.persona', name: 'persona', type: 'system', content: '', enabled: true, editable: false, runtimeBinding: 'chat.role.persona' },
+  ], regexRules: [] } }, nodes: [], regexRules: [] }, file)
+  const reloaded = getPromptPresetState(file).presets.find(item => item.id === 'chat-preset')!
+  // 编辑器提交形态：order + nodes（含新增私设），且携带落盘回读的陈旧空 privateNodes
+  const scenario = reloaded.scenarios['chat.role-speech']
+  const withPrivate = { ...scenario, nodes: [...scenario.nodes, { id: 'user-chat-1', name: '群聊私设', content: '内容', type: 'user', enabled: true, editable: true, removable: true }] }
+  updatePromptPreset({ ...reloaded, scenarios: { ...reloaded.scenarios, 'chat.role-speech': withPrivate } }, file)
+  const saved = getPromptPresetState(file).presets.find(item => item.id === 'chat-preset')!
+  const privateNodes = saved.scenarios['chat.role-speech'].nodes.filter(node => node.removable !== false)
+  assert.deepEqual(privateNodes.map(node => node.id), ['user-chat-1'])
+  assert.equal(privateNodes[0].name, '群聊私设')
+  // collect 落盘（order+privateNodes）后重读仍保留
+  const stored = JSON.parse(readFileSync(join(file.slice(0, file.lastIndexOf('\\')), 'custom', 'presets.json'), 'utf8'))
+  const storedPrivate = stored.presets.find((item: any) => item.id === 'chat-preset').scenarios['chat.role-speech'].privateNodes
+  assert.deepEqual(storedPrivate.map((node: any) => node.id), ['user-chat-1'])
+})
+
 test('legacy system placeholder migrates to visible runtime components', () => {
   const file = fixture()
   updatePromptPreset({ id: 'legacy', name: 'Legacy', modes: ['director'], nodes: [
