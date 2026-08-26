@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src data:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src data: https://appassets.androidplatform.net; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>StageCraft</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header><strong>StageCraft</strong><span id="connection-status">未连接</span></header>
+  <header><strong>StageCraft</strong><span id="connection-status">未连接</span><div class="header-actions"><button id="player-settings" class="secondary">玩家</button><button id="story-settings" class="secondary">剧本</button></div></header>
   <main>
     <section id="pairing-panel" class="card">
       <h1>连接电脑</h1>
@@ -48,7 +48,14 @@
       <h2>等待你的操作</h2>
       <div id="interactions"></div>
     </section>
+    <section id="contribution-panel" class="card" hidden>
+      <h2>你的行动</h2>
+      <textarea id="contribution" placeholder="写下台词、动作或想法…"></textarea>
+      <button id="contribution-submit">提交行动</button>
+    </section>
   </main>
+  <dialog id="player-modal"><form method="dialog"><header><h2>玩家设置</h2><button type="button" data-close>关闭</button></header><label>姓名<input id="player-name"></label><label>人设<textarea id="player-persona"></textarea></label><label>当前状态<textarea id="player-state"></textarea></label><div class="dialog-actions"><button id="player-save" type="button">保存</button></div></form></dialog>
+  <dialog id="story-modal"><form method="dialog"><header><h2>剧本与存档</h2><button type="button" data-close>关闭</button></header><label>剧本<select id="story-select"><option value="eldoria">Eldoria</option></select></label><div class="dialog-actions"><button id="story-restart" type="button">重开剧本</button><button id="archive-export" type="button" class="secondary">导出存档</button></div><p id="story-status" class="hint"></p></form></dialog>
   <script src="/embedded-core.js"></script>
   <script type="module" src="/renderer.js"></script>
 </body>

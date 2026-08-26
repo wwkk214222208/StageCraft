@@ -87,13 +87,31 @@ public final class StageCraftWebViewClient extends WebViewClient {
 
     private WebResourceResponse serveLocalAsset(Uri url) {
         String mime = LOCAL_ASSETS.get(url.getPath());
-        if (mime == null) return forbidden();
+        String name = url.getPath();
+        if (mime == null && name != null && name.startsWith("/story-assets/")) {
+            String asset = name.substring("/story-assets/".length());
+            if (asset.matches("[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")) {
+                String[] parts = asset.split("/", 2);
+                name = "/stories/default/" + parts[0] + ".assets/" + parts[1];
+                mime = mimeFor(name);
+            }
+        }
+        if (mime == null && name != null && name.startsWith("/stories/default/")) {
+            mime = mimeFor(name);
+        }
+        if (mime == null || name == null) return forbidden();
         try {
-            String name = url.getPath().substring(1);
-            return new WebResourceResponse(mime, "UTF-8", context.getAssets().open(name));
+            return new WebResourceResponse(mime, "UTF-8", context.getAssets().open(name.substring(1)));
         } catch (IOException error) {
             return forbidden();
         }
+    }
+
+    private static String mimeFor(String path) {
+        if (path.endsWith(".png")) return "image/png";
+        if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+        if (path.endsWith(".webp")) return "image/webp";
+        return "application/octet-stream";
     }
 
     private WebResourceResponse fetchWithToken(Uri url, String credential, boolean mainFrame) {

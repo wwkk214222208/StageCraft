@@ -74,7 +74,7 @@ function element(document, tag, text, className) {
   return node
 }
 
-export function createRenderer({ document, bridge }) {
+export function createRenderer({ document, bridge, native }) {
   let currentView = null
   let currentSummary = summarizeCoreView(null)
   const byId = id => document.getElementById(id)
@@ -102,6 +102,11 @@ export function createRenderer({ document, bridge }) {
         portrait.dataset.mediaPath = role.portraitRef
         portrait.dataset.mediaRequest = `portrait-${++mediaSequence}`
         portraitBox.append(portrait)
+      } else if (typeof role.portraitRef === 'string' && role.portraitRef.startsWith('/story-assets/')) {
+        const portrait = element(document, 'img')
+        portrait.alt = ''
+        portrait.src = role.portraitRef
+        portraitBox.append(portrait)
       }
       row.append(portraitBox)
       const description = element(document, 'div')
@@ -118,6 +123,13 @@ export function createRenderer({ document, bridge }) {
     const interactions = byId('interactions')
     interactions.replaceChildren(...summary.interactions.map(renderInteraction))
     byId('interactions-panel').hidden = summary.interactions.length === 0
+    byId('contribution-panel').hidden = !summary.interactions.some(item => item.kind === 'text')
+    const player = summary.room.playerCharacter ?? {}
+    if (byId('player-name') && !byId('player-modal').open) {
+      byId('player-name').value = player.name ?? ''
+      byId('player-persona').value = player.persona ?? ''
+      byId('player-state').value = player.currentState ?? ''
+    }
   }
 
   function renderInteraction(interaction) {
@@ -199,6 +211,37 @@ export function createRenderer({ document, bridge }) {
     return currentView
   }
 
+  function nativeSync(operation, input = {}) {
+    if (!native || typeof native.invokeSync !== 'function') throw new Error('本地操作桥不可用。')
+    const result = JSON.parse(native.invokeSync(operation, JSON.stringify(input)))
+    if (result?.error) throw new Error(result.error.message ?? '本地操作失败。')
+    return result
+  }
+
+  byId('player-settings')?.addEventListener('click', () => byId('player-modal')?.showModal())
+  byId('story-settings')?.addEventListener('click', () => byId('story-modal')?.showModal())
+  document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => button.closest('dialog')?.close()))
+  byId('player-save')?.addEventListener('click', () => {
+    try {
+      const roomId = currentSummary.room.id ?? 'android-local-room'
+      nativeSync('stagecraft.repository', { method: 'updatePlayerCharacter', args: [roomId, { name: byId('player-name').value, persona: byId('player-persona').value, currentState: byId('player-state').value }] })
+      bridge.refresh(); byId('player-modal').close()
+    } catch (error) { status('保存失败', error instanceof Error ? error.message : String(error)) }
+  })
+  byId('contribution-submit')?.addEventListener('click', () => {
+    const interaction = currentSummary.interactions.find(item => item.kind === 'text')
+    const text = byId('contribution').value.trim()
+    if (!interaction || !text) return
+    try { dispatchInteraction(bridge, interaction, 'submit', text); byId('contribution').value = '' } catch (error) { status('命令无效', error instanceof Error ? error.message : String(error)) }
+  })
+  byId('story-restart')?.addEventListener('click', () => {
+    try {
+      const story = JSON.parse(nativeSync('story.read', { id: byId('story-select').value || 'eldoria' }).value)
+      nativeSync('stagecraft.repository', { method: 'restartRoom', args: [currentSummary.room.id ?? 'android-local-room', story] })
+      bridge.refresh(); byId('story-status').textContent = '剧本已重开。'
+    } catch (error) { byId('story-status').textContent = error instanceof Error ? error.message : String(error) }
+  })
+
   byId('allow-http').addEventListener('change', event => { byId('http-warning').hidden = !event.target.checked })
   byId('pair-button').addEventListener('click', () => bridge.pair(byId('server-address').value.trim(), byId('allow-http').checked, byId('pairing-code').value.trim()))
   byId('reconnect-button').addEventListener('click', () => bridge.reconnect())
@@ -234,10 +277,11 @@ if (typeof window !== 'undefined' && window.document) {
       clearSession: () => {},
       chooseCharacterCard: () => {},
     }
-    const renderer = createRenderer({ document: window.document, bridge })
+    const renderer = createRenderer({ document: window.document, bridge, native })
+    window.document.getElementById('pairing-panel')?.setAttribute('hidden', '')
     embedded.start(message => renderer.receive(message))
   } else if (native) {
-    const renderer = createRenderer({ document: window.document, bridge: native })
+    const renderer = createRenderer({ document: window.document, bridge: native, native })
     window.StageCraftNativeReceive = message => renderer.receive(message)
     native.ready()
     if (localAvailable) {

@@ -1,8 +1,9 @@
 /**
- * StageCraft 发布脚本：构建并打包两个分发产物（安卓跳过）。
+ * StageCraft 发布脚本：构建并打包 Windows 独立版、DSH 插件和 Android APK。
  *
  *   1. 独立版 zip —— 源码 + public + 默认剧本/提示词 + 启动脚本，直接 `node src/server.ts` 运行
  *   2. dsh-rp tgz  —— `npm pack` 的 dsh 插件包（含 dist / cordis.patch.yml / LICENSE / NOTICE）
+ *   3. Android APK —— release variant 的独立 Android 客户端
  *
  * 用法：node scripts/release.mjs [version]
  * 产物输出到 release/ 目录：release/stagecraft-<version>.zip、release/dsh-rp-<version>.tgz
@@ -82,6 +83,26 @@ function makeZip() {
   }
 }
 
+function buildAndroidApk() {
+  const androidRoot = join(repoRoot, 'android')
+  const javaRoot = join(repoRoot, '.toolchains', 'jdk-extract', 'jdk-17.0.20+8')
+  const javaExecutable = process.platform === 'win32' ? 'java.exe' : 'java'
+  if (!process.env.JAVA_HOME && existsSync(join(javaRoot, 'bin', javaExecutable))) process.env.JAVA_HOME = javaRoot
+  const gradle = process.platform === 'win32' ? process.env.ComSpec || 'cmd.exe' : './gradlew'
+  const gradleArgs = process.platform === 'win32'
+    ? ['/d', '/c', 'gradlew.bat', 'assembleRelease', '--offline', '--no-daemon']
+    : ['assembleRelease', '--offline', '--no-daemon']
+  console.log(`[release] building Android release APK...`)
+  execFileSync(gradle, gradleArgs, { cwd: androidRoot, stdio: 'inherit', env: process.env })
+  const releaseOutput = join(androidRoot, 'app', 'build', 'outputs', 'apk', 'release')
+  const candidates = ['app-release.apk', 'app-release-unsigned.apk'].map(name => join(releaseOutput, name))
+  const source = candidates.find(file => existsSync(file))
+  if (!source) throw new Error(`Android APK missing: ${candidates.join(', ')}`)
+  const target = join(releaseDir, `stagecraft-${version}-android.apk`)
+  cpSync(source, target)
+  console.log(`[release] Android APK: ${target}`)
+}
+
 async function main() {
   console.log(`[release] building dsh-rp bundle...`)
   execFileSync(process.execPath, ['dsh-rp/scripts/build.mjs'], { cwd: repoRoot, stdio: 'inherit' })
@@ -105,7 +126,10 @@ async function main() {
   makeZip()
   console.log(`[release] standalone zip: ${join(releaseDir, process.platform === 'win32' ? `stagecraft-${version}.zip` : `stagecraft-${version}.tar.gz`)}`)
 
-  // 2. dsh-rp tgz（npm pack）—— 定位 npm-cli.js 直接以 node 运行，避免 shell 拼接
+  // 2. Android APK
+  buildAndroidApk()
+
+  // 3. dsh-rp tgz（npm pack）—— 定位 npm-cli.js 直接以 node 运行，避免 shell 拼接
   console.log(`[release] packing dsh-rp tgz...`)
   rmSync(join(repoRoot, 'dsh-rp', 'release'), { recursive: true, force: true })
   const packOutput = execFileSync(process.execPath, [npmCli, 'pack', '--pack-destination', releaseDir], { cwd: join(repoRoot, 'dsh-rp'), encoding: 'utf8' })

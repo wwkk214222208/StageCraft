@@ -14,8 +14,8 @@
 
 StageCraft 是一个自托管、插件化的多角色角色扮演（RP）运行时，配套一个 Web 工作台。它想成为比 SillyTavern 更好上手的生态：创作者能低门槛地做角色和剧本，玩家不用配置、打开就能玩。
 
-- 名称：`stagecraft`，版本 `0.3.0`，`private`，协议 **AGPL-3.0-only**。
-- 运行形态：① 独立 Node 服务；② 作为 **dsh 插件**（经 `dsh-rp` 适配壳）；③ 安卓（远程模式 APK / Termux 本地，**当前暂不推荐**，UI 布局问题待修）。
+- 名称：`stagecraft`，版本 `0.4.0`，`private`，协议 **AGPL-3.0-only**。
+- 运行形态：① 独立 Node 服务；② 作为 **dsh 插件**（经 `dsh-rp` 适配壳）；③ Android APK（远程完整 UI / 本地嵌入 Core）。
 
 ## 已实现
 
@@ -38,7 +38,7 @@ StageCraft 是一个自托管、插件化的多角色角色扮演（RP）运行�
 ## 待实现 / 规划中
 
 - **ST/MVU 兼容层**：ST 卡 → 可安装、版本化的 State Module（变量 / 自动化 / 世界书均为模块贡献）。当前为设计方向、部分落地（`src/compat/st-mvu.ts`），重度卡仍以文字导入为主。
-- **安卓本地运行 APK**：完全本地运行的安卓形态（不依赖远程服务）。当前安卓 UI 有严重布局问题、暂不推荐使用；远程模式 APK / Termux 本地为实验性形态。
+- **安卓本地运行 APK**：本地嵌入 Core、SQLite 持久化、正式 Eldoria 剧本、行动提交、角色交互、玩家设置和剧本重开已接入；模型调用与复杂创作编辑能力仍需真实设备持续验证。
 - **更丰富的剧情引擎**：在不破坏边界的前提下支持更灵活、可版本化的玩法定义与补丁。
 - **社区扩展与皮肤 / 一键分享分发**：开放 UI 扩展机制与内容分发。
 - **通用 Workflow 编排**：当前 Workflow Executor 负责固定定义的注册 / 投影 / 合法转换，不是通用自动业务编排器（见下文"当前限制"）。
@@ -171,11 +171,12 @@ HOST=0.0.0.0 RP_REMOTE=1 RP_REMOTE_PAIRING_TTL_MS=300000 RP_REMOTE_SESSION_TTL_M
 
 **安卓**：
 
-- 远程模式 APK（连接你自己的StageCraft服务）：构建产物见 `android/` 工程。
+- APK 发布构建会同时生成远程模式和本地嵌入模式；远程模式连接你自己的 StageCraft 服务，本地模式不连接电脑。
 - Termux 本地跑：`bash start-android.sh`（脚本启动服务并打印局域网地址）；停止 `bash close-android.sh`。
 - 本地运行核心构建：`pnpm build:android-core`（即 `scripts/build-android-core.mjs`）。
+- Android 工程验证：`android/gradlew.bat testDebugUnitTest assembleDebug lintDebug --offline --no-daemon`。
 
-> ⚠️ 安卓端**暂时不推荐使用**：当前存在较严重的 UI 布局问题，尚未经充分实测。玩家向说明见 `docs/玩家看我.md` 的「怎么开始」。
+> APK 的本地模式是实验性客户端，发布前仍需在实体 Android 设备上验证启动、键盘、模型请求和后台恢复。完整创作者工作台暂在远程模式使用。
 
 > 注意：`custom/docs/` 目录**不进仓库**（已 ignore），里面是私有设计 / 交接 / 审计文档，请勿视为发布内容。
 

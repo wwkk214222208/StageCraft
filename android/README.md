@@ -1,12 +1,12 @@
 # StageCraft Android local and remote client
 
-This directory is the native Android host for the shared StageCraft Core protocol. It supports remote HTTP/SSE mode and the phase-five embedded browser Core path. The generated `embedded-core.js` executes the shared `CoreRuntimeSkeleton` protocol in the WebView; Java only owns lifecycle, media, pairing, and transport boundaries.
+This directory is the native Android host for the shared StageCraft Core protocol. It supports remote HTTP/SSE mode and the embedded local Core path. The generated `embedded-core.js` executes the shared `CoreRuntimeSkeleton` protocol in the WebView; Java only owns lifecycle, media, pairing, persistence, and transport boundaries.
 
 ## Local mode boundary
 
 `NativeBridge.installLocalCore(...)` is the integration point for the app composition root. The supplied `LocalCoreConnection.CoreHost` must be the shared Core runtime; Android does not implement Director, Chat, approval, state transactions, workflows, or card business logic a second time. The renderer and `renderer.js` are shared by both modes.
 
-The embedded path is deliberately limited to the shared, platform-neutral Core skeleton. Gradle runs `scripts/build-android-core.mjs` with the repository's pinned esbuild, packages the bundle and manifest into the APK, and the native bridge verifies artifact name, byte count, SHA-256, bundle version, protocol version, and bridge version before local mode is allowed. Append `?mode=remote` to the trusted asset URL for remote transport during development. The embedded bundle now boots the shared StageCraft solution composition: chat/director/management services, solution handlers, state repository, and model router (the model gateway, SQLite repository, Cordis services are wired through the portable composition boundary). Java remains limited to bounded persistence, secret, model, and lifecycle ports; no Java domain fallback or fake `CoreHost` is provided.
+The embedded path runs the shared StageCraft solution composition: chat/director/management services, solution handlers, state repository, and model router (the model gateway, SQLite repository, Cordis services are wired through the portable composition boundary). The APK includes the default Eldoria story and its portrait assets. Gradle runs `scripts/build-android-core.mjs`, packages the bundle and manifest, and the native bridge verifies artifact name, byte count, SHA-256, bundle version, protocol version, and bridge version before local mode is allowed. Java remains limited to bounded persistence, secret, model, and lifecycle ports; no Java domain fallback or fake `CoreHost` is provided.
 
 ## Android ports
 
@@ -40,4 +40,4 @@ The standard Gradle 8.9 wrapper and AGP 8.7.3 contract are checked in. With the 
 android/gradlew -p android testDebugUnitTest assembleDebug lintDebug --offline --no-daemon
 ```
 
-The repository-local JDK is under `.toolchains/jdk-extract/`. With the repository-local toolchain and cached AGP available, `testDebugUnitTest`, `assembleDebug`, and `lintDebug` pass. Android build outputs, `local.properties`, APKs, and private assets remain ignored and are not committed.
+For a release APK use `android/gradlew -p android assembleRelease --offline --no-daemon`; the root `node scripts/release.mjs 0.4.0` command performs this step and copies `release/stagecraft-0.4.0-android.apk`. The repository-local JDK is under `.toolchains/jdk-extract/`. Android build outputs, `local.properties`, APKs, and private assets remain ignored and are not committed.

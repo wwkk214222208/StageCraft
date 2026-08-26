@@ -47,6 +47,11 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
             }
             return room;
         }
+        if ("story.read".equals(operation)) {
+            String id = JsonSafety.requiredString(input, "id", 128);
+            if (!id.matches("[A-Za-z0-9._-]+")) throw new IllegalArgumentException("Invalid story id.");
+            return new JSONObject().put("value", readStoryAsset(id));
+        }
         if ("stagecraft.repository".equals(operation)) return dispatchRepository(input);
         if ("asset.read".equals(operation)) {
             String path = JsonSafety.requiredString(input, "path", 512); JsonSafety.path(path);
@@ -79,7 +84,7 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
                 if ("story.read".equals(operation)) {
                     String id = JsonSafety.requiredString(input, "id", 128);
                     if (!id.matches("[A-Za-z0-9._-]+")) throw new IllegalArgumentException("Invalid story id.");
-                    callback.onResult(new JSONObject().put("value", readAssetText("stories/" + id + ".json")));
+                    callback.onResult(new JSONObject().put("value", readStoryAsset(id)));
                     return;
                 }
                 if ("model.request".equals(operation)) {
@@ -156,7 +161,18 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         if ("approveWorldChange".equals(method)) { String id = room.optString("pendingWorldChangeId", ""); room.remove("pendingWorldChange"); room.remove("pendingWorldChangeId"); room.put("phase", "awaiting-player-input"); bump(room); return id.isEmpty() ? JSONObject.NULL : id; }
         if ("rejectWorldChange".equals(method)) { room.remove("pendingWorldChange"); room.remove("pendingWorldChangeId"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
         if ("publish".equals(method)) { JSONObject draft = room.optJSONObject("draft"); if (draft == null) throw new IllegalArgumentException("Draft is no longer available."); addScene(room, JsonSafety.stringArg(args, 2, 1024 * 1024), null, draft.optString("turnId", "turn")); room.remove("draft"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
-        if ("restartRoom".equals(method)) { JSONObject story = JsonSafety.objectArg(args, 1); room.put("title", story.optString("title", room.optString("title"))); room.put("roles", story.optJSONArray("roles") == null ? new org.json.JSONArray() : story.getJSONArray("roles")); room.put("lore", story.optJSONArray("lore") == null ? new org.json.JSONArray() : story.getJSONArray("lore")); room.put("phase", "awaiting-player-input"); room.remove("draft"); room.remove("speech"); bump(room); return JSONObject.NULL; }
+        if ("restartRoom".equals(method)) {
+            JSONObject story = JsonSafety.objectArg(args, 1);
+            room.put("storyId", story.optString("id", room.optString("storyId", "eldoria")));
+            room.put("title", story.optString("title", room.optString("title")));
+            room.put("roles", story.optJSONArray("roles") == null ? new org.json.JSONArray() : story.getJSONArray("roles"));
+            room.put("lore", story.optJSONArray("lore") == null ? new org.json.JSONArray() : story.getJSONArray("lore"));
+            room.put("playerCharacter", story.optJSONObject("playerCharacter") == null ? new JSONObject() : story.getJSONObject("playerCharacter"));
+            room.put("sceneTime", story.optString("sceneTime", ""));
+            room.put("sceneLocation", story.optString("sceneLocation", ""));
+            room.put("scenes", new org.json.JSONArray().put(new JSONObject().put("id", "opening-" + room.optString("id")).put("turnId", "opening").put("text", story.optString("opening", "")).put("kind", "narration").put("createdAt", now())));
+            room.put("phase", "awaiting-player-input"); room.remove("draft"); room.remove("speech"); bump(room); return JSONObject.NULL;
+        }
         if ("failRoom".equals(method)) { room.put("lastError", JsonSafety.stringArg(args, 1, 1024 * 1024)); bump(room); return JSONObject.NULL; }
         if ("cancelTurn".equals(method)) { room.put("phase", "awaiting-player-input"); room.remove("speech"); room.remove("draft"); bump(room); return JSONObject.NULL; }
         if ("setPlayerAvatar".equals(method)) { JSONObject player = room.optJSONObject("playerCharacter"); if (player == null) throw new IllegalArgumentException("Player unavailable."); player.put("portraitRef", JsonSafety.stringArg(args, 1, 1024)); bump(room); return JSONObject.NULL; }
@@ -186,17 +202,20 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
 
     private JSONObject defaultRoom(String roomId) {
         try {
+            JSONObject story = new JSONObject(readStoryAsset("eldoria"));
             return new JSONObject()
                 .put("id", roomId)
-                .put("title", "Royal Festival")
+                .put("title", story.optString("title", "StageCraft"))
                 .put("mode", "director")
                 .put("autoPublish", false)
                 .put("phase", "awaiting-player-input")
                 .put("revision", 0)
-                .put("playerCharacter", new JSONObject().put("name", "Player").put("persona", "A careful observer.").put("currentState", "Just entered the scene."))
-                .put("roles", new org.json.JSONArray().put(new JSONObject().put("id", "aria").put("name", "Aria").put("portraitRef", "/assets/default.svg").put("currentState", "At the royal festival, watching the crowd.").put("presence", "present").put("memoryTimeline", new JSONObject().put("Past", new org.json.JSONArray().put("The festival has begun."))).put("selfModel", "Reserved and observant.")))
-                .put("lore", new org.json.JSONArray().put(new JSONObject().put("name", "Royal Festival").put("content", "A public festival where old alliances are tested.")))
-                .put("scenes", new org.json.JSONArray().put(new JSONObject().put("id", "opening-" + roomId).put("turnId", "opening").put("text", "Music drifts through the royal festival hall as evening falls.").put("kind", "narration").put("createdAt", now())));
+                .put("playerCharacter", story.optJSONObject("playerCharacter") == null ? new JSONObject() : story.getJSONObject("playerCharacter"))
+                .put("roles", story.optJSONArray("roles") == null ? new org.json.JSONArray() : story.getJSONArray("roles"))
+                .put("lore", story.optJSONArray("lore") == null ? new org.json.JSONArray() : story.getJSONArray("lore"))
+                .put("sceneTime", story.optString("sceneTime", ""))
+                .put("sceneLocation", story.optString("sceneLocation", ""))
+                .put("scenes", new org.json.JSONArray().put(new JSONObject().put("id", "opening-" + roomId).put("turnId", "opening").put("text", story.optString("opening", "")).put("kind", "narration").put("createdAt", now())));
         } catch (Exception error) {
             throw new IllegalStateException("Unable to create the default local room.", error);
         }
@@ -208,6 +227,14 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         try (InputStream input = context.getAssets().open(path)) {
             byte[] data = StageCraftArchive.readLimited(input, 4 * 1024 * 1024);
             return new String(data, StandardCharsets.UTF_8);
+        }
+    }
+
+    private String readStoryAsset(String id) throws Exception {
+        try {
+            return readAssetText("stories/default/" + id + ".json");
+        } catch (Exception missingDefault) {
+            return readAssetText("stories/" + id + ".json");
         }
     }
 }

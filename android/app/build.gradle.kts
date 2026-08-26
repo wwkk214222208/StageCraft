@@ -15,7 +15,11 @@ val packageRemoteRenderer by tasks.registering(Copy::class) {
     from(rootProject.projectDir.parentFile.resolve("prompts")) { into("prompts") }
     from(rootProject.projectDir.parentFile.resolve("stories")) { into("stories") }
     into(generatedRendererSource)
-    include("index.html", "styles.css", "renderer.js", "prompts/prompts.json", "stories/*.json", "stories/custom/*.json")
+    include("index.html", "styles.css", "renderer.js")
+    include("prompts.json", "prompts/prompts.json")
+    include("*.json", "stories/*.json", "default/*.json", "custom/*.json", "stories/default/*.json", "stories/custom/*.json", "default/*.assets/**", "custom/*.assets/**", "stories/default/*.assets/**", "stories/custom/*.assets/**")
+    // Keep the packaged source layout explicit: prompts/prompts.json and stories/*.json
+    // are part of the Android asset contract; default/ contains the shipped story.
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
 val buildEmbeddedCore by tasks.registering(Exec::class) {
@@ -38,7 +42,7 @@ val packageAndroidAssets by tasks.registering(Sync::class) {
     dependsOn(packageRemoteRenderer, packageEmbeddedCore)
     from(generatedRendererSource)
     into(generatedRenderer)
-    include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json")
+    include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json", "prompts/**", "stories/**")
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
 val verifyEmbeddedCoreAssets by tasks.registering {
@@ -68,7 +72,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.4.0"
         testInstrumentationRunner = "android.app.InstrumentationTestRunner"
     }
 
@@ -76,6 +80,10 @@ android {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // A reproducible public signing key is not part of the repository yet.
+            // Use the local debug key so the release artifact remains directly installable;
+            // distributors should replace this with their own signing config before store upload.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

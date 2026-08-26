@@ -42,7 +42,7 @@ dsh 能做到插件化、可扩展，根子上是底层 Cordis 容器的设计�
 
 - `dsh-rp/`：StageCraft 的 Cordis/dsh bundle——同一份业务实现，打包成可安装的 dsh 插件；支持 `embedded`（进程内）和 `sandboxed`（子进程 + RPC）两种模式，dsh 只做 supervisor。
 - `docs/architecture.md`：Core Runtime 明确不依赖 Cordis、HTTP 或 DOM——插件容器是宿主层的选择，不是核心的依赖。
-- 运行形态：① 独立 Node 服务（`start.bat`）；② dsh 插件（`dsh-rp`）；③ 安卓（当前暂不推荐）。
+- 运行形态：① 独立 Node 服务（`start.bat`）；② dsh 插件（`dsh-rp`）；③ Android APK（远程完整 UI / 本地嵌入 Core，实验性）。
 
 ## 小结
 

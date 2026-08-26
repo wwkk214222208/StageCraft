@@ -24,9 +24,10 @@ function notes() {
   return existsSync(file) ? readFileSync(file, 'utf8') : `StageCraft v${version}`
 }
 
-function main() {  const zip = join(releaseDir, `stagecraft-${version}.zip`)
+ function main() {  const zip = join(releaseDir, `stagecraft-${version}.zip`)
   const tgz = join(releaseDir, `dsh-rp-${version}.tgz`)
-  for (const file of [zip, tgz]) {
+  const apk = join(releaseDir, `stagecraft-${version}-android.apk`)
+  for (const file of [zip, tgz, apk]) {
     if (!existsSync(file)) throw new Error(`产物缺失: ${file}（先运行 npm run release）`)
   }
 
@@ -57,7 +58,7 @@ function main() {  const zip = join(releaseDir, `stagecraft-${version}.zip`)
   }
 
   // 上传附件（已存在同名附件时用 --clobber 覆盖）
-  for (const [label, file] of [['独立版', zip], ['DSH 插件', tgz]]) {
+  for (const [label, file] of [['Windows 独立版', zip], ['DSH 插件', tgz], ['Android APK', apk]]) {
     try {
       run(gh, ['release', 'upload', tag, file, '--clobber'])
       console.log(`[publish] 已上传 ${label}: ${file}`)

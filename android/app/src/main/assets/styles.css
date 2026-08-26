@@ -1,13 +1,16 @@
 :root { color-scheme: dark; --bg:#15131b; --card:#211d2a; --line:#3b3349; --ink:#f5efff; --muted:#bdb1ca; --accent:#b98cff; --danger:#ff8d9b; }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,sans-serif; }
-header { position:sticky; top:0; z-index:2; display:flex; justify-content:space-between; padding:14px 18px; background:#191620; border-bottom:1px solid var(--line); }
+header { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:10px; padding:12px 14px; background:#191620; border-bottom:1px solid var(--line); }
+header strong { flex:1; }
+header .header-actions { display:flex; gap:6px; }
 header span { color:var(--muted); font-size:14px; }
 main { width:min(760px,100%); margin:auto; padding:14px; }
 .card { margin-bottom:14px; padding:18px; border:1px solid var(--line); border-radius:16px; background:var(--card); }
 h1,h2 { margin:0 0 12px; }
 label { display:block; margin:12px 0; color:var(--muted); }
 input,select,textarea,button { width:100%; margin-top:6px; padding:12px; border:1px solid var(--line); border-radius:10px; background:#17141d; color:var(--ink); font:inherit; }
+button { min-height:44px; }
 textarea { min-height:100px; resize:vertical; }
 button { background:var(--accent); color:#191122; border:0; font-weight:700; }
 button.secondary { background:#393044; color:var(--ink); }
@@ -26,3 +29,13 @@ button.danger { background:#4a2932; color:#ffd6dc; }
 .portrait.loaded .portrait-initial { display:none; }
 .hint,#card-import-status { color:var(--muted); }
 .interaction-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.interaction-actions button { margin-top:0; }
+#contribution-panel textarea { min-height:150px; }
+#player-modal,#story-modal { width:calc(100% - 24px); max-width:520px; max-height:calc(100dvh - 24px); margin:auto; padding:0; border:1px solid var(--line); border-radius:14px; background:var(--card); color:var(--ink); }
+#player-modal form,#story-modal form { max-height:calc(100dvh - 24px); overflow-y:auto; padding:14px; }
+#player-modal header,#story-modal header { position:sticky; top:-14px; margin:-14px -14px 12px; padding:12px 14px; }
+#player-modal h2,#story-modal h2 { margin:0; font-size:18px; }
+#player-modal header button,#story-modal header button { width:auto; min-width:72px; margin:0; }
+.dialog-actions { display:flex; gap:8px; padding-top:6px; }
+.dialog-actions button { flex:1; }
+dialog::backdrop { background:#000b; }
