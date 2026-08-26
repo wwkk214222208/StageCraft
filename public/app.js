@@ -356,6 +356,10 @@ function render(next) {
     }
     return `<article class="scene narration">${meta}<div class="scene-text">${escape(scene.text)}</div>${tokenNoteHtml('scene', scene.usage)}${stateActions}</article>`
   }).join('') : ''
+  // 收取失败：以导演风格消息卡片插在对话流末尾（带「重新尝试/取消」），不再用居中弹窗
+  if (isChat && ['role-speaking', 'director-selecting-roles'].includes(room.phase)) replyFailedDismissed = false
+  const failedDecision = isChat ? currentFailedDecision() : null
+  $('#scenes').innerHTML += failedDecision ? replyFailedHtml(failedDecision) : ''
   const decisionsDone = room.decisions.length > 0 && room.decisions.every(decision => decision.status !== 'pending')
   // 审批期间：安卓端主输入框（底部输入区）缩回隐藏，批准完毕后重新弹出
   document.body.classList.toggle('approving', ['awaiting-approval', 'world-change-approval'].includes(room.phase))
@@ -425,37 +429,50 @@ function render(next) {
   renderReplyStatus()
 }
 
-// 群聊回复：中央状态提示（收到首字前「xx 正在回复…」/ 收取失败 + 重新尝试），以及「收到回复首字把主滚动条拉到最底」
-let lastReplyScrollSig = { scene: '', speech: '' }
+// 群聊回复：收到首字前中央短暂提示「xx 正在回复…」；收取失败以导演风格消息卡片插在对话流末尾（带「重新尝试/取消」，由 render() 渲染进 #scenes）；
+// 「收到首字 / 失败卡片出现」都把主滚动条拉到最底（同一签名只滚一次）
+let lastReplyScrollSig = { scene: '', speech: '', failed: '' }
+// 「取消」关闭失败卡片标记：cancel-turn 不会清掉服务端 decisions 里的 unavailable 记录，
+// 卡片继续渲染会是错的；每次新回合（进入 role-speaking/选角）自动复位，让新失败重新显示
+let replyFailedDismissed = false
+function currentFailedDecision() {
+  return replyFailedDismissed ? null : (room.decisions ?? []).find(decision => decision.status === 'unavailable') ?? null
+}
+function replyFailedHtml(decision) {
+  const role = room.roles.find(item => item.id === decision.roleId)
+  const name = role?.name ?? decision.roleId
+  const detail = room.lastError ? `<p>${escape(room.lastError)}</p>` : `<p>${escape(name)} 未能完成回复。</p>`
+  return `<div class="scene scene-msg reply-failed-msg"><b class="reply-failed-title">收取回复失败</b>${detail}<div class="reply-failed-actions"><button id="reply-retry">重新尝试</button><button id="reply-cancel">取消</button></div></div>`
+}
 function renderReplyStatus() {
   const panel = $('#reply-status')
   if (!panel || !room) return
   if (activeAction === 'speak') { panel.hidden = true; panel.innerHTML = '' }
   else {
     const isChat = room.mode === 'chat'
-    const failed = isChat ? (room.decisions ?? []).find(decision => decision.status === 'unavailable') : null
+    const failed = isChat ? currentFailedDecision() : null
     const pending = !failed && isChat && room.phase === 'role-speaking' ? (room.decisions ?? []).find(decision => decision.status === 'pending') : null
-    if (failed) {
-      const role = room.roles.find(item => item.id === failed.roleId)
-      panel.hidden = false
-      panel.className = 'reply-status failed'
-      panel.innerHTML = `<div class="reply-failed-card"><b>收取回复失败</b>${room.lastError ? `<p>${escape(room.lastError)}</p>` : `<p>${escape(role?.name ?? '角色')} 未能完成回复。</p>`}<button id="reply-retry">重新尝试</button></div>`
-    } else if (pending) {
+    if (pending) {
       const role = room.roles.find(item => item.id === pending.roleId)
       panel.hidden = false
       panel.className = 'reply-status typing'
       panel.innerHTML = `<span>${escape(role?.name ?? '角色')} 正在回复<span class="reply-dots"></span></span>`
     } else { panel.hidden = true; panel.innerHTML = '' }
   }
-  // 「收到首字」：出现新正文（玩家回显/新场景/新台词卡片）时把主滚动条拉到最底
+  // 「收到首字 / 失败卡片出现」：把主滚动条拉到最底
   const visibleScenes = room.hidePlayerSpeech ? room.scenes.filter(scene => scene.speaker !== 'player') : room.scenes
   const sceneSig = visibleScenes.length ? visibleScenes[visibleScenes.length - 1].id : ''
   const speechSig = room.speech ? `${room.speech.turnId}:${room.speech.roleId}` : ''
-  const sigChanged = sceneSig !== lastReplyScrollSig.scene || (speechSig && speechSig !== lastReplyScrollSig.speech)
-  lastReplyScrollSig = { scene: sceneSig, speech: speechSig }
+  const failedDecision = currentFailedDecision()
+  const failedSig = failedDecision ? `${sceneSig}:${failedDecision.roleId}` : ''
+  const sigChanged = sceneSig !== lastReplyScrollSig.scene || (speechSig && speechSig !== lastReplyScrollSig.speech) || (failedSig && failedSig !== lastReplyScrollSig.failed)
+  lastReplyScrollSig = { scene: sceneSig, speech: speechSig, failed: failedSig }
   if (sigChanged) { const story = $('#story'); if (story) story.scrollTop = story.scrollHeight }
 }
-document.addEventListener('click', event => { if (event.target.id !== 'reply-retry') return; const panel = $('#reply-status'); if (panel) { panel.hidden = true; panel.innerHTML = '' }; $('#retry-speak').click() })
+document.addEventListener('click', event => {
+  if (event.target.id === 'reply-retry') { $('#retry-speak').click(); return }
+  if (event.target.id === 'reply-cancel') { replyFailedDismissed = true; clearThinkingStreams(); api('/api/cancel-turn', {}).finally(() => refreshRoom()); return }
+})
 
 async function loadPromptPresets() { const response = await fetch('/api/prompts/presets'); if (response.ok) { const data = await response.json(); promptPresets = data.presets ?? []; promptPresetState = data; promptModes = Array.isArray(data.modes) && data.modes.length ? data.modes : promptModes; promptTemplates = data.promptTemplates ?? promptTemplates; promptGameplayScenarios = data.gameplayScenarios ?? promptGameplayScenarios; promptGameplayScenarioForceThinkingOff = promptGameplayScenarios?.[promptPresetScope]?.forceThinkingOff === true; sidebarPromptPresetId = promptPresetState?.activeByScope?.[promptSideScope()] ?? sidebarPromptPresetId; if (room) render(room) } }
 function ensurePromptScenario(preset, scope = promptPresetScope) {
