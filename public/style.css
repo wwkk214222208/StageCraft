@@ -459,8 +459,8 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
   main{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr)}
   #story{padding:12px 14px 4px}
   #roles,#workbench{position:fixed;top:54px;bottom:88px;width:min(84vw,340px);margin:0;z-index:100;box-shadow:0 6px 28px #000a;transition:transform .22s ease}
-  #roles{left:0;border-right:1px solid #2f3c58;transform:translateX(-105%)}
-  #workbench{right:0;border-left:1px solid #2f3c58;transform:translateX(105%)}
+  #roles{left:0;display:block;border-right:1px solid #2f3c58;transform:translateX(-105%)}
+  #workbench{right:0;display:flex;flex-direction:column;border-left:1px solid #2f3c58;transform:translateX(105%)}
   #roles.drawer-open,#workbench.drawer-open{transform:translateX(0)}
   .drawer-backdrop{display:block;position:fixed;inset:0;background:#0009;z-index:90}
   .drawer-backdrop[hidden]{display:none}
