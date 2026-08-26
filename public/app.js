@@ -499,6 +499,17 @@ function updateThinkingOptions(selector, model, selected) {
   $(selector).value = choices.some(([value]) => value === selected) ? selected : choices[choices.length - 1][0]
 }
 
+// ── 移动端呼出式抽屉：窄屏下左右栏滑出、点遮罩关闭（桌面端按钮隐藏，逻辑始终注册无副作用）──
+const drawerBackdrop = document.getElementById('drawer-backdrop')
+const setDrawer = (which, open) => {
+  document.getElementById('roles').classList.toggle('drawer-open', which === 'roles' && open)
+  document.getElementById('workbench').classList.toggle('drawer-open', which === 'workbench' && open)
+  if (drawerBackdrop) drawerBackdrop.hidden = !open
+}
+document.getElementById('mobile-roles-toggle').onclick = () => setDrawer('roles', !document.getElementById('roles').classList.contains('drawer-open'))
+document.getElementById('mobile-workbench-toggle').onclick = () => setDrawer('workbench', !document.getElementById('workbench').classList.contains('drawer-open'))
+if (drawerBackdrop) drawerBackdrop.onclick = () => setDrawer('roles', false)
+
 $('#connection-settings').onclick = () => $('#connection-modal').showModal()
 $('#player-settings').onclick = () => { const player = room.playerCharacter; $('#player-name').value = player.name; $('#player-persona').value = player.persona; $('#player-state').value = player.currentState; $('#player-avatar-preview').src = player.portraitRef || '/assets/default.svg'; $('#player-modal').showModal() }
 // ── 主角肖像导入（与角色头像同一套保存逻辑）──

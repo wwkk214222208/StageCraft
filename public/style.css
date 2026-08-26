@@ -450,3 +450,18 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 #prompt-preset-modal .prompt-assistant-send{flex:0 0 auto}
 #prompt-preset-modal .prompt-standalone-note{flex:0 0 auto;border:1px dashed #44506a;border-radius:6px;background:#1a2430;color:#9fb2dd;padding:8px 10px;font-size:12px;line-height:1.5;margin:0 0 8px}
 @media (max-width:980px){#prompt-preset-modal{width:96vw;height:90vh;max-width:96vw;max-height:90vh}#prompt-preset-modal .prompt-preset-workspace{grid-template-columns:minmax(180px,34fr) minmax(0,66fr);grid-template-rows:minmax(0,1fr);overflow:hidden}#prompt-preset-modal .prompt-preset-assistant{grid-column:1 / -1;grid-row:2;border-top:1px solid #34415b;border-left:0;min-height:280px}#prompt-preset-modal .prompt-preset-workspace{grid-template-rows:minmax(0,1fr) minmax(280px,.8fr)}}
+
+/* ── 移动端：左右栏改为呼出式抽屉（≤900px 生效，桌面三栏布局不变）── */
+.mobile-toggle{display:none}
+.drawer-backdrop{display:none}
+@media (max-width:900px){
+  .mobile-toggle{display:inline-block}
+  main{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr)}
+  #story{padding:12px 14px 4px}
+  #roles,#workbench{position:fixed;top:54px;bottom:88px;width:min(84vw,340px);margin:0;z-index:100;box-shadow:0 6px 28px #000a;transition:transform .22s ease}
+  #roles{left:0;border-right:1px solid #2f3c58;transform:translateX(-105%)}
+  #workbench{right:0;border-left:1px solid #2f3c58;transform:translateX(105%)}
+  #roles.drawer-open,#workbench.drawer-open{transform:translateX(0)}
+  .drawer-backdrop{display:block;position:fixed;inset:0;background:#0009;z-index:90}
+  .drawer-backdrop[hidden]{display:none}
+}
