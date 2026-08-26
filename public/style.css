@@ -455,10 +455,10 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 .mobile-toggle{display:none}
 .drawer-backdrop{display:none}
 @media (max-width:900px){
-  .mobile-toggle{display:inline-block;position:fixed;top:50%;transform:translateY(-50%);z-index:120;padding:16px 7px;background:rgba(34,42,64,.6);color:#b7c8fe;border:1px solid #4a5d8a;font-size:13px;letter-spacing:2px;writing-mode:vertical-rl;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);box-shadow:0 4px 16px #0006}
-  #mobile-roles-toggle{left:0;border-left:0;border-radius:0 9px 9px 0}
-  #mobile-workbench-toggle{right:0;border-right:0;border-radius:9px 0 0 9px}
-  .mobile-toggle.drawer-open{background:rgba(70,96,154,.78);color:#eef4ff}
+  #mobile-roles-toggle,#mobile-workbench-toggle{display:inline-block;position:fixed;top:50%;transform:translateY(-50%);z-index:120;width:18px;height:36px;padding:0;border:0;background:rgba(103,158,254,.4);box-shadow:0 2px 10px #000a;transition:background .2s}
+  #mobile-roles-toggle{left:0;border-radius:0 18px 18px 0}
+  #mobile-workbench-toggle{right:0;border-radius:18px 0 0 18px}
+  #mobile-roles-toggle.drawer-open,#mobile-workbench-toggle.drawer-open{background:rgba(103,158,254,.75)}
   main{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr)}
   #story{padding:12px 14px 4px}
   #roles,#workbench{position:fixed;top:54px;bottom:88px;width:min(84vw,340px);margin:0;z-index:100;box-shadow:0 6px 28px #000a;transition:transform .22s ease}
