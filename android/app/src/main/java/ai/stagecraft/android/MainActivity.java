@@ -38,7 +38,8 @@ public final class MainActivity extends Activity {
         webView.addJavascriptInterface(bridge, "StageCraftNative");
         webView.setWebViewClient(new StageCraftWebViewClient(this, () -> bridge.currentCredential()));
         setContentView(webView);
-        webView.loadUrl(StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html");
+        // 默认进入远程配对页（?mode=remote）；本地嵌入模式经配对页按钮进入（?mode=local）。
+        webView.loadUrl(StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html?mode=remote");
     }
 
     /** 配对成功 / 会话恢复后：切换到 PC 完整 Web UI（令牌由 StageCraftWebViewClient 注入）。 */
@@ -47,9 +48,9 @@ public final class MainActivity extends Activity {
         webView.loadUrl(address);
     }
 
-    /** 会话失效 / 清除后：回到本地配对页。 */
+    /** 会话失效 / 清除后：回到本地配对页（远程模式）。 */
     void showPairingPage() {
-        webView.loadUrl(StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html");
+        webView.loadUrl(StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html?mode=remote");
     }
 
     @Override protected void onStart() {

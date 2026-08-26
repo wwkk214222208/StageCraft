@@ -219,8 +219,11 @@ export function createRenderer({ document, bridge }) {
 if (typeof window !== 'undefined' && window.document) {
   const embedded = window.StageCraftEmbeddedCore
   const native = window.StageCraftNative
-  const useRemote = new URLSearchParams(window.location.search).get('mode') === 'remote'
-  if (embedded && native?.localCoreAllowed?.() === true && !useRemote) {
+  // 默认进入远程配对页（?mode=remote 由原生层指定）；本地嵌入模式改为显式 ?mode=local。
+  const modeParam = new URLSearchParams(window.location.search).get('mode')
+  const localAvailable = Boolean(embedded && native?.localCoreAllowed?.() === true)
+  const useLocal = modeParam === 'local' && localAvailable
+  if (useLocal) {
     const bridge = {
       dispatch: embedded.dispatch,
       refresh: embedded.refresh,
@@ -237,5 +240,13 @@ if (typeof window !== 'undefined' && window.document) {
     const renderer = createRenderer({ document: window.document, bridge: native })
     window.StageCraftNativeReceive = message => renderer.receive(message)
     native.ready()
+    if (localAvailable) {
+      const button = element(window.document, 'button', '本地模式（不连电脑）', 'secondary')
+      button.id = 'local-mode-button'
+      button.onclick = () => { window.location.href = 'index.html?mode=local' }
+      const anchor = window.document.getElementById('connection-error')
+      if (anchor?.parentElement) anchor.parentElement.insertBefore(button, anchor)
+      else window.document.getElementById('pairing-panel')?.append(button)
+    }
   }
 }
