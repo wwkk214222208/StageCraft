@@ -541,12 +541,18 @@ export class Store implements MemoryStore {
 
   createRoomFromPackage(story: StoryPackage, roomId = `${story.id}-${Date.now()}`, options: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean } = {}): string {
     this.withTransaction(() => {
-      this.db.prepare('INSERT INTO rooms (id, title, player_name, player_persona, player_state, scene_time, scene_location, phase, lore, story_id, mode, auto_publish, chat_speech_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(roomId, story.title, story.playerCharacter?.name ?? '玩家', story.playerCharacter?.persona ?? '由玩家自由定义的参与者。', story.playerCharacter?.currentState ?? '刚刚进入当前场景。', story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, 'awaiting-player-input', JSON.stringify(story.lore ?? []), story.id, options.mode ?? 'director', (options.autoPublish ?? story.gameplay?.[options.mode ?? 'director']?.autoPublish === true) ? 1 : 0, story.gameplay?.chat?.speechMode ?? 'manual')
+      this.applyStoryPackage(roomId, story, options)
+    })
+    return roomId
+  }
+
+  /** 剧本包 → 房间初始状态（房间行 + 角色 + 初始记忆 + 开场）。新建与重开共用同一写入逻辑，避免两处维护漂移。
+   *  INSERT OR REPLACE：重开时 rooms 行已存在（rooms 无 room_id 列，不在动态清理范围），冲突即整行重建、未指定列回到默认值。 */
+  private applyStoryPackage(roomId: string, story: StoryPackage, options: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean } = {}): void {
+      this.db.prepare('INSERT OR REPLACE INTO rooms (id, title, player_name, player_persona, player_state, scene_time, scene_location, phase, lore, story_id, mode, auto_publish, chat_speech_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(roomId, story.title, story.playerCharacter?.name ?? '玩家', story.playerCharacter?.persona ?? '由玩家自由定义的参与者。', story.playerCharacter?.currentState ?? '刚刚进入当前场景。', story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, 'awaiting-player-input', JSON.stringify(story.lore ?? []), story.id, options.mode ?? 'director', (options.autoPublish ?? story.gameplay?.[options.mode ?? 'director']?.autoPublish === true) ? 1 : 0, story.gameplay?.chat?.speechMode ?? 'manual')
       const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       for (const role of story.roles) { insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify({}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {})); this.seedNpcMemories(roomId, role.id, role.memories) }
       if (story.opening) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(`opening-${roomId}`, roomId, 'opening', story.opening, story.sceneTime ?? null, story.sceneLocation ?? null, new Date().toISOString())
-    })
-    return roomId
   }
 
   exportRoom(roomId: string): Record<string, unknown> {
@@ -611,22 +617,30 @@ export class Store implements MemoryStore {
     })
   }
 
-  restartRoom(roomId: string, story: StoryPackage, options: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean } = {}): void {    this.withTransaction(() => {
+  /** 重开剧本 = 彻底重新初始化该房间：先按 turns 清 decisions（该表无 room_id 列），再动态清空所有带 room_id 的关联表
+   *  （角色记忆、世界变更、事件、快照、工作流实例等一并重置），最后用与新建完全相同的 applyStoryPackage 写入剧本包。
+   *  表名运行时自 sqlite_master 枚举，以后新增表自动纳入清理，无需再维护逐个删除清单。 */
+  restartRoom(roomId: string, story: StoryPackage, options: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean } = {}): void {
+    this.withTransaction(() => {
       const room = this.db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId)
       if (!room) throw new Error('Room not found.')
       this.db.prepare('DELETE FROM decisions WHERE turn_id IN (SELECT id FROM turns WHERE room_id = ?)').run(roomId)
-      this.db.prepare('DELETE FROM turns WHERE room_id = ?').run(roomId)
-      this.db.prepare('DELETE FROM drafts WHERE room_id = ?').run(roomId)
-      this.db.prepare('DELETE FROM scenes WHERE room_id = ?').run(roomId)
-      this.db.prepare('DELETE FROM consultations WHERE room_id = ?').run(roomId)
-      this.db.prepare('DELETE FROM pending_mind_updates WHERE room_id = ?').run(roomId)
-      this.db.prepare('DELETE FROM reaction_previews WHERE room_id = ?').run(roomId)
-      this.db.prepare('DELETE FROM roles WHERE room_id = ?').run(roomId)
-      const insertRole = this.db.prepare('INSERT INTO roles (room_id, id, name, portrait_ref, current_state, presence, memory_timeline, goals, self_model, impressions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      for (const role of story.roles) { insertRole.run(roomId, role.id, role.name, role.portraitRef, role.currentState, role.presence, JSON.stringify({}), JSON.stringify(role.goals ?? []), role.selfModel, JSON.stringify(role.impressions ?? {})); this.seedNpcMemories(roomId, role.id, role.memories) }
-      if (story.opening) this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(`opening-${roomId}-${Date.now()}`, roomId, 'opening', story.opening, story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, new Date().toISOString())
-      this.db.prepare("UPDATE rooms SET title = ?, player_name = ?, player_persona = ?, player_state = ?, scene_time = ?, scene_location = ?, phase = 'awaiting-player-input', revision = revision + 1, player_contribution = NULL, last_error = NULL, lore = ?, story_id = ?, mode = ?, auto_publish = ?, speech = NULL, pending_world_change = NULL, pending_narration = NULL, chat_speech_mode = ? WHERE id = ?").run(story.title, story.playerCharacter?.name ?? '玩家', story.playerCharacter?.persona ?? '由玩家自由定义的参与者。', story.playerCharacter?.currentState ?? '刚刚进入当前场景。', story.sceneTime ?? '第一日黄昏', story.sceneLocation ?? null, JSON.stringify(story.lore ?? []), story.id, options.mode ?? 'director', (options.autoPublish ?? story.gameplay?.[options.mode ?? 'director']?.autoPublish === true) ? 1 : 0, story.gameplay?.chat?.speechMode ?? 'manual', roomId)
+      for (const table of this.roomScopedTables()) {
+        this.db.prepare(`DELETE FROM "${table}" WHERE room_id = ?`).run(roomId)
+      }
+      this.applyStoryPackage(roomId, story, options)
     })
+  }
+
+  /** 所有以 room_id 作关联列的表名（运行时枚举 sqlite_master + PRAGMA table_info，新增表自动纳入清理范围）。 */
+  private roomScopedTables(): string[] {
+    const tables = this.db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).all() as Array<{ name: string }>
+    const scoped: string[] = []
+    for (const { name } of tables) {
+      const cols = this.db.prepare(`PRAGMA table_info("${name}")`).all() as Array<{ name: string }>
+      if (cols.some(col => col.name === 'room_id')) scoped.push(name)
+    }
+    return scoped
   }
 
   // ── 可插拔记忆：公共方法统一委托 memoryStore（默认 = 自身 SQLite 实现）──
