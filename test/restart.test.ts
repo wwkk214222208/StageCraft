@@ -35,6 +35,28 @@ test('restart atomically clears the current room and applies the selected story 
   assert.equal(room.consultations.length, 0)
 })
 
+test('restart completely resets room state: memories, world changes and events are cleared like a new room', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-restart-reset-'))
+  const store = new Store(join(root, 'app.sqlite'))
+  const roomId = store.seed()
+  // 种下运行痕迹：角色记忆 + 世界变更记录
+  store.insertNpcMemories(roomId, 'aria', [{ id: 'manual-mem-1', text: '重开前留下的记忆。', occurredAt: '过去', source: 'manual' }])
+  const beforeMemories = store.listNpcMemories(roomId, 'aria')
+  assert.ok(beforeMemories.some(memory => memory.text === '重开前留下的记忆。'), '前置条件：记忆已写入')
+  store.restartRoom(roomId, loadStoryPackage(fixtures, 'royal-festival'))
+  const room = store.getRoom(roomId)!
+  assert.equal(room.phase, 'awaiting-player-input')
+  // 角色记忆被重置：不再包含运行期残留，只保留剧本声明的初始记忆
+  const afterMemories = store.listNpcMemories(roomId, 'aria')
+  assert.ok(!afterMemories.some(memory => memory.text === '重开前留下的记忆。'), '运行期记忆应被清空')
+  // 世界变更记录一并清空
+  assert.equal(store.listWorldChanges(roomId).length, 0)
+  // 场景只剩开场
+  assert.equal(room.scenes.length, 1)
+  assert.equal(room.scenes[0].text, loadStoryPackage(fixtures, 'royal-festival').opening)
+  assert.equal(room.draft, undefined)
+})
+
 test('restart is allowed while the room is awaiting approval and clears the draft', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-restart-busy-'))
   const store = new Store(join(root, 'app.sqlite'))
