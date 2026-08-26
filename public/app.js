@@ -501,13 +501,19 @@ function updateThinkingOptions(selector, model, selected) {
 
 // ── 移动端呼出式抽屉：窄屏下左右栏滑出、点遮罩关闭（桌面端按钮隐藏，逻辑始终注册无副作用）──
 const drawerBackdrop = document.getElementById('drawer-backdrop')
+const rolesDrawer = document.getElementById('roles')
+const workbenchDrawer = document.getElementById('workbench')
+const rolesToggle = document.getElementById('mobile-roles-toggle')
+const workbenchToggle = document.getElementById('mobile-workbench-toggle')
 const setDrawer = (which, open) => {
-  document.getElementById('roles').classList.toggle('drawer-open', which === 'roles' && open)
-  document.getElementById('workbench').classList.toggle('drawer-open', which === 'workbench' && open)
+  rolesDrawer.classList.toggle('drawer-open', which === 'roles' && open)
+  workbenchDrawer.classList.toggle('drawer-open', which === 'workbench' && open)
+  if (rolesToggle) rolesToggle.classList.toggle('drawer-open', which === 'roles' && open)
+  if (workbenchToggle) workbenchToggle.classList.toggle('drawer-open', which === 'workbench' && open)
   if (drawerBackdrop) drawerBackdrop.hidden = !open
 }
-document.getElementById('mobile-roles-toggle').onclick = () => setDrawer('roles', !document.getElementById('roles').classList.contains('drawer-open'))
-document.getElementById('mobile-workbench-toggle').onclick = () => setDrawer('workbench', !document.getElementById('workbench').classList.contains('drawer-open'))
+document.getElementById('mobile-roles-toggle').onclick = () => setDrawer('roles', !rolesDrawer.classList.contains('drawer-open'))
+document.getElementById('mobile-workbench-toggle').onclick = () => setDrawer('workbench', !workbenchDrawer.classList.contains('drawer-open'))
 if (drawerBackdrop) drawerBackdrop.onclick = () => setDrawer('roles', false)
 
 $('#connection-settings').onclick = () => $('#connection-modal').showModal()
