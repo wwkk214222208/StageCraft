@@ -898,12 +898,15 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/story-assets/')) return asset(response, url.pathname)
       if (url.pathname === '/' || url.pathname === '/index.html') return serveIndex(response)
       // 浏览器直连配对页：手机浏览器打开 http://<IP>:<端口>/ 未配对时跳转至此。
-      if (url.pathname === '/pair') return staticFile(response, 'pair.html', 'text/html; charset=utf-8')
-      if (url.pathname === '/app.js') return staticFile(response, 'app.js', 'text/javascript; charset=utf-8')
-      if (url.pathname === '/core-client.js') return staticFile(response, 'core-client.js', 'text/javascript; charset=utf-8')
-      if (url.pathname === '/core-interactions.js') return staticFile(response, 'core-interactions.js', 'text/javascript; charset=utf-8')
-      if (url.pathname === '/core-interactions.css') return staticFile(response, 'core-interactions.css', 'text/css; charset=utf-8')
-      if (url.pathname === '/style.css') return staticFile(response, 'style.css', 'text/css; charset=utf-8')
+      // 静态资源缓存策略：HTML 一律 no-store（每次导航强制拿最新，修复手机缓存旧页面看不到新功能）；
+      // 带内容哈希 ?v= 引用的资源 immutable 长缓存（内容一变 URL 即变，浏览器必然重新下载）；
+      // 无版本号引用的 JS（core-*.js 由 app.js import）no-cache 强制重新验证。
+      if (url.pathname === '/pair') return staticFile(response, 'pair.html', 'text/html; charset=utf-8', 'no-store')
+      if (url.pathname === '/app.js') return staticFile(response, 'app.js', 'text/javascript; charset=utf-8', 'public, max-age=31536000, immutable')
+      if (url.pathname === '/core-client.js') return staticFile(response, 'core-client.js', 'text/javascript; charset=utf-8', 'no-cache')
+      if (url.pathname === '/core-interactions.js') return staticFile(response, 'core-interactions.js', 'text/javascript; charset=utf-8', 'no-cache')
+      if (url.pathname === '/core-interactions.css') return staticFile(response, 'core-interactions.css', 'text/css; charset=utf-8', 'public, max-age=31536000, immutable')
+      if (url.pathname === '/style.css') return staticFile(response, 'style.css', 'text/css; charset=utf-8', 'public, max-age=31536000, immutable')
       json(response, 404, { error: 'Not found' })
     } catch (error) {
       json(response, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -1030,14 +1033,16 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       .replaceAll('__STYLE_HASH__', assetHash('style.css'))
       .replaceAll('__CORE_CSS_HASH__', assetHash('core-interactions.css'))
       .replaceAll('__MODE_FLAG__', isStandalone ? 'true' : 'false')
-    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
     response.end(html)
   }
 
-  function staticFile(response: ServerResponse, name: string, type: string): void {
+  function staticFile(response: ServerResponse, name: string, type: string, cacheControl?: string): void {
     const path = join(publicRoot, name)
     if (!existsSync(path)) { response.writeHead(404); response.end(); return }
-    response.writeHead(200, { 'Content-Type': type })
+    const headers: Record<string, string> = { 'Content-Type': type }
+    if (cacheControl) headers['Cache-Control'] = cacheControl
+    response.writeHead(200, headers)
     createReadStream(path).pipe(response)
   }
 
@@ -1069,7 +1074,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   }
 
   function json(response: ServerResponse, status: number, value: unknown): void {
-    response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
+    response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
     response.end(JSON.stringify(value))
   }
 
