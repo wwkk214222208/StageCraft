@@ -367,6 +367,162 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 .creator-workbench-story-pick{display:inline-flex;align-items:center;gap:6px;color:#a9b8dd;font-size:12px;white-space:nowrap;flex-shrink:0}
 .creator-workbench-story-pick select{max-width:320px;min-width:240px;padding:4px 6px;border:1px solid #3a4a6e;border-radius:3px;background:#16203a;color:#dce7ff}
 @media (max-width:680px){.creator-workbench-story-pick{display:none}}
+/* Android / narrow screens: keep the story editor usable above the keyboard. */
+@media (max-width:680px){
+  #story-edit-modal{inset:0;width:100%;height:100dvh;min-height:100svh;max-height:none;margin:0;border:0;border-radius:0}
+  .creator-workbench-form{height:100%;min-height:0;padding-bottom:env(safe-area-inset-bottom)}
+  .creator-workbench-header{position:relative;flex:0 0 auto;min-height:0;padding:calc(8px + env(safe-area-inset-top)) 48px 8px 12px;gap:6px}
+  .creator-workbench-header>div:first-child{min-width:0;flex:1 1 auto}
+  .creator-workbench-header .eyebrow{display:none}
+  .creator-workbench-header h3{font-size:15px;line-height:1.25;overflow:hidden;text-overflow:ellipsis}
+  .creator-workbench-actions{flex:1 0 100%;min-width:0;display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px;margin:0;padding:2px 0 0;overflow:visible}
+  .creator-workbench-actions button{flex:0 0 auto;min-height:36px;padding:7px 9px;font-size:12px;white-space:nowrap}
+  #story-edit-modal #story-edit-close{position:absolute;top:calc(8px + env(safe-area-inset-top));right:10px;z-index:3;min-width:34px;width:34px;height:34px;padding:0;font-size:0}
+  #story-edit-modal #story-edit-close::after{content:'×';font:22px/30px Arial,sans-serif}
+  .creator-workbench-grid{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
+  .creator-tree{flex:0 0 auto;min-height:0;padding:9px 12px 8px;border:0;border-bottom:1px solid #34415b}
+  .creator-tree h4,.creator-tree .story-edit-id{display:none}
+  .creator-tree nav{display:flex;gap:6px;margin:0 0 8px;overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
+  .creator-tree nav::-webkit-scrollbar{display:none}
+  .tree-item{flex:0 0 auto;width:auto;min-height:40px;min-width:0;padding:8px 12px;white-space:nowrap}
+  .creator-tree-footer{display:flex;gap:7px;margin:0;overflow-x:auto;scrollbar-width:none}
+  .creator-tree-footer::-webkit-scrollbar{display:none}
+  .creator-tree-footer .small-btn{flex:0 0 auto;min-height:38px;white-space:nowrap}
+  .creator-editor{flex:1 1 auto;min-height:160px;overflow-y:scroll;overflow-x:hidden;padding:12px 26px 12px 12px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-gutter:stable}
+  .creator-section{padding:12px;margin-bottom:10px;border-radius:5px}
+  .creator-section-heading{margin-bottom:10px}
+  .creator-field-grid{grid-template-columns:1fr}
+  #story-edit-modal input,#story-edit-modal select,#story-edit-modal textarea{font-size:16px}
+  #story-edit-modal textarea{line-height:1.55}
+  #story-edit-modal .story-json textarea{font-size:13px}
+  .creator-preview{flex:0 0 min(32vh,260px);min-height:150px;max-height:none;padding:12px 26px 12px 12px;border:0;border-top:1px solid #34415b;overflow-y:scroll;-webkit-overflow-scrolling:touch;scrollbar-gutter:stable}
+}
+
+/* The DSH story assistant is intentionally unavailable on Android. */
+html.android-device #story-edit-modal .creator-preview{display:none}
+html.android-device #story-edit-modal .creator-editor{min-height:0}
+@media (max-width:680px){
+  html.android-device #creator-story-tree .tree-item{font-size:0;white-space:nowrap}
+  html.android-device #creator-story-tree .tree-item::after{font-size:13px;line-height:1;content:'剧本包'}
+  html.android-device #creator-story-tree .tree-item[data-workbench-target="opening"]::after{content:'开场'}
+  html.android-device #creator-story-tree .tree-item[data-workbench-target="scenes"]::after{content:'场景与角色'}
+  html.android-device #creator-story-tree .tree-item[data-workbench-target="lore"]::after{content:'世界书'}
+}
+
+/* Android settings dialogs: one predictable scroll area and always-visible actions. */
+@media (max-width:680px){
+  #role-modal,#player-modal,#prompt-preset-modal{
+    inset:0;
+    width:100%;
+    max-width:none;
+    height:100dvh;
+    min-height:100svh;
+    max-height:none;
+    margin:0;
+    border:0;
+    border-radius:0;
+  }
+  #role-modal form,#player-modal form{height:100%;min-height:0;padding-bottom:env(safe-area-inset-bottom)}
+  #role-modal header,#player-modal header{
+    position:relative;
+    min-height:48px;
+    padding:calc(7px + env(safe-area-inset-top)) 52px 7px 12px;
+  }
+  #role-modal header h3,#player-modal header h3{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #role-modal header button,#player-modal header button{
+    position:absolute;
+    top:calc(7px + env(safe-area-inset-top));
+    right:10px;
+    width:36px;
+    height:34px;
+    padding:0;
+    font-size:0;
+  }
+  #role-modal header button::after,#player-modal header button::after{content:'×';font:22px/30px Arial,sans-serif}
+  #role-modal .inspector-body,#player-modal .inspector-body{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:hidden}
+  .inspector-portrait-panel{
+    flex:0 0 auto;
+    display:grid;
+    grid-template-columns:72px minmax(0,1fr);
+    grid-template-rows:auto auto;
+    align-items:center;
+    gap:6px 10px;
+    min-height:0;
+    padding:8px 12px;
+    border:0;
+    border-bottom:1px solid #3a4a6e;
+    overflow:hidden;
+  }
+  .inspector-portrait-panel h4{grid-column:1/-1;font-size:13px}
+  #inspector-avatar-preview,#player-avatar-preview{grid-column:1;width:64px;height:64px;border-radius:5px}
+  .inspector-portrait-panel .avatar-upload-buttons{grid-column:2;display:flex;flex-direction:row;gap:6px;width:100%}
+  .avatar-upload-buttons button{min-height:36px;padding:7px 8px;font-size:12px}
+  .inspector-portrait-panel .hint{display:none}
+  #role-modal .inspector-fields,#player-modal .inspector-fields{
+    flex:1 1 auto;
+    min-height:0;
+    overflow-y:scroll;
+    overflow-x:hidden;
+    padding:10px 26px 12px 12px;
+    scrollbar-gutter:stable;
+    -webkit-overflow-scrolling:touch;
+  }
+  #role-modal .inspector-tabs{min-height:40px;overflow-x:auto;scrollbar-width:none}
+  #role-modal .inspector-tabs::-webkit-scrollbar{display:none}
+  #role-modal .inspector-tab{min-height:38px;padding:8px 12px;font-size:13px}
+  #role-modal .inspector-row,#role-modal .inspector-panel[data-inspector-panel="model"] .inspector-row{grid-template-columns:1fr;gap:8px}
+  #role-modal .inspector-two-col textarea,#role-modal .inspector-fields textarea{min-height:130px}
+  #role-modal .inspector-panel[data-inspector-panel="memory"]{overflow:visible}
+  #role-modal .memory-list-rows{overflow:visible}
+  #role-modal .memory-expanded-table{grid-template-columns:1fr;gap:8px}
+  #role-modal .memory-expanded-table textarea{min-height:180px}
+  #role-modal .role-modal-footer,#player-modal .role-modal-footer{padding:9px 12px;min-height:54px}
+  #role-modal .role-modal-footer button,#player-modal .role-modal-footer button{min-height:38px}
+
+  #player-modal #player-persona,
+  #role-modal #inspector-self-model{min-height:390px;flex:0 0 390px}
+
+  #prompt-preset-modal{overflow:hidden}
+  #prompt-preset-modal .prompt-preset-workspace,
+  #prompt-preset-modal .prompt-preset-workspace.compact{
+    display:flex;
+    flex-direction:column;
+    grid-template-columns:none;
+    grid-template-rows:none;
+    height:100%;
+    min-height:0;
+    overflow:hidden;
+  }
+  #prompt-preset-modal .prompt-preset-manager{
+    flex:0 0 auto;
+    max-height:30dvh;
+    min-height:0;
+    padding:10px 26px 10px 12px;
+    border:0;
+    border-bottom:1px solid #34415b;
+    overflow-y:scroll;
+    scrollbar-gutter:stable;
+  }
+  #prompt-preset-modal .prompt-preset-manager header{height:34px;padding:0 0 6px}
+  #prompt-preset-modal .prompt-preset-manager h3,
+  #prompt-preset-modal .prompt-preset-editor h3{font-size:15px}
+  #prompt-preset-modal .prompt-manager-actions{gap:6px}
+  #prompt-preset-modal .prompt-manager-actions button{flex:1 1 auto;min-height:36px;padding:7px 8px;font-size:12px}
+  #prompt-preset-modal .prompt-preset-editor{flex:1 1 auto;min-height:0;padding:10px 26px 12px 12px;overflow:hidden;scrollbar-gutter:stable}
+  #prompt-preset-modal .prompt-preset-editor>form{overflow:hidden;min-height:0}
+  #prompt-preset-modal .prompt-preset-nodes{overflow-y:scroll;padding-right:4px;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch}
+  #prompt-preset-modal .prompt-preset-actions{padding-bottom:env(safe-area-inset-bottom)}
+  html.android-device #prompt-preset-modal .prompt-preset-assistant{display:none}
+}
+
+#story-edit-modal .creator-tree,
+#story-edit-modal .creator-editor,
+#story-edit-modal .creator-preview,
+#story-edit-modal .creator-session-messages,
+#story-edit-modal .creator-session-list{
+  scrollbar-gutter:stable;
+}
+
 #prompt-preset-modal{display:none;width:min(1280px,94vw);height:min(88vh,860px);max-width:94vw;max-height:88vh;margin:auto;padding:0;border:1px solid #48608d;border-radius:8px;background:#182136;color:#e4edfd;overflow:hidden;box-shadow:0 18px 70px #000b}
 #prompt-preset-modal[open]{display:block}
 #prompt-preset-modal .prompt-preset-close{position:absolute;top:10px;right:10px;z-index:5;width:30px;height:30px;padding:0;border:1px solid #53688f;border-radius:50%;background:#202d46;color:#dce7ff;font-size:20px;line-height:26px}

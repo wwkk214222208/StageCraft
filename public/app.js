@@ -4,6 +4,7 @@ import { CoreInteractionPanel } from './core-interactions.js'
 const coreClient = new CoreClient()
 const coreInteractionPanel = new CoreInteractionPanel({ client: coreClient })
 window.stagecraftCore = coreClient
+document.documentElement.classList.toggle('android-device', /Android/i.test(navigator.userAgent))
 
 // 独立启动（无 DSH 宿主）时关闭依赖 DSH 会话的组件：剧本助手与预设助手。
 const standaloneMode = globalThis.__STAGECRAFT_STANDALONE__ === true
@@ -1239,7 +1240,8 @@ document.addEventListener('click', event => {
   if (target) {
     document.querySelectorAll('#creator-story-tree .tree-item').forEach(item => item.classList.toggle('active', item === target))
     const section = document.querySelector(`#creator-section-${target.dataset.workbenchTarget}`)
-    section?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    const editor = document.querySelector('.creator-editor')
+    if (section && editor) editor.scrollTo({ top: Math.max(0, section.offsetTop - 12), behavior: 'smooth' })
   }
   if (event.target.closest?.('#creator-import-card')) { $('#st-import-open').click() }
 })
