@@ -469,4 +469,6 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
   #roles.drawer-open,#workbench.drawer-open{transform:translateX(0)}
   .drawer-backdrop{display:block;position:fixed;inset:0;background:#0009;z-index:90}
   .drawer-backdrop[hidden]{display:none}
+  /* 手机上待审批卡片里的思维链折叠区压矮，避免撑满整屏 */
+  .speech-approval .thinking-block pre{max-height:110px}
 }
