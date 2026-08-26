@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { RemoteAccessPolicy } from '../src/remote-access.ts'
+import { RemoteAccessPolicy, RemoteAccessService } from '../src/remote-access.ts'
 
 function deterministicRandom() {
   let seed = 0
@@ -57,4 +57,16 @@ test('pairing and session collisions fail closed instead of replacing credential
   assert.equal(collidingTokens.exchangePairingCode(firstCode.code, 'first').ok, true)
   const secondCode = collidingTokens.createPairingCode()
   assert.throws(() => collidingTokens.exchangePairingCode(secondCode.code, 'second'), /unique remote session/)
+})
+
+test('sessionToken prefers Bearer and falls back to the remote session cookie', async () => {
+  const service = new RemoteAccessService({ enabled: true })
+  const request = (headers: Record<string, string | undefined>) => ({ headers }) as any
+  assert.equal(service.sessionToken(request({ authorization: 'Bearer ABC-123', cookie: 'stagecraft_remote=COOKIE-VALUE' })), 'ABC-123')
+  assert.equal(service.sessionToken(request({ authorization: 'bearer xyz' })), 'xyz')
+  assert.equal(service.sessionToken(request({ cookie: 'other=1; stagecraft_remote= COOKIE-VALUE ; path=/' })), 'COOKIE-VALUE')
+  assert.equal(service.sessionToken(request({ cookie: 'stagecraft_remote=' })), undefined)
+  assert.equal(service.sessionToken(request({ cookie: 'stagecraft_remote; other=1' })), undefined)
+  assert.equal(service.sessionToken(request({ cookie: 'other=1' })), undefined)
+  assert.equal(service.sessionToken(request({})), undefined)
 })

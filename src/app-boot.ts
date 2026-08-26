@@ -30,7 +30,7 @@ import { StageCraftSolutionPlugin } from './core/solutions.ts'
 import { StoreCoreStateRepository } from './core/store-state-repository.ts'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { coreRuntimeCordisPlugin, createStageCraftService, humanCordisPlugin, llmCordisPlugin, solutionCordisPlugin, stageCraftServicePlugin, stateRepositoryCordisPlugin } from './core/cordis-plugins.ts'
-import { RemoteAccessService, isLoopbackAddress, isLoopbackHost, type RemoteAccessOptions } from './remote-access.ts'
+import { REMOTE_SESSION_COOKIE, RemoteAccessService, isLoopbackAddress, isLoopbackHost, type RemoteAccessOptions } from './remote-access.ts'
 import { DshStorySessionService } from './dsh-story-session.ts'
 
 /** 把 SillyTavern 预设 JSON 转成 StageCraft 预设（本地确定性转换，不调用模型）。 */
@@ -387,12 +387,12 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       const protectedPath = ['/api', '/assets', '/custom', '/story-assets'].some(prefix => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
       const requiresAuthorization = protectedPath && (remoteAccess.authenticateLoopback || !isLoopbackAddress(request.socket.remoteAddress))
       if (requiresAuthorization && !remoteAccess.authorizeRequest(request)) return json(response, 401, { error: 'Unauthorized' })
-      // 会话吊销：带 Bearer token = 该会话自注销；本机（loopback）无 token 调用 = 清空所有已配对会话。
+      // 会话吊销：带 token（Bearer 或远程会话 Cookie）= 该会话自注销；本机（loopback）无 token 调用 = 清空所有已配对会话。
       if (url.pathname === '/api/remote/revoke' && request.method === 'POST') {
-        const header = request.headers.authorization
-        const match = typeof header === 'string' ? header.match(/^Bearer\s+([^\s]+)$/i) : undefined
-        if (match) remoteAccess.revokeSession(match[1])
+        const token = remoteAccess.sessionToken(request)
+        if (token) remoteAccess.revokeSession(token)
         else remoteAccess.revokeAllSessions()
+        response.setHeader('Set-Cookie', `${REMOTE_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`)
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/room') return json(response, 200, publicRoomSnapshot(runtime.get(url.searchParams.get('id') ?? roomId)))
@@ -897,6 +897,8 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       }
       if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/story-assets/')) return asset(response, url.pathname)
       if (url.pathname === '/' || url.pathname === '/index.html') return serveIndex(response)
+      // 浏览器直连配对页：手机浏览器打开 http://<IP>:<端口>/ 未配对时跳转至此。
+      if (url.pathname === '/pair') return staticFile(response, 'pair.html', 'text/html; charset=utf-8')
       if (url.pathname === '/app.js') return staticFile(response, 'app.js', 'text/javascript; charset=utf-8')
       if (url.pathname === '/core-client.js') return staticFile(response, 'core-client.js', 'text/javascript; charset=utf-8')
       if (url.pathname === '/core-interactions.js') return staticFile(response, 'core-interactions.js', 'text/javascript; charset=utf-8')

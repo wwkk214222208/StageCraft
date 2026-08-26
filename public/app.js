@@ -1607,6 +1607,7 @@ const debugEvents = new EventSource('/api/debug-events'); debugEvents.addEventLi
 async function bootApp() {
   try {
     const roomResponse = await fetch('/api/room')
+    if (roomResponse.status === 401 && !/^(127\.0\.0\.1|localhost|::1)$/i.test(location.hostname)) { location.replace('/pair'); return }
     if (!roomResponse.ok) throw new Error(`Room request failed: ${roomResponse.status}`)
     render(await roomResponse.json())
   } catch (error) {

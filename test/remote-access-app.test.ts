@@ -97,6 +97,46 @@ test('remote sessions can be revoked (self-revoke and operator clear-all)', asyn
   }
 })
 
+test('browser-direct cookie session: pair issues HttpOnly cookie, cookie authorizes, revoke clears it', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-remote-access-'))
+  const app = await startTavern({
+    root: repositoryRoot, dataDir: join(root, 'data'), saveRoot: join(root, 'save'), port: 0, host: '127.0.0.1',
+    remoteAccess: { enabled: true, authenticateLoopback: true },
+  })
+  const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`
+  try {
+    // 未配对时浏览器先拿到配对页（app.js 对非本机 401 会跳转到这里）
+    const pairPage = await fetch(`${base}/pair`)
+    assert.equal(pairPage.status, 200)
+    assert.match(pairPage.headers.get('content-type') ?? '', /text\/html/)
+    assert.match(await pairPage.text(), /配对|remote\/pair/)
+    // 未授权 /api 仍为 401（前端据此跳转配对页）
+    assert.equal((await fetch(`${base}/api/room`)).status, 401)
+    const codeResponse = await fetch(`${base}/api/remote/pairing-code`, { method: 'POST' })
+    assert.equal(codeResponse.status, 200)
+    const { code } = await codeResponse.json() as { code: string }
+    const exchange = await fetch(`${base}/api/remote/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }) })
+    assert.equal(exchange.status, 200)
+    const { token } = await exchange.json() as { token: string }
+    // 配对成功后下发 HttpOnly 会话 Cookie（浏览器对同一源的所有请求自动携带）
+    const expectedMaxAge = Math.ceil(app.remoteAccess.policy.sessionTtlMs / 1_000)
+    assert.equal(exchange.headers.get('set-cookie'), `stagecraft_remote=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${expectedMaxAge}`)
+    // Cookie 令牌可直接访问受保护资源（/api 与 /assets）
+    const cookieHeader = `stagecraft_remote=${token}`
+    assert.equal((await fetch(`${base}/api/room`, { headers: { cookie: cookieHeader } })).status, 200)
+    assert.equal((await fetch(`${base}/assets/noel.svg`, { headers: { cookie: cookieHeader } })).status, 200)
+    // 自注销：仅带 Cookie 调用 revoke → 下发清除 Cookie 且令牌失效
+    const revokeSelf = await fetch(`${base}/api/remote/revoke`, { method: 'POST', headers: { cookie: cookieHeader } })
+    assert.equal(revokeSelf.status, 200)
+    assert.equal(revokeSelf.headers.get('set-cookie'), 'stagecraft_remote=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0')
+    assert.equal((await fetch(`${base}/api/room`, { headers: { cookie: cookieHeader } })).status, 401)
+    assert.equal(app.remoteAccess.policy.authorize(token), false)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('non-loopback bearer cannot create an operator pairing code', async () => {
   const service = new (await import('../src/remote-access.ts')).RemoteAccessService({ enabled: true, randomBytes: size => new Uint8Array(size).fill(3) })
   const pairing = service.createPairingCode()

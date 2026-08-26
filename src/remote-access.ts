@@ -34,6 +34,9 @@ type FailureState = { windowStartedAt: number; failures: number; blockedUntil: n
 
 const PAIRING_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
+/** 浏览器直连会话 Cookie：配对成功后下发，浏览器对同一源的所有请求（含图片/SSE/表单）自动携带。 */
+export const REMOTE_SESSION_COOKIE = 'stagecraft_remote'
+
 function hashSecret(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex')
 }
@@ -53,7 +56,7 @@ export class RemoteAccessPolicy {
   readonly enabled: boolean
   readonly authenticateLoopback: boolean
   private readonly pairingTtlMs: number
-  private readonly sessionTtlMs: number
+  private readonly sessionTtlMsValue: number
   private readonly maxPairingFailures: number
   private readonly failureWindowMs: number
   private readonly blockMs: number
@@ -67,7 +70,7 @@ export class RemoteAccessPolicy {
     this.enabled = options.enabled === true
     this.authenticateLoopback = options.authenticateLoopback === true
     this.pairingTtlMs = Math.max(1_000, options.pairingTtlMs ?? 5 * 60_000)
-    this.sessionTtlMs = Math.max(1_000, options.sessionTtlMs ?? 12 * 60 * 60_000)
+    this.sessionTtlMsValue = Math.max(1_000, options.sessionTtlMs ?? 12 * 60 * 60_000)
     this.maxPairingFailures = Math.max(1, options.maxPairingFailures ?? 5)
     this.failureWindowMs = Math.max(1_000, options.failureWindowMs ?? 60_000)
     this.blockMs = Math.max(1_000, options.blockMs ?? 60_000)
@@ -106,7 +109,7 @@ export class RemoteAccessPolicy {
       if (!this.sessions.has(hashSecret(candidate))) { token = candidate; break }
     }
     if (!token) throw new Error('Unable to generate a unique remote session.')
-    const expiresAt = now + this.sessionTtlMs
+    const expiresAt = now + this.sessionTtlMsValue
     this.sessions.set(hashSecret(token), { expiresAt })
     return { ok: true, session: { token, expiresAt } }
   }
@@ -125,6 +128,9 @@ export class RemoteAccessPolicy {
   revokeSession(token: string): boolean {
     return this.sessions.delete(hashSecret(token))
   }
+
+  /** 会话有效期（毫秒）；用于 Cookie Max-Age。 */
+  get sessionTtlMs(): number { return this.sessionTtlMsValue }
 
   /** 吊销全部会话（本机操作员应急 / 清除所有已配对手机）。 */
   revokeAllSessions(): number {
@@ -171,9 +177,23 @@ export class RemoteAccessService {
   revokeAllSessions(): number { return this.policy.revokeAllSessions() }
 
   authorizeRequest(request: IncomingMessage): boolean {
+    return this.policy.authorize(this.sessionToken(request))
+  }
+
+  /** 从请求中提取会话令牌：优先 Bearer，其次远程会话 Cookie（浏览器直连）。 */
+  sessionToken(request: IncomingMessage): string | undefined {
     const header = request.headers.authorization
-    const match = typeof header === 'string' ? header.match(/^Bearer\s+([^\s]+)$/i) : undefined
-    return this.policy.authorize(match?.[1])
+    const bearer = typeof header === 'string' ? header.match(/^Bearer\s+([^\s]+)$/i)?.[1] : undefined
+    if (bearer) return bearer
+    const cookie = request.headers.cookie
+    if (typeof cookie !== 'string' || !cookie) return undefined
+    for (const part of cookie.split(';')) {
+      const separator = part.indexOf('=')
+      if (separator <= 0) continue
+      const name = part.slice(0, separator).trim()
+      if (name === REMOTE_SESSION_COOKIE) return part.slice(separator + 1).trim() || undefined
+    }
+    return undefined
   }
 
   async handlePairing(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
@@ -203,7 +223,12 @@ export class RemoteAccessService {
     try { body = await this.readJson(request) } catch { this.send(response, 401, { error: 'Pairing failed.' }); return true }
     const clientKey = request.socket.remoteAddress ?? 'unknown'
     const result = this.policy.exchangePairingCode(String(body.code ?? ''), clientKey)
-    if (result.ok) this.send(response, 200, { token: result.session.token, expiresAt: result.session.expiresAt })
+    if (result.ok) {
+      // 浏览器直连：下发 HttpOnly 会话 Cookie，之后对 /api、/assets、/story-assets 的所有请求自动携带。
+      // SameSite=Lax：跨站子资源（如他人网页 <img>）不带 Cookie；POST/JSON 跨站更不携带。
+      response.setHeader('Set-Cookie', `${REMOTE_SESSION_COOKIE}=${result.session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.max(1, Math.ceil(this.policy.sessionTtlMs / 1_000))}`)
+      this.send(response, 200, { token: result.session.token, expiresAt: result.session.expiresAt })
+    }
     else if (result.status === 'limited') this.send(response, 429, { error: 'Pairing temporarily unavailable.' })
     else if (result.status === 'disabled') this.send(response, 403, { error: 'Remote access disabled.' })
     else this.send(response, 401, { error: 'Pairing failed.' })

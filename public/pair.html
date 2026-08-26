@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>配对 StageCraft</title>
+<style>
+  html,body{margin:0;padding:0;height:100%}
+  body{background:#161c2c;color:#e4edfd;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100%}
+  .card{background:#1b2133;border:1px solid #3a4a6e;border-radius:14px;padding:28px 24px;width:min(92vw,380px);box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  h1{font:600 20px Georgia,serif;color:#b7c8fe;margin:0 0 6px}
+  .sub{color:#8fa1c9;font-size:13px;margin:0 0 18px}
+  label{display:block;color:#d3e2ff;font-size:13px;margin:10px 0 4px}
+  input[type=text]{width:100%;box-sizing:border-box;background:#161c2c;color:#e4edfd;border:1px solid #3a4a6e;border-radius:6px;padding:9px 10px;font:15px/1.4 inherit;letter-spacing:2px;text-transform:uppercase}
+  input[type=text]:focus{outline:none;border-color:#5686fe}
+  input[readonly]{color:#8fa1c9;letter-spacing:0;font-size:13px}
+  button{width:100%;margin-top:16px;background:#2e4a86;color:#e4edfd;border:1px solid #5686fe;border-radius:6px;padding:10px;font:600 14px inherit;cursor:pointer}
+  button:hover{background:#3557a0}
+  button:disabled{opacity:.55;cursor:default}
+  #msg{margin-top:12px;font-size:13px;min-height:20px}
+  #msg.ok{color:#7fe0a1}
+  #msg.err{color:#ff9a9a}
+  .hint{color:#6f7fa6;font-size:12px;margin-top:10px}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>配对 StageCraft</h1>
+    <p class="sub">输入电脑上显示的四位配对码，即可免安装直连。</p>
+    <label for="server">电脑地址</label>
+    <input type="text" id="server" readonly>
+    <label for="code">配对码</label>
+    <input type="text" id="code" maxlength="8" autocomplete="off" inputmode="text" spellcheck="false" autofocus>
+    <button id="submit" type="button">连接</button>
+    <div id="msg"></div>
+    <p class="hint">配对码五分钟内有效，仅本机可用；配对成功后此浏览器将保持登录，可用「清除已配对会话」注销。</p>
+  </div>
+<script>
+(function () {
+  'use strict';
+  var origin = location.origin;
+  var serverInput = document.getElementById('server');
+  var codeInput = document.getElementById('code');
+  var submitBtn = document.getElementById('submit');
+  var msg = document.getElementById('msg');
+  serverInput.value = origin;
+
+  function state(text, ok) {
+    msg.textContent = text || '';
+    msg.className = ok ? 'ok' : (text ? 'err' : '');
+  }
+
+  function send() {
+    var code = codeInput.value.trim().toUpperCase();
+    if (!code) { state('请输入配对码'); codeInput.focus(); return; }
+    submitBtn.disabled = true;
+    state('正在配对…');
+    fetch(origin + '/api/remote/pair', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: code })
+    }).then(function (res) {
+      if (res.ok) {
+        submitBtn.disabled = false;
+        state('配对成功，正在进入…', true);
+        location.href = origin + '/';
+        return;
+      }
+      submitBtn.disabled = false;
+      if (res.status === 429) return state('尝试次数过多，请稍等片刻再试。');
+      if (res.status === 403) return state('配对已关闭或已失效。');
+      state('配对码错误或已过期，请重新输入。');
+    }).catch(function () {
+      submitBtn.disabled = false;
+      state('无法连接电脑，请确认手机与电脑在同一局域网。');
+    });
+  }
+
+  submitBtn.addEventListener('click', send);
+  codeInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); send(); }
+  });
+})();
+</script>
+</body>
+</html>
