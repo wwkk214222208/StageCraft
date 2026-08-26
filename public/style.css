@@ -476,6 +476,11 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
   body.approving footer{transform:translateY(110%);opacity:0;pointer-events:none}
   body.approving #roles,body.approving #workbench{bottom:12px}
   footer{transition:transform .22s ease,opacity .22s ease}
+  /* 手机：对话气泡改为头像在上、正文独占整行，避免头像挤压文本框（只作用于 #scenes，审批卡片不受影响） */
+  #scenes .chat-msg{flex-direction:column;align-items:stretch;gap:6px;margin:8px 0}
+  #scenes .chat-msg .avatar{width:32px;height:32px;border-width:1px}
+  #scenes .chat-msg.me .avatar{align-self:flex-end}
+  #scenes .bubble{max-width:100%}
 }
 #turn-display.chat-mode{margin-top:0;padding:0;border:0;background:none;border-radius:0}
 /* ── 群聊回复：收到首字前中央短暂提示「xx 正在回复…」；收取失败以导演风格消息卡片插在对话流末尾（见 .reply-failed-msg） ── */
