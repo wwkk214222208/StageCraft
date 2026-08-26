@@ -455,10 +455,14 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 .mobile-toggle{display:none}
 .drawer-backdrop{display:none}
 @media (max-width:900px){
-  #mobile-roles-toggle,#mobile-workbench-toggle{display:inline-block;position:fixed;top:50%;transform:translateY(-50%);z-index:120;width:12px;height:24px;padding:0;border:0;background:rgba(103,158,254,.4);box-shadow:0 1px 6px #000a;transition:background .2s}
-  #mobile-roles-toggle{left:0;border-radius:0 12px 12px 0}
-  #mobile-workbench-toggle{right:0;border-radius:12px 0 0 12px}
-  #mobile-roles-toggle.drawer-open,#mobile-workbench-toggle.drawer-open{background:rgba(103,158,254,.75)}
+  #mobile-roles-toggle,#mobile-workbench-toggle{display:inline-block;position:fixed;top:calc(50% - 22px);z-index:120;width:28px;height:44px;padding:0;border:0;background:transparent;-webkit-tap-highlight-color:transparent}
+  /* 图形仍是原 12×24 半圆点，用 ::before 绘制；按钮本体 28×44 只负责扩大触碰面积 */
+  #mobile-roles-toggle::before,#mobile-workbench-toggle::before{content:'';position:absolute;top:10px;width:12px;height:24px;background:rgba(103,158,254,.4);box-shadow:0 1px 6px #000a;transition:background .2s}
+  #mobile-roles-toggle{left:0}
+  #mobile-roles-toggle::before{left:0;border-radius:0 12px 12px 0}
+  #mobile-workbench-toggle{right:0}
+  #mobile-workbench-toggle::before{right:0;border-radius:12px 0 0 12px}
+  #mobile-roles-toggle.drawer-open::before,#mobile-workbench-toggle.drawer-open::before{background:rgba(103,158,254,.75)}
   main{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr)}
   header{padding:0 14px}
   #story{padding:12px 14px}
