@@ -289,6 +289,8 @@ function render(next) {
   const states = { present: '在场', absent: '离场', unavailable: '离场' }
   $('#room-title').textContent = room.title
   const isChat = room.mode === 'chat'
+  // 群聊回复中：底部主输入框按钮转为「取消回复」，侧栏不再重复显示取消回合
+  const chatReplying = isChat && ['role-speaking', 'director-selecting-roles'].includes(room.phase)
   $('#mode-badge').textContent = `${isChat ? '群聊' : '导演'}${room.autoPublish ? ' · 沉浸' : ''}`
   $('#mode-badge').classList.toggle('chat', isChat)
   const readOnly = !!room.autoPublish // 沉浸模式：场景/角色状态/角色面板只读
@@ -407,6 +409,7 @@ function render(next) {
   // 群聊模式发言失败时，在「取消回合」旁显示「重试发言」；
   // 中断/恢复后 phase 可能已回 awaiting-player-input，只要存在失败的决策就保留重试入口
   $('#retry-speak').hidden = !(isChat && room.decisions.some(decision => decision.status === 'unavailable'))
+  $('#cancel-turn').hidden = chatReplying
   let consultHtml = (room.consultations ?? []).map(message => `<p class="consultation ${message.role}"><b>${message.role === 'player' ? room.playerCharacter.name : '导演'}</b>${message.thinking ? thinkingBlockHtml('导演思维链', message.thinking) : ''}${tokenNoteHtml('consult', message.usage)}${escape(message.text)}</p>`).join('')
   if (room.draft?.openQuestions?.length) consultHtml += `<p class="consultation director director-extra"><b>导演</b>❓ 待确认：${room.draft.openQuestions.map(escape).join('；')}</p>`
   $('#consultations').innerHTML = consultHtml
@@ -416,10 +419,43 @@ function render(next) {
   $('#consult-send').textContent = isChat ? (activeAction === 'director' ? '停止' : '建议') : activeAction === 'director' ? '停止' : room.draft ? '发送' : room.phase === 'awaiting-player-input' ? '设定' : '发送'
   $('#consult-text').disabled = isChat ? activeAction === 'director' : false
   $('#consult-text').placeholder = isChat ? '向导演建议世界变化：推进时间、换场景、人物进出场、引入新人物...' : room.draft ? '与导演讨论、指出问题，或要求调整当前草稿...' : '向导演说明你的设定，将作为后续起草参考...'
-  $('#submit').textContent = activeAction === 'turn' ? '停止' : skipArmed ? '空过？' : isChat ? '提交行动' : '提交'
-  $('#submit').disabled = activeAction !== 'turn' && room.phase !== 'awaiting-player-input'
+  $('#submit').textContent = chatReplying ? '取消回复' : activeAction === 'turn' ? '停止' : skipArmed ? '空过？' : isChat ? '提交行动' : '提交'
+  $('#submit').disabled = chatReplying ? false : (activeAction !== 'turn' && room.phase !== 'awaiting-player-input')
   if ($('#center-reconsider')) { $('#center-reconsider').disabled = activeAction === 'director'; $('#center-reconsider').textContent = activeAction === 'director' ? '思考中…' : '重考' }
+  renderReplyStatus()
 }
+
+// 群聊回复：中央状态提示（收到首字前「xx 正在回复…」/ 收取失败 + 重新尝试），以及「收到回复首字把主滚动条拉到最底」
+let lastReplyScrollSig = { scene: '', speech: '' }
+function renderReplyStatus() {
+  const panel = $('#reply-status')
+  if (!panel || !room) return
+  if (activeAction === 'speak') { panel.hidden = true; panel.innerHTML = '' }
+  else {
+    const isChat = room.mode === 'chat'
+    const failed = isChat ? (room.decisions ?? []).find(decision => decision.status === 'unavailable') : null
+    const pending = !failed && isChat && room.phase === 'role-speaking' ? (room.decisions ?? []).find(decision => decision.status === 'pending') : null
+    if (failed) {
+      const role = room.roles.find(item => item.id === failed.roleId)
+      panel.hidden = false
+      panel.className = 'reply-status failed'
+      panel.innerHTML = `<div class="reply-failed-card"><b>收取回复失败</b>${room.lastError ? `<p>${escape(room.lastError)}</p>` : `<p>${escape(role?.name ?? '角色')} 未能完成回复。</p>`}<button id="reply-retry">重新尝试</button></div>`
+    } else if (pending) {
+      const role = room.roles.find(item => item.id === pending.roleId)
+      panel.hidden = false
+      panel.className = 'reply-status typing'
+      panel.innerHTML = `<span>${escape(role?.name ?? '角色')} 正在回复<span class="reply-dots"></span></span>`
+    } else { panel.hidden = true; panel.innerHTML = '' }
+  }
+  // 「收到首字」：出现新正文（玩家回显/新场景/新台词卡片）时把主滚动条拉到最底
+  const visibleScenes = room.hidePlayerSpeech ? room.scenes.filter(scene => scene.speaker !== 'player') : room.scenes
+  const sceneSig = visibleScenes.length ? visibleScenes[visibleScenes.length - 1].id : ''
+  const speechSig = room.speech ? `${room.speech.turnId}:${room.speech.roleId}` : ''
+  const sigChanged = sceneSig !== lastReplyScrollSig.scene || (speechSig && speechSig !== lastReplyScrollSig.speech)
+  lastReplyScrollSig = { scene: sceneSig, speech: speechSig }
+  if (sigChanged) { const story = $('#story'); if (story) story.scrollTop = story.scrollHeight }
+}
+document.addEventListener('click', event => { if (event.target.id !== 'reply-retry') return; const panel = $('#reply-status'); if (panel) { panel.hidden = true; panel.innerHTML = '' }; $('#retry-speak').click() })
 
 async function loadPromptPresets() { const response = await fetch('/api/prompts/presets'); if (response.ok) { const data = await response.json(); promptPresets = data.presets ?? []; promptPresetState = data; promptModes = Array.isArray(data.modes) && data.modes.length ? data.modes : promptModes; promptTemplates = data.promptTemplates ?? promptTemplates; promptGameplayScenarios = data.gameplayScenarios ?? promptGameplayScenarios; promptGameplayScenarioForceThinkingOff = promptGameplayScenarios?.[promptPresetScope]?.forceThinkingOff === true; sidebarPromptPresetId = promptPresetState?.activeByScope?.[promptSideScope()] ?? sidebarPromptPresetId; if (room) render(room) } }
 function ensurePromptScenario(preset, scope = promptPresetScope) {
@@ -1373,6 +1409,8 @@ $('#story-delete').onclick = async event => {
 document.addEventListener('click', event => { const closer = event.target.closest('[data-dialog-close]'); if (closer) { const dialog = closer.closest('dialog'); if (dialog?.open) dialog.close() } })
 $('#submit').onclick = async () => {
   if (activeAction) { await api('/api/cancel-turn', {}); activeAction = null; skipArmed = false; clearThinkingStreams(); await refreshRoom(); return }
+  // 群聊回复中（未收到首字/正在回复）：主输入框按钮即「取消回复」
+  if (room.mode === 'chat' && ['role-speaking', 'director-selecting-roles'].includes(room.phase)) { clearThinkingStreams(); api('/api/cancel-turn', {}); return }
   const text = $('#contribution').value
   if (!text.trim()) {
     if (!skipArmed) { skipArmed = true; render(room); return }
