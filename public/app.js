@@ -27,10 +27,13 @@ if (standaloneMode) {
 // 侧栏私设条目开关：状态由服务端持久（/api/prompts/private-toggles），预设文件 enabled 仅作加载初始值；前端只负责渲染与提交请求。
 
 let room
+// 安全随机 ID：crypto.randomUUID 仅在安全上下文（HTTPS / localhost）可用；手机经局域网明文
+// HTTP 访问时为非安全上下文，调用会抛 TypeError 导致整个模块图求值失败（空壳页面、按钮全失效）。
+const genId = () => (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`)
 let creatorSession = null
-const creatorOwner = `creator-web:${crypto.randomUUID()}`
+const creatorOwner = `creator-web:${genId()}`
 let promptAssistantSession = null
-const promptAssistantOwner = `prompt-assistant-web:${crypto.randomUUID()}`
+const promptAssistantOwner = `prompt-assistant-web:${genId()}`
 let providers = []
 let storyCatalog = [] // /api/stories 最近一次列表（含 custom 标记：true=玩家自建，false=默认剧本）
 let focalRoleIds = new Set()
