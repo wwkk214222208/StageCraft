@@ -355,8 +355,12 @@ function render(next) {
     return `<article class="scene narration">${meta}<div class="scene-text">${escape(scene.text)}</div>${tokenNoteHtml('scene', scene.usage)}${stateActions}</article>`
   }).join('') : ''
   const decisionsDone = room.decisions.length > 0 && room.decisions.every(decision => decision.status !== 'pending')
+  // 审批期间：安卓端主输入框（底部输入区）缩回隐藏，批准完毕后重新弹出
+  document.body.classList.toggle('approving', ['awaiting-approval', 'world-change-approval'].includes(room.phase))
   const display = $('#turn-display')
   display.hidden = room.phase === 'awaiting-player-input'
+  // 群聊模式：审批卡片直接融入故事流，去掉外层「本回合」框
+  display.classList.toggle('chat-mode', isChat)
   if (!display.hidden) {
     const reactions = room.reactions ?? []
     const bubbles = reactions.map(reaction => { const role = room.roles.find(item => item.id === reaction.roleId); const locked = reconsideringRoleIds.has(reaction.roleId); const decision = room.decisions.find(item => item.roleId === reaction.roleId); const thinking = decision?.thinking; const identity = decision?.publicIdentity; return `<div class="reaction-wrap ${locked ? 'locked' : ''}">${thinkingBlockHtml(`${role?.name ?? reaction.roleId} 思维链`, thinking)}<button class="reaction-bubble" data-reaction="${escape(reaction.roleId)}" ${locked ? 'disabled' : ''}><b>${escape(role?.name ?? reaction.roleId)}</b>${escape(reaction.text)}${identity ? `<small class="reaction-identity">对外身份：${escape(identity)}</small>` : ''}${tokenNoteHtml('role', decision?.usage)}${locked ? '<small>重新考虑中</small>' : ''}</button><div class="reaction-feedback" id="feedback-${escape(reaction.roleId)}" hidden><textarea placeholder="写下希望 ${escape(role?.name ?? reaction.roleId)} 重新考虑的内容..."></textarea><button data-reconsider="${escape(reaction.roleId)}">发送</button></div></div>` }).join('')
@@ -374,13 +378,13 @@ function render(next) {
           const avatar = role?.portraitRef || '/assets/default.svg'
           const wc = room.pendingWorldChange
           const worldChangeHtml = wc ? `<div class="world-change-proposal"><h4 class="section-title">世界变更申请 <small>（角色随台词提出，批准发布时一并生效）</small></h4>${wc.reason ? `<p class="wc-reason">${escape(wc.reason)}</p>` : ''}${wcSceneHtml(wc, 'wc-time', 'wc-location')}${wcRolesHtml(wc)}${wcPresenceHtml(wc)}${wcStatesHtml(wc)}</div>` : ''
-          return `<div class="scene scene-msg speech-approval"><div class="chat-msg"><img class="avatar" src="${escape(avatar)}" onerror="this.onerror=null;this.src='/assets/default.svg'"><div class="bubble"><div class="bubble-name">${escape(name)} <small>台词待审批</small></div></div></div>${thinkingBlockHtml(`${name} 思维链`, room.speech.thinking)}${tokenNoteHtml('speech', room.speech.usage)}<textarea id="speech-text" class="speech-textarea">${escape(room.speech.text)}</textarea><textarea id="speech-reconsider-feedback" class="speech-feedback-textarea" placeholder="写下希望角色如何重新考虑这段台词…"></textarea>${worldChangeHtml}<div class="draft-actions"><button id="speech-reconsider">重考</button><button id="speech-cancel">放弃</button><button id="speech-approve">批准发布</button></div></div>`
+          return `<div class="scene scene-msg speech-approval"><div class="chat-msg"><img class="avatar" src="${escape(avatar)}" onerror="this.onerror=null;this.src='/assets/default.svg'"><div class="bubble"><div class="bubble-name">${escape(name)} <small>台词待审批</small></div></div></div>${thinkingBlockHtml(`${name} 思维链`, room.speech.thinking)}${tokenNoteHtml('speech', room.speech.usage)}<textarea id="speech-text" class="speech-textarea">${escape(room.speech.text)}</textarea>${worldChangeHtml}<textarea id="speech-reconsider-feedback" class="speech-feedback-textarea" placeholder="写下希望角色如何重新考虑这段台词…"></textarea><div class="draft-actions"><button id="speech-reconsider">重考</button><button id="speech-cancel">放弃</button><button id="speech-approve">批准发布</button></div></div>`
         })() : ''
     // 群聊：导演对话产出的世界变更申请（无台词）独立审批
     const worldChangeApproval = isChat && room.phase === 'world-change-approval' && !room.speech && room.pendingWorldChange
       ? `<div class="scene narration world-change-proposal world-change-approval-card"><h4 class="section-title">世界变更申请 <small>（导演建议，批准后生效）</small></h4>${room.pendingWorldChange.reason ? `<p class="wc-reason">${escape(room.pendingWorldChange.reason)}</p>` : ''}${wcSceneHtml(room.pendingWorldChange, 'wc-time', 'wc-location')}${wcRolesHtml(room.pendingWorldChange)}${wcPresenceHtml(room.pendingWorldChange)}${wcStatesHtml(room.pendingWorldChange)}${room.pendingNarration ? `<div class="wc-narration"><h5>将写下的叙述</h5><p>${escape(room.pendingNarration)}</p></div>` : ''}<div class="draft-actions"><button id="world-change-reject">拒绝</button><button id="world-change-approve">批准并生效</button></div></div>`
       : ''
-    const heading = isChat ? '<h2>本回合</h2>' : reactions.length ? '<h2>本回合</h2>' : '<h2>本回合 <small>等待角色回应</small></h2>'
+    const heading = isChat ? '' : reactions.length ? '<h2>本回合</h2>' : '<h2>本回合 <small>等待角色回应</small></h2>'
     const proceedBtn = room.phase === 'collecting-decisions' && decisionsDone ? '<div class="draft-actions"><button id="center-proceed-draft">拟定草稿</button></div>' : ''
     display.innerHTML = `${heading}<div class="reaction-list">${bubbles}</div>${proceedBtn}${speechApproval}${worldChangeApproval}${draft}`
   }

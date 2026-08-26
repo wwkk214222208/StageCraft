@@ -471,4 +471,10 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
   .drawer-backdrop[hidden]{display:none}
   /* 手机上待审批卡片里的思维链折叠区压矮，避免撑满整屏 */
   .speech-approval .thinking-block pre{max-height:110px}
+  /* 审批期间：安卓端主输入框整体缩回隐藏（批准后随着状态切换自然滑回）；主区补位、抽屉拉长到底 */
+  body.approving main{height:calc(100vh - 54px)}
+  body.approving footer{transform:translateY(110%);opacity:0;pointer-events:none}
+  body.approving #roles,body.approving #workbench{bottom:12px}
+  footer{transition:transform .22s ease,opacity .22s ease}
 }
+#turn-display.chat-mode{margin-top:0;padding:0;border:0;background:none;border-radius:0}
