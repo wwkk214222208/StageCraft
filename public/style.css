@@ -281,7 +281,7 @@ header strong{font:600 18px system-ui,sans-serif;color:#e4edfd;letter-spacing:.2
 .speak-toggle:hover{background:#5686fe}
 #mode-badge{font-size:11px;color:#8fa1c9;border:1px solid #3a4a6e;border-radius:3px;padding:2px 6px;white-space:nowrap}
 #mode-badge.chat{color:#b7c8fe;border-color:#4176e6}
-.speech-approval textarea{min-height:120px}
+.speech-approval .speech-textarea{min-height:120px}
 #center-draft-text{min-height:min(60vh,640px)}
 /* 设置栏：复选框靠在栏目名字右边 */
 label.settings-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
