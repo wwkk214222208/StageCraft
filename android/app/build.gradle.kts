@@ -115,6 +115,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            // 个人项目未配置正式 keystore：用 debug 签名兜底，保证 release 产物可安装
+            // （内置完整 Web UI + 本地运行时，APK 约 11MB 属正常体量）
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
