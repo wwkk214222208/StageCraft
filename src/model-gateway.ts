@@ -722,7 +722,9 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       }
       const schema = { type: 'object', additionalProperties: false, properties: { entries: { type: 'array', items: entrySchema }, currentState: { type: 'string', description: '可选。该角色消化这段剧情后最新的人物状态（所处位置、身体/情绪/处境变化），用一句到两句现在时描述；没有变化可省略。' } }, required: ['entries'] }
       const rendered = renderGameplayPrompt('director.memory-digest', { roleName: role.name, sceneText: scene.text })
-      const result = await gateway.completeStreaming<{ entries?: import('./types.ts').MemoryDigestEntry[]; currentState?: string }>(
+      const digestContract = { id: 'memory_digest', version: '1.0.0', schema }
+      const digestCore = options.requestModel ? await requestCore<{ entries?: import('./types.ts').MemoryDigestEntry[]; currentState?: string }>({ requestId: `memory-digest:${role.id}:${scene.turnId ?? 'turn'}:${++coreRequestSequence}`, capability: 'memory.digest', prompt: { system: rendered.system, user: rendered.user, messages: rendered.messages, metadata: { capability: 'memory.digest', strategyId: 'stagecraft.director.memory-digest' } }, contract: digestContract, tool: nativeTool('submit_memory_digest', '提交该角色从场景正文中提取的结构化私有记忆与最新状态。', schema), thinkingStrength: role.thinkingStrength ?? options.roleThinkingStrength, route: { role: role.id, ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { model: role.modelOverride } : {}), purpose: 'director.memory-digest' }, metadata: { includeTelemetry: false, correlation: { mode: 'chat', roomId: scene.roomId, turnId: scene.turnId, actor: 'role', roleId: role.id } }, stream: false }) : undefined
+      const result = digestCore?.output ?? await gateway.completeStreaming<{ entries?: import('./types.ts').MemoryDigestEntry[]; currentState?: string }>(
         rendered.system,
         rendered.user,
         'memory_digest',

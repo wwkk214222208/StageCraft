@@ -39,7 +39,7 @@ The WebView loads only `https://appassets.androidplatform.net/` resources interc
 架构：
 
 - `offline.html` = `public/index.html`（`__MODE_FLAG__=true` 关闭 DSH 依赖组件）+ 注入 `embedded-core.js`（离线组合根）与 `local-runtime-web-entry.js`（本地运行时 Web 入口），均早于 `app.js` 执行。
-- `src/portable/android-offline-core.ts`（esbuild 打包为 `embedded-core.js`）：在页面内运行共享 `CoreRuntimeSkeleton` + chat/director/management 服务（`android-composition.ts`），并以 **真实 workers**（`offline-workers.ts`，自包含提示词 + JSON 契约）驱动生成；凭据只存 `AndroidSecretStore`，网络由 `AndroidModelTransport`（OpenAI 兼容 SSE 解析，含 `reasoning_content` 思考增量）在 Java 侧发起。
+- `src/portable/android-offline-core.ts`（esbuild 打包为 `embedded-core.js`）：在页面内运行共享 `CoreRuntimeSkeleton` + chat/director/management 服务（`android-composition.ts`），并以**与桌面同一个 `createRealWorkers`**（gameplay 提示词渲染 + 预设管线；提示词 IO 由 `PromptStorage` 注入：构建期内联 gameplay + SQLite 预设）驱动生成；凭据只存 `AndroidSecretStore`，网络由 `AndroidModelTransport`（OpenAI 兼容 SSE 解析，含 `reasoning_content` 思考增量）在 Java 侧发起。
 - `local-runtime-web-entry.js`：本地运行时的人机入口。它桥接 `fetch`/`EventSource` 与本地 Core，并复用 PC 端 HTTP 契约及 **Core 命令协议**（`{roomId, scope, action}`）；它不拥有剧本、存档、设置、角色或回合业务规则。房间快照经 `/api/events` 推送，思考增量经 `/api/thinking-events` 推送。仅 DSH 助手与远程配对等真正依赖外部服务的能力允许不在本地运行时提供。
 - 原生异步桥：`NativeBridge.invokeAsync`（operation + callbackId）承载 `model.request` / `story.read`。
 - 模型供应商：应用内「连接 → 管理供应商」新建（接口地址、API Key、模型名），写入 `offline.provider.default`（Keystore 加密 secret）；模型名单离线不可自动发现，需手动填写（如 `deepseek-chat`）。

@@ -153,7 +153,20 @@
         return respondJson(200, { route: configured ? '离线' : '模拟', model: configured ? core.getProvider().model : '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: configured ? 'offline' : 'fake', billing: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
       },
       '/api/billing': () => respondJson(200, { prices: {}, stats: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } }),
-      '/api/prompts/presets': () => { const data = nativeInvokeSync('preset.list', {}); return respondJson(200, { presets: Array.isArray(data.presets) ? data.presets : [], activeByScope: data.activeByScope ?? {}, modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], gameplayScenarios: {} }) },
+      '/api/prompts/presets': async () => {
+        const data = nativeInvokeSync('preset.list', {})
+        // 与桌面同一份 gameplay 文件（APK 打包于 web/gameplay/），仅下发 userEditable 的场景
+        const gameplayScenarios = {}
+        for (const scope of ['director.role-decision', 'director.draft', 'director.consult', 'director.memory-digest', 'chat.role-speech', 'chat.world-director', 'chat.role-selection', 'prompt-preset.transform']) {
+          try {
+            const response = await originalFetch(`/gameplay/${scope}.json`)
+            if (!response.ok) continue
+            const raw = await response.json()
+            if (raw && typeof raw === 'object' && raw.userEditable === true) gameplayScenarios[scope] = raw
+          } catch { /* 缺失文件跳过 */ }
+        }
+        return respondJson(200, { presets: Array.isArray(data.presets) ? data.presets : [], activeByScope: data.activeByScope ?? {}, modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], gameplayScenarios })
+      },
       '/api/prompts/private-toggles': () => respondJson(200, {}),
       '/api/roles/memories': (params) => {
         const roleId = String(params.get('roleId') ?? '')

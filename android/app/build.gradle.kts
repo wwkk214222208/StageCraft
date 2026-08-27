@@ -45,6 +45,8 @@ val packageEmbeddedCore by tasks.registering(Copy::class) {
 /** 完整 Web UI（public/）打包为 assets/web：离线模式复用同一套前端。 */
 val packageWebUi by tasks.registering(Copy::class) {
     from(webUiSource) { into("") }
+    // gameplay 玩法场景提示词（每 scope 一个文件）随 Web UI 打包，供本地运行时按 userEditable 过滤下发
+    from(rootProject.projectDir.parentFile.resolve("prompts/gameplay")) { into("gameplay") }
     into(generatedWebUi)
     include("**/*")
 }

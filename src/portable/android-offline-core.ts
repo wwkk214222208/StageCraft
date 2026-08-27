@@ -3,15 +3,15 @@
  * 暴露 StageCraftOfflineCore —— 供打包的完整 Web UI（public/）离线复用。
  *
  * - 同一组共享服务（chat/director/management）与 CoreRuntimeSkeleton 在页面内运行；
- * - 模型生成走真实 workers（self-contained 提示词）→ Android 原生传输（凭据在 Java）；
+ * - 模型生成走与桌面同一个 createRealWorkers（gameplay 提示词渲染 + 预设管线）→ Android 原生传输（凭据在 Java）；
  * - 富 API 门面与 PC 端 RoomRuntime 同名同参，local-runtime-web-entry.js 直接调用。
  */
 import { CORE_PROTOCOL_VERSION, type CoreEvent, type CoreView, type HumanCommand, type ModelRequest, type ModelResult } from '../core/protocol.ts'
 import { createAndroidComposition, type AndroidComposition } from './android-composition.ts'
-import { createOfflineWorkers, type OfflineModelPort, type OfflineProviderConfig } from './offline-workers.ts'
 import type { RoomSnapshot, RoomMode, WorldChangeRequest, ThinkingStrength, Role, LoreEntry, ConsultationMessage, Decision, Draft, PlayerCharacter } from '../types.ts'
 import type { StoryPackage } from '../story-packages.ts'
 import type { WorkerSet } from '../workers.ts'
+import { createRealWorkers, type ModelGateway } from '../model-gateway.ts'
 import { setPromptStorage } from '../prompts.ts'
 import { createAndroidPromptStorage } from './android-prompt-storage.ts'
 
@@ -22,6 +22,14 @@ export const OFFLINE_ROOM_ID = 'android-local-room'
 
 type Json = Record<string, unknown>
 type ResultValue = Record<string, unknown>
+
+/** Android 本地模型供应商配置（凭据在 Java Keystore）。 */
+export interface OfflineProviderConfig {
+  baseUrl: string
+  apiKey: string
+  model: string
+  responseFormat?: 'json_object' | 'none'
+}
 
 const SYNC_OPERATIONS = new Set([
   'asset.read', 'asset.write', 'asset.remove',
@@ -153,14 +161,15 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
     },
   }
 
-  const port: OfflineModelPort = {
-    request: (request, hooks) => modelRequest(request, hooks),
-    cancel: (requestId?: string): Promise<void> => {
+  // 双端同一套生成内核：与桌面 createRealWorkers 完全同源（gameplay 提示词渲染 + 预设管线），
+  // 仅模型 IO 不同——requestModel 走 Android 原生传输（Java 持有凭据与网络）。
+  const workers: WorkerSet = createRealWorkers(undefined as unknown as ModelGateway, () => undefined as unknown as ModelGateway, {
+    requestModel: request => modelRequest(request),
+    cancelModel: (requestId?: string): Promise<void> => {
       try { invokeSync('model.cancel', { requestId: requestId ?? '' }) } catch { /* 忽略取消失败 */ }
       return Promise.resolve()
     },
-  }
-  const workers: WorkerSet = createOfflineWorkers(port, { directorThinkingStrength: undefined, roleThinkingStrength: undefined })
+  })
 
   // ── 组合与消息流 ──
   let sink: ((message: unknown) => void) | undefined

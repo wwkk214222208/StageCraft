@@ -317,6 +317,7 @@ test('Android local prompt IO: bundled gameplay data source plus SQLite preset p
   const bundled = readFileSync(join(root, 'src', 'portable', 'bundled-gameplay.ts'), 'utf8')
   const offlineCore = readFileSync(join(root, 'src', 'portable', 'android-offline-core.ts'), 'utf8')
   const runtime = readFileSync(join(root, 'android', 'app', 'src', 'main', 'assets', 'web', 'local-runtime-web-entry.js'), 'utf8')
+  const appGradle = read('app', 'build.gradle.kts')
   assert.match(operations, /"preset\.active-scope\.set"/)
   assert.match(operations, /"prompt-meta"/)
   assert.match(buildScript, /android-node-builtin-stubs/)
@@ -324,4 +325,10 @@ test('Android local prompt IO: bundled gameplay data source plus SQLite preset p
   assert.match(bundled, /with \{ type: 'json' \}/)
   assert.match(offlineCore, /setPromptStorage\(createAndroidPromptStorage\(/)
   assert.match(runtime, /preset\.active-scope\.set/)
+  assert.match(runtime, /userEditable === true/)
+  assert.match(appGradle, /prompts\/gameplay/)
+  // 双端共用同一生成内核：第二套自包含提示词 workers 已删除
+  assert.equal(existsSync(join(root, 'src', 'portable', 'offline-workers.ts')), false)
+  assert.match(offlineCore, /createRealWorkers\(/)
+  assert.doesNotMatch(offlineCore, /createOfflineWorkers/)
 })
