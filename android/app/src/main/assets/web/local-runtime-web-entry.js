@@ -483,7 +483,13 @@
 
   // ── 与电脑双向同步（原生桥承载配对与远端 HTTP；配对凭据不进入页面） ──
   const syncPendingFetches = new Map()
+  function parseNativeResult(result) {
+    // 原生桥按对象字面量回调；防御旧版本可能以 JSON 字符串回传。
+    if (typeof result === 'string') { try { return JSON.parse(result) } catch { return null } }
+    return result
+  }
   window.StageCraftSyncFetchResult = result => {
+    result = parseNativeResult(result)
     const entry = result && syncPendingFetches.get(result.callbackId)
     if (!entry) return
     syncPendingFetches.delete(result.callbackId)
@@ -498,6 +504,7 @@
     })
   }
   window.StageCraftSyncPairResult = result => {
+    result = parseNativeResult(result)
     const pending = window.__syncPairPending
     if (!pending) return
     window.__syncPairPending = null

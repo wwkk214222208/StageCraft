@@ -293,17 +293,32 @@ public final class NativeBridge implements AutoCloseable {
             request.setFixedLengthStreamingMode(body.length);
             try (OutputStream output = request.getOutputStream()) { output.write(body); }
             int status = request.getResponseCode();
-            if (status < 200 || status >= 300) throw new IllegalStateException("Pairing failed.");
+            if (status < 200 || status >= 300) {
+                String detail = "HTTP " + status;
+                try {
+                    InputStream stream = request.getErrorStream();
+                    if (stream != null) {
+                        String errorBody = readLimited(stream, 4_096);
+                        if (!errorBody.isEmpty()) detail += " " + errorBody;
+                    }
+                } catch (Exception ignored) { }
+                throw new IllegalStateException(detail);
+            }
             JSONObject response = new JSONObject(readLimited(request.getInputStream(), 65_536));
             String credential = response.optString("token", "");
-            if (credential.length() < 32) throw new IllegalStateException("Pairing failed.");
+            if (credential.length() < 32) throw new IllegalStateException("配对响应缺少有效 token。");
             if (closed || operation != operationGeneration.get()) return;
             String normalized = address.toString();
             sessionStore.save(normalized, allowInsecureHttp, credential);
             activeCredential = credential;
             deliverSyncPairResult(new JSONObject().put("ok", true).put("address", normalized).toString());
         } catch (Exception error) {
-            if (!closed && operation == operationGeneration.get()) deliverSyncPairResult("{\"ok\":false,\"message\":\"绑定失败，请检查地址和一次性配对码。\"}");
+            if (!closed && operation == operationGeneration.get()) {
+                try {
+                    String reason = error.getMessage() == null || error.getMessage().isEmpty() ? "请检查地址和配对码。" : error.getMessage();
+                    deliverSyncPairResult(new JSONObject().put("ok", false).put("message", "绑定失败：" + reason).toString());
+                } catch (Exception ignored) { deliverSyncPairResult("{\"ok\":false,\"message\":\"绑定失败。\"}"); }
+            }
         } finally {
             if (request != null) request.disconnect();
             if (activePairRequest == request) activePairRequest = null;
@@ -313,7 +328,8 @@ public final class NativeBridge implements AutoCloseable {
     private void deliverSyncPairResult(String resultJson) {
         activity.runOnUiThread(() -> {
             if (closed) return;
-            webView.evaluateJavascript("window.StageCraftSyncPairResult && window.StageCraftSyncPairResult(" + JSONObject.quote(resultJson) + ")", null);
+            // resultJson 本身是合法 JSON 对象字面量，直接嵌入 JS；不可用 JSONObject.quote 再包一层（会把对象变成字符串，网页端 result.ok 失效）。
+            webView.evaluateJavascript("window.StageCraftSyncPairResult && window.StageCraftSyncPairResult(" + resultJson + ")", null);
         });
     }
 
@@ -326,7 +342,7 @@ public final class NativeBridge implements AutoCloseable {
         } catch (Exception ignored) { }
         activity.runOnUiThread(() -> {
             if (closed) return;
-            webView.evaluateJavascript("window.StageCraftSyncFetchResult && window.StageCraftSyncFetchResult(" + JSONObject.quote(result.toString()) + ")", null);
+            webView.evaluateJavascript("window.StageCraftSyncFetchResult && window.StageCraftSyncFetchResult(" + result.toString() + ")", null);
         });
     }
 

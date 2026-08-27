@@ -679,8 +679,17 @@ async function refreshSyncRemoteStatus() {
 $('#sync-remote-pair').onclick = async () => {
   if (!window.StageCraftSyncRemote) return
   $('#sync-remote-error').textContent = ''
-  const address = prompt('电脑地址：如 http://192.168.1.5:8787（与电脑实际监听地址一致；局域网 IP 用 http 即可）')
+  // 记住上次填过的电脑地址（localStorage 被 WebView 禁用，走原生 secret 桥）
+  const savedAddress = (() => {
+    try {
+      const raw = window.StageCraftNative && window.StageCraftNative.invokeSync('secret.get', JSON.stringify({ key: 'sync.remote.address' }))
+      const parsed = raw ? JSON.parse(raw) : null
+      return parsed && parsed.found ? String(parsed.value || '') : ''
+    } catch { return '' }
+  })()
+  const address = prompt('电脑地址：如 http://192.168.1.5:8787（与电脑实际监听地址一致；局域网 IP 用 http 即可）', savedAddress || '')
   if (!address || !address.trim()) return
+  try { window.StageCraftNative && window.StageCraftNative.invokeSync('secret.set', JSON.stringify({ key: 'sync.remote.address', value: address.trim() })) } catch { /* 记住地址失败不影响绑定 */ }
   const code = prompt('一次性配对码：在电脑「设置 → 手机远程配对 → 生成手机配对码」查看（5 分钟内有效）')
   if (!code || !code.trim()) return
   try {
