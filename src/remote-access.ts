@@ -1,4 +1,6 @@
 import { createHash, randomBytes as nodeRandomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { URL } from 'node:url'
 
@@ -13,6 +15,8 @@ export interface RemoteAccessOptions {
   authenticateLoopback?: boolean
   clock?: { now(): number }
   randomBytes?: (size: number) => Uint8Array
+  /** Persist hashed sessions so remembered private devices survive restarts. */
+  persistencePath?: string
 }
 
 export interface PairingCode {
@@ -62,6 +66,7 @@ export class RemoteAccessPolicy {
   private readonly blockMs: number
   private readonly clock: { now(): number }
   private readonly random: (size: number) => Uint8Array
+  private readonly persistencePath?: string
   private readonly pairingCodes = new Map<string, ExpiringHash>()
   private readonly sessions = new Map<string, ExpiringHash>()
   private readonly failures = new Map<string, FailureState>()
@@ -70,12 +75,16 @@ export class RemoteAccessPolicy {
     this.enabled = options.enabled === true
     this.authenticateLoopback = options.authenticateLoopback === true
     this.pairingTtlMs = Math.max(1_000, options.pairingTtlMs ?? 5 * 60_000)
-    this.sessionTtlMsValue = Math.max(1_000, options.sessionTtlMs ?? 12 * 60 * 60_000)
+    // Remembered private devices should survive ordinary app restarts and
+    // periods of inactivity; explicit configuration can still shorten this.
+    this.sessionTtlMsValue = Math.max(1_000, options.sessionTtlMs ?? 30 * 24 * 60 * 60_000)
     this.maxPairingFailures = Math.max(1, options.maxPairingFailures ?? 5)
     this.failureWindowMs = Math.max(1_000, options.failureWindowMs ?? 60_000)
     this.blockMs = Math.max(1_000, options.blockMs ?? 60_000)
     this.clock = options.clock ?? Date
     this.random = options.randomBytes ?? (size => nodeRandomBytes(size))
+    this.persistencePath = options.persistencePath
+    this.loadPersistedSessions()
   }
 
   createPairingCode(): PairingCode {
@@ -111,6 +120,7 @@ export class RemoteAccessPolicy {
     if (!token) throw new Error('Unable to generate a unique remote session.')
     const expiresAt = now + this.sessionTtlMsValue
     this.sessions.set(hashSecret(token), { expiresAt })
+    this.persistSessions()
     return { ok: true, session: { token, expiresAt } }
   }
 
@@ -122,11 +132,15 @@ export class RemoteAccessPolicy {
       if (session) this.sessions.delete(hashSecret(token))
       return false
     }
+    // Sliding renewal keeps a remembered private device authorized across restarts
+    // and long-lived use without weakening the initial pairing code.
+    const renewed = now + this.sessionTtlMsValue
+    if (renewed - session.expiresAt > this.sessionTtlMsValue / 4) { session.expiresAt = renewed; this.persistSessions() }
     return true
   }
 
   revokeSession(token: string): boolean {
-    return this.sessions.delete(hashSecret(token))
+    const removed = this.sessions.delete(hashSecret(token)); if (removed) this.persistSessions(); return removed
   }
 
   /** 会话有效期（毫秒）；用于 Cookie Max-Age。 */
@@ -136,6 +150,7 @@ export class RemoteAccessPolicy {
   revokeAllSessions(): number {
     const count = this.sessions.size
     this.sessions.clear()
+    this.persistSessions()
     return count
   }
 
@@ -160,6 +175,23 @@ export class RemoteAccessPolicy {
     for (const [hash, value] of this.pairingCodes) if (value.expiresAt <= now) this.pairingCodes.delete(hash)
     for (const [hash, value] of this.sessions) if (value.expiresAt <= now) this.sessions.delete(hash)
     for (const [key, value] of this.failures) if (value.blockedUntil <= now && now - value.windowStartedAt >= this.failureWindowMs) this.failures.delete(key)
+  }
+
+  private loadPersistedSessions(): void {
+    if (!this.persistencePath || !existsSync(this.persistencePath)) return
+    try {
+      const records = JSON.parse(readFileSync(this.persistencePath, 'utf8')) as Array<{ hash?: string; expiresAt?: number }>
+      const now = this.clock.now()
+      for (const record of records) if (record.hash && Number.isFinite(record.expiresAt) && record.expiresAt > now) this.sessions.set(record.hash, { expiresAt: Number(record.expiresAt) })
+    } catch { /* corrupt persistence is treated as an empty session set */ }
+  }
+
+  private persistSessions(): void {
+    if (!this.persistencePath) return
+    try {
+      mkdirSync(dirname(this.persistencePath), { recursive: true })
+      writeFileSync(this.persistencePath, JSON.stringify([...this.sessions].map(([hash, value]) => ({ hash, expiresAt: value.expiresAt }))), 'utf8')
+    } catch { /* authorization must keep working even if persistence is unavailable */ }
   }
 }
 

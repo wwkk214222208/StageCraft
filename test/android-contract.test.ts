@@ -174,6 +174,33 @@ test('Android embedded Core is generated, verified, and selected locally', () =>
   assert.match(operations, /core-state\.commit/)
 })
 
+
+test('Android exports only current objects through SAF and persists prompt presets', () => {
+  const activity = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'MainActivity.java')
+  const bridge = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'NativeBridge.java')
+  const operations = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'AndroidCompositionOperations.java')
+  const runtime = read('app', 'src', 'main', 'assets', 'web', 'local-runtime-web-entry.js')
+  assert.match(activity, /Intent\.ACTION_CREATE_DOCUMENT/)
+  assert.match(activity, /Intent\.ACTION_OPEN_DOCUMENT/)
+  assert.match(activity, /OPEN_STORY_DOCUMENT/)
+  assert.match(activity, /CREATE_EXPORT_DOCUMENT/)
+  assert.match(bridge, /@JavascriptInterface public void chooseStoryArchive/)
+  assert.match(bridge, /compositionOperations\.importStoryArchive/)
+  assert.match(bridge, /@JavascriptInterface public void exportDocument/)
+  assert.match(bridge, /compositionOperations\.exportStoryArchive/)
+  assert.match(operations, /repository\.listAssets\("\/story-assets\/" \+ id \+ "\/"\)/)
+  assert.match(operations, /repository\.importStory\(id, story, assets\)/)
+  assert.match(operations, /"stagecraft-story"\.equals\(manifest\.optString\("format"\)\)/)
+  assert.match(operations, /rewritePortraitRefs\(story, id\)/)
+  const resolver = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'LocalAssetResolver.java')
+  assert.match(resolver, /repository\.getAsset\("\/story-assets\/" \+ id \+ "\/" \+ file\)/)
+  assert.match(operations, /repository\.putRecord\("prompt-presets", id, preset\)/)
+  assert.match(runtime, /nativeInvokeSync\('preset\.list'/)
+  assert.match(runtime, /nativeInvokeSync\('preset\.save'/)
+  assert.match(runtime, /nativeInvokeSync\('preset\.delete'/)
+  assert.doesNotMatch(runtime, /'\/api\/prompts\/presets': '提示词预设编辑'/)
+})
+
 test('Android native connection establishes SSE before view and never retries commands', () => {
   const connection = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'RemoteCoreConnection.java')
   const openStream = connection.slice(connection.indexOf('private void openStream'), connection.indexOf('private void scheduleReconnect'))

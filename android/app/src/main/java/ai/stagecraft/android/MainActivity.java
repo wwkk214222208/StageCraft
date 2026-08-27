@@ -11,6 +11,8 @@ import android.webkit.WebChromeClient;
 
 public final class MainActivity extends Activity {
     private static final int PICK_CHARACTER_CARD = 7001;
+    private static final int CREATE_EXPORT_DOCUMENT = 7002;
+    private static final int OPEN_STORY_DOCUMENT = 7003;
     private WebView webView;
     private NativeBridge bridge;
     private OfflineLoopbackServer offlineServer;
@@ -93,10 +95,29 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, PICK_CHARACTER_CARD);
     }
 
+    void openStoryDocument() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/zip");
+        startActivityForResult(intent, OPEN_STORY_DOCUMENT);
+    }
+
+    void createExportDocument(String mimeType, String suggestedName) {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(mimeType);
+        intent.putExtra(Intent.EXTRA_TITLE, suggestedName);
+        startActivityForResult(intent, CREATE_EXPORT_DOCUMENT);
+    }
+
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == PICK_CHARACTER_CARD && resultCode == RESULT_OK && data != null && bridge != null) {
             bridge.importCharacterCard(data.getData());
+        } else if (requestCode == OPEN_STORY_DOCUMENT && bridge != null) {
+            bridge.importStoryDocument(resultCode == RESULT_OK && data != null ? data.getData() : null);
+        } else if (requestCode == CREATE_EXPORT_DOCUMENT && bridge != null) {
+            bridge.completeExportDocument(resultCode == RESULT_OK && data != null ? data.getData() : null);
         }
     }
 

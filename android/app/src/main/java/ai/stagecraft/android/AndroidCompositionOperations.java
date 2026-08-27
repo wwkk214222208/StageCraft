@@ -62,6 +62,9 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
             }
             return new JSONObject().put("stories", result);
         }
+        if ("preset.list".equals(operation)) { org.json.JSONArray presets = new org.json.JSONArray(); for (JSONObject preset : repository.listRecords("prompt-presets")) presets.put(preset); return new JSONObject().put("presets", presets).put("activeByScope", new JSONObject()); }
+        if ("preset.save".equals(operation)) { JSONObject preset = JsonSafety.requiredObject(input, "preset"); String id = JsonSafety.requiredString(preset, "id", 256); repository.putRecord("prompt-presets", id, preset); return new JSONObject().put("ok", true).put("preset", preset); }
+        if ("preset.delete".equals(operation)) { String id = JsonSafety.requiredString(input, "id", 256); if (!repository.deleteRecord("prompt-presets", id)) throw new IllegalArgumentException("预设不存在或已删除。"); return new JSONObject().put("ok", true).put("id", id); }
         if ("story.create".equals(operation)) {
             String title = input.optString("title", "未命名剧本").trim();
             if (title.isEmpty()) title = "未命名剧本";
@@ -107,6 +110,60 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         if ("secret.remove".equals(operation)) { secrets.remove(JsonSafety.requiredString(input, "key", 256)); return new JSONObject().put("ok", true); }
         if ("model.cancel".equals(operation)) { modelTransport.cancel(JsonSafety.requiredString(input, "requestId", 256)); return new JSONObject().put("ok", true); }
         throw new IllegalArgumentException("Unsupported synchronous composition operation: " + operation);
+    }
+
+    public byte[] exportStoryArchive(String id) throws Exception {
+        validateStoryId(id);
+        JSONObject readResult = (JSONObject) invokeSync("story.read", new JSONObject().put("id", id));
+        String storyText = readResult.optString("value", "");
+        if (storyText.isEmpty()) throw new IllegalStateException("剧本内容为空。");
+        java.util.Map<String, byte[]> entries = new java.util.LinkedHashMap<>();
+        entries.put("manifest.json", "{\"format\":\"stagecraft-story\",\"version\":1,\"storyFile\":\"story.json\",\"assetRoot\":\"assets/\"}".getBytes(StandardCharsets.UTF_8));
+        JSONObject portableStory = new JSONObject(storyText); rewritePortraitRefsForExport(portableStory, id);
+        entries.put("story.json", portableStory.toString(2).getBytes(StandardCharsets.UTF_8));
+        collectPackagedStoryAssets("stories/default/" + id + ".assets", "", entries);
+        collectPackagedStoryAssets("stories/custom/" + id + ".assets", "", entries);
+        for (java.util.Map.Entry<String, byte[]> asset : repository.listAssets("/story-assets/" + id + "/").entrySet()) {
+            String name = asset.getKey().substring(("/story-assets/" + id + "/").length());
+            if (!name.isEmpty() && !name.contains("..") && !name.contains("\\") && name.matches("(?i).+\\.(png|jpe?g|webp|gif|svg)$")) entries.put("assets/" + name, asset.getValue());
+        }
+        return StageCraftArchive.exportEntries(entries);
+    }
+
+    private void collectPackagedStoryAssets(String directory, String relative, java.util.Map<String, byte[]> entries) throws Exception {
+        String[] names; try { names = context.getAssets().list(directory + (relative.isEmpty() ? "" : "/" + relative)); } catch (java.io.IOException error) { return; }
+        if (names == null) return;
+        for (String name : names) { String child = relative.isEmpty() ? name : relative + "/" + name; String path = directory + "/" + child; String[] nested = context.getAssets().list(path); if (nested != null && nested.length > 0) collectPackagedStoryAssets(directory, child, entries); else if (child.matches("(?i).+\\.(png|jpe?g|webp|gif|svg)$")) try (InputStream input = context.getAssets().open(path)) { entries.put("assets/" + child, StageCraftArchive.readLimited(input, 64 * 1024 * 1024)); } }
+    }
+
+    private static void rewritePortraitRefsForExport(Object value, String id) throws Exception {
+        if (value instanceof JSONObject) { JSONObject object = (JSONObject) value; java.util.Iterator<String> keys = object.keys(); while (keys.hasNext()) { String key = keys.next(); Object item = object.opt(key); if ("portraitRef".equals(key) && item instanceof String) { String prefix = "/story-assets/" + id + "/"; if (((String) item).startsWith(prefix)) object.put(key, "assets/" + ((String) item).substring(prefix.length())); } else rewritePortraitRefsForExport(item, id); } }
+        else if (value instanceof org.json.JSONArray) { org.json.JSONArray array = (org.json.JSONArray) value; for (int i = 0; i < array.length(); i++) rewritePortraitRefsForExport(array.opt(i), id); }
+    }
+
+    public JSONObject importStoryArchive(InputStream input) throws Exception {
+        java.util.Map<String, byte[]> entries = StageCraftArchive.importEntries(input);
+        byte[] manifestBytes = entries.get("manifest.json"), storyBytes = entries.get("story.json");
+        if (manifestBytes == null || storyBytes == null) throw new IllegalArgumentException("剧本包缺少 manifest.json 或 story.json。");
+        JSONObject manifest = new JSONObject(new String(manifestBytes, StandardCharsets.UTF_8));
+        if (!"stagecraft-story".equals(manifest.optString("format")) || manifest.optInt("version") != 1 || !"story.json".equals(manifest.optString("storyFile")) || !"assets/".equals(manifest.optString("assetRoot"))) throw new IllegalArgumentException("剧本包格式或版本不受支持。");
+        String id = "story-" + Long.toString(System.currentTimeMillis(), 36); validateStoryId(id);
+        JSONObject story = new JSONObject(new String(storyBytes, StandardCharsets.UTF_8)); story.put("id", id); validateImportedStory(story); rewritePortraitRefs(story, id);
+        java.util.Map<String, byte[]> assets = new java.util.LinkedHashMap<>();
+        for (java.util.Map.Entry<String, byte[]> item : entries.entrySet()) if (item.getKey().startsWith("assets/")) { String name = item.getKey().substring(7); if (name.isEmpty() || !name.matches("(?i).+\\.(png|jpe?g|webp|gif|svg)$")) throw new IllegalArgumentException("剧本包包含不支持的资源类型。"); assets.put(name, item.getValue()); }
+        repository.importStory(id, story, assets); return new JSONObject().put("ok", true).put("id", id).put("title", story.getString("title"));
+    }
+
+    private static void validateImportedStory(JSONObject story) throws Exception {
+        JsonSafety.requiredString(story, "id", 128); JsonSafety.requiredString(story, "title", 512); JsonSafety.requiredString(story, "opening", 1024 * 1024);
+        JSONObject player = JsonSafety.requiredObject(story, "playerCharacter"); JsonSafety.requiredString(player, "name", 512); JsonSafety.requiredString(player, "persona", 1024 * 1024); JsonSafety.requiredString(player, "currentState", 1024 * 1024);
+        org.json.JSONArray roles = JsonSafety.requiredArray(story, "roles"); if (roles.length() == 0 || roles.length() > 256) throw new IllegalArgumentException("剧本角色列表无效。"); java.util.Set<String> ids = new java.util.HashSet<>();
+        for (int i = 0; i < roles.length(); i++) { JSONObject role = roles.getJSONObject(i); String roleId = JsonSafety.requiredString(role, "id", 128); if (!ids.add(roleId)) throw new IllegalArgumentException("剧本包含重复角色 ID。"); JsonSafety.requiredString(role, "name", 512); JsonSafety.requiredString(role, "portraitRef", 2048); JsonSafety.requiredString(role, "currentState", 1024 * 1024); JsonSafety.requiredString(role, "selfModel", 1024 * 1024); if (!java.util.Arrays.asList("present", "absent", "unavailable").contains(role.optString("presence"))) throw new IllegalArgumentException("剧本角色在场状态无效。"); }
+    }
+
+    private static void rewritePortraitRefs(Object value, String id) throws Exception {
+        if (value instanceof JSONObject) { JSONObject object = (JSONObject) value; java.util.Iterator<String> keys = object.keys(); while (keys.hasNext()) { String key = keys.next(); Object item = object.opt(key); if ("portraitRef".equals(key) && item instanceof String) { String ref = (String) item; if (ref.startsWith("assets/")) object.put(key, "/story-assets/" + id + "/" + ref.substring(7)); else if (ref.startsWith("/story-assets/")) { int slash = ref.indexOf('/', "/story-assets/".length()); if (slash >= 0) object.put(key, "/story-assets/" + id + ref.substring(slash)); } } else rewritePortraitRefs(item, id); } }
+        else if (value instanceof org.json.JSONArray) { org.json.JSONArray array = (org.json.JSONArray) value; for (int i = 0; i < array.length(); i++) rewritePortraitRefs(array.opt(i), id); }
     }
 
     @Override public void invoke(String operation, JSONObject input, Callback callback) {

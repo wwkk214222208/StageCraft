@@ -70,6 +70,32 @@ export class ProviderConfigStore {
     return this.configs.map(config => ({ id: config.id, name: config.name, baseUrl: config.baseUrl, models: config.models, selectedModel: config.selectedModel, hasApiKey: Boolean(config.apiKey) && !PLACEHOLDER_API_KEY.test(config.apiKey), responseFormat: config.responseFormat }))
   }
 
+  /** Full private configuration for authenticated device synchronization. */
+  exportPrivate(): { providers: ProviderConfig[]; defaults: Omit<ProviderConfigFile, 'providers'> } {
+    return { providers: this.configs.map(config => ({ ...config, models: [...config.models] })), defaults: this.defaults() }
+  }
+
+  /** Replace provider configuration from a trusted, authenticated sync payload. */
+  importPrivate(value: { providers?: unknown; defaults?: unknown }): void {
+    if (!Array.isArray(value.providers)) throw new Error('同步数据缺少 providers。')
+    const providers = value.providers.map((item: any) => {
+      if (!item || typeof item !== 'object' || !String(item.id ?? '').trim() || !String(item.baseUrl ?? '').trim()) throw new Error('同步数据中的 Provider 无效。')
+      return { id: String(item.id), name: String(item.name ?? item.id), baseUrl: String(item.baseUrl).replace(/\/$/, ''), apiKey: String(item.apiKey ?? ''), models: Array.isArray(item.models) ? item.models.map(String) : [], selectedModel: item.selectedModel ? String(item.selectedModel) : undefined, responseFormat: item.responseFormat === 'json_schema' ? 'json_schema' : item.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: item.toolCalling !== false } as ProviderConfig
+    })
+    this.configs = providers
+    const defaults = value.defaults && typeof value.defaults === 'object' ? value.defaults as any : {}
+    this.defaultRoleProviderId = defaults.defaultRoleProviderId ? String(defaults.defaultRoleProviderId) : providers[0]?.id
+    this.defaultRoleModel = defaults.defaultRoleModel ? String(defaults.defaultRoleModel) : undefined
+    this.directorProviderId = defaults.directorProviderId ? String(defaults.directorProviderId) : providers[0]?.id
+    this.directorModel = defaults.directorModel ? String(defaults.directorModel) : undefined
+    this.assistantProviderId = defaults.assistantProviderId ? String(defaults.assistantProviderId) : this.defaultRoleProviderId
+    this.assistantModel = defaults.assistantModel ? String(defaults.assistantModel) : undefined
+    this.roleThinkingStrength = defaults.roleThinkingStrength
+    this.assistantThinkingStrength = defaults.assistantThinkingStrength
+    this.directorThinkingStrength = defaults.directorThinkingStrength
+    this.persist()
+  }
+
   defaults(): Omit<ProviderConfigFile, 'providers'> {
     return { defaultRoleProviderId: this.defaultRoleProviderId, defaultRoleModel: this.defaultRoleModel, directorProviderId: this.directorProviderId, directorModel: this.directorModel, assistantProviderId: this.assistantProviderId, assistantModel: this.assistantModel, ...(this.roleThinkingStrength ? { roleThinkingStrength: this.roleThinkingStrength } : {}), ...(this.assistantThinkingStrength ? { assistantThinkingStrength: this.assistantThinkingStrength } : {}), ...(this.directorThinkingStrength ? { directorThinkingStrength: this.directorThinkingStrength } : {}) }
   }

@@ -34,6 +34,8 @@ public final class NativeBridge implements AutoCloseable {
     private volatile String activeCredential;
     private final EmbeddedCoreArtifact.Verification embeddedCore;
     private final AndroidCompositionOperations compositionOperations;
+    private volatile String pendingExportKind;
+    private volatile JSONObject pendingExportPayload;
 
     public NativeBridge(Activity activity, WebView webView, RemoteSessionStore sessionStore, EmbeddedCoreArtifact.Verification embeddedCore) {
         this.activity = activity;
@@ -156,6 +158,51 @@ public final class NativeBridge implements AutoCloseable {
     @JavascriptInterface public void loadMedia(String path, String requestId) {
         RemoteCoreConnection current = connection;
         if (current != null) current.loadMedia(path, requestId);
+    }
+
+    @JavascriptInterface public void chooseStoryArchive() {
+        if (closed || !(activity instanceof MainActivity)) return;
+        activity.runOnUiThread(() -> ((MainActivity) activity).openStoryDocument());
+    }
+
+    void importStoryDocument(Uri uri) {
+        if (closed || uri == null) return; long fileOperation = fileGeneration.incrementAndGet();
+        networkExecutor.execute(() -> {
+            try (InputStream input = activity.getContentResolver().openInputStream(uri)) {
+                if (input == null) throw new IllegalArgumentException("无法读取剧本包。");
+                JSONObject result = compositionOperations.importStoryArchive(input);
+                if (closed || fileOperation != fileGeneration.get()) return;
+                activity.runOnUiThread(() -> { if (!closed && activity instanceof MainActivity) ((MainActivity) activity).showLocalUi(); });
+            } catch (Exception error) { if (!closed && fileOperation == fileGeneration.get()) emit(errorMessage("导入剧本失败：" + (error.getMessage() == null ? "文件无效。" : error.getMessage()))); }
+        });
+    }
+
+    @JavascriptInterface public void exportDocument(String kind, String payloadJson, String suggestedName) {
+        if (closed || !(activity instanceof MainActivity)) return;
+        try { pendingExportKind = kind; pendingExportPayload = new JSONObject(payloadJson == null ? "{}" : payloadJson); }
+        catch (Exception error) { emit(errorMessage("导出数据无效：" + error.getMessage())); return; }
+        activity.runOnUiThread(() -> ((MainActivity) activity).createExportDocument(
+            "story".equals(kind) ? "application/zip" : "application/json", suggestedName));
+    }
+
+    void completeExportDocument(Uri uri) {
+        final String kind = pendingExportKind; final JSONObject payload = pendingExportPayload;
+        pendingExportKind = null; pendingExportPayload = null;
+        if (uri == null || kind == null || payload == null || closed) return;
+        networkExecutor.execute(() -> {
+            try {
+                byte[] bytes; String type;
+                if ("story".equals(kind)) {
+                    String id = JsonSafety.requiredString(payload, "storyId", 128);
+                    bytes = compositionOperations.exportStoryArchive(JsonSafety.requiredString(payload, "storyId", 128)); type = "剧本";
+                } else {
+                    Object value = "preset".equals(kind) ? new JSONObject().put("format", "stagecraft-prompt-preset").put("version", 1).put("preset", payload.opt("preset")) : new JSONObject().put("version", 1).put("exportedAt", new java.util.Date().toString()).put("room", payload.opt("archive"));
+                    bytes = value.toString().getBytes(StandardCharsets.UTF_8); type = "preset".equals(kind) ? "预设" : "存档";
+                }
+                try (OutputStream output = activity.getContentResolver().openOutputStream(uri)) { if (output == null) throw new IllegalStateException("无法打开导出文件。"); output.write(bytes); }
+                emit(stateMessage("已导出" + type));
+            } catch (Exception error) { emit(errorMessage("导出失败：" + error.getMessage())); }
+        });
     }
 
     @JavascriptInterface public void chooseCharacterCard() {

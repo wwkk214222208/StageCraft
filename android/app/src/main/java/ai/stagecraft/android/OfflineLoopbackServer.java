@@ -33,7 +33,7 @@ public final class OfflineLoopbackServer implements AutoCloseable {
     private volatile int port;
 
     public OfflineLoopbackServer(Context context) throws IOException {
-        this.resolver = new LocalAssetResolver(context.getAssets());
+        this.resolver = new LocalAssetResolver(context);
         this.serverSocket = new ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"));
         this.port = serverSocket.getLocalPort();
         this.executor = Executors.newCachedThreadPool(runnable -> {

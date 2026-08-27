@@ -1,5 +1,6 @@
 package ai.stagecraft.android;
 
+import android.content.Context;
 import android.content.res.AssetManager;
 
 import java.io.IOException;
@@ -15,9 +16,11 @@ import java.util.Locale;
  */
 public final class LocalAssetResolver {
     private final AssetManager assets;
+    private final AndroidSqliteRepository repository;
 
-    public LocalAssetResolver(AssetManager assets) {
-        this.assets = assets;
+    public LocalAssetResolver(Context context) {
+        this.assets = context.getAssets();
+        this.repository = new AndroidSqliteRepository(context);
     }
 
     public static final class Resolved {
@@ -53,6 +56,8 @@ public final class LocalAssetResolver {
     /** 打开资产：story-assets 先 default 后 custom；根引用先根后 web/。 */
     public InputStream open(String assetPath) throws IOException {
         if (assetPath.contains(".assets/")) {
+            int marker = assetPath.indexOf(".assets/"); String id = assetPath.substring(0, marker); String file = assetPath.substring(marker + ".assets/".length());
+            byte[] stored = repository.getAsset("/story-assets/" + id + "/" + file); if (stored != null) return new java.io.ByteArrayInputStream(stored);
             try { return assets.open("stories/default/" + assetPath); }
             catch (IOException ignored) { return assets.open("stories/custom/" + assetPath); }
         }

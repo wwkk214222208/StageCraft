@@ -47,6 +47,7 @@
     } else if (message.type === 'connection.error') {
       console.error('[offline]', message.message)
       publish('core', { type: 'error', message: message.message })
+      if (typeof window.showOperationError === 'function') window.showOperationError('本地文件操作', new Error(message.message || '操作失败。'))
     }
   })
 
@@ -152,7 +153,7 @@
         return respondJson(200, { route: configured ? '离线' : '模拟', model: configured ? core.getProvider().model : '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: configured ? 'offline' : 'fake', billing: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
       },
       '/api/billing': () => respondJson(200, { prices: {}, stats: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } }),
-      '/api/prompts/presets': () => respondJson(200, { presets: [], activeByScope: {}, modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], promptTemplates: null, gameplayScenarios: {} }),
+      '/api/prompts/presets': () => { const data = nativeInvokeSync('preset.list', {}); return respondJson(200, { presets: Array.isArray(data.presets) ? data.presets : [], activeByScope: data.activeByScope ?? {}, modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], promptTemplates: null, gameplayScenarios: {} }) },
       '/api/prompts': () => respondJson(200, { files: [], presets: [] }),
       '/api/prompts/private-toggles': () => respondJson(200, {}),
       '/api/roles/memories': (params) => {
@@ -173,6 +174,7 @@
       '/api/archive/save': (body) => respondJson(200, nativeInvokeSync('archive.save', { name: String(body.name ?? '').trim() || `存档-${Date.now()}`, archive: { version: 1, exportedAt: new Date().toISOString(), room: guardRoom() } })),
       '/api/archive/load': (body) => { const archive = nativeInvokeSync('archive.load', { name: String(body.name ?? '') }); nativeInvokeSync('stagecraft.repository', { method: 'importRoom', args: [ROOM_ID, archive] }); core.refresh(); return respondJson(200, { ok: true, name: body.name }) },
       '/api/archive/delete': (body) => respondJson(200, nativeInvokeSync('archive.delete', { name: String(body.name ?? '') })),
+      '/api/story/import': () => respondJson(501, { error: '独立 APK 的剧本文件导入将在系统文件选择器接入后提供。' }),
       '/api/room-config': (body) => {
         const room = guardRoom()
         // room-config 走管理通道（与 app-boot dispatchManagement('set-room-config') 一致）
@@ -320,6 +322,15 @@
       },
       '/api/providers/director-thinking': () => respondJson(200, { ok: true, defaults: providerMeta().defaults }),
       '/api/providers/discover': () => respondJson(400, { error: '离线模式不支持自动发现模型；请直接在模型列表里填写模型名（如 deepseek-chat）。' }),
+      '/api/prompts/presets': (body) => {
+        try {
+          if (body.scope && body.activePresetId) { const data = nativeInvokeSync('preset.list', {}); return respondJson(200, { ok: true, presets: data.presets ?? [], activeByScope: { ...(data.activeByScope ?? {}), [String(body.scope)]: String(body.activePresetId) } }) }
+          const preset = body.preset && typeof body.preset === 'object' ? body.preset : body
+          nativeInvokeSync('preset.save', { preset })
+          const data = nativeInvokeSync('preset.list', {})
+          return respondJson(200, { ok: true, presets: data.presets ?? [], activeByScope: data.activeByScope ?? {} })
+        } catch (error) { return respondJson(400, { error: error instanceof Error ? error.message : String(error) }) }
+      },
       '/api/story/save': (body) => {
         const story = body.story && typeof body.story === 'object' ? body.story : null
         if (!story?.id) return respondJson(400, { error: '剧本缺少 id。' })
@@ -348,6 +359,10 @@
       },
     },
     delete: {
+      '/api/prompts/presets': (params) => {
+        try { nativeInvokeSync('preset.delete', { id: String(params.get('id') ?? '') }); const data = nativeInvokeSync('preset.list', {}); return respondJson(200, { ok: true, presets: data.presets ?? [], activeByScope: data.activeByScope ?? {} }) }
+        catch (error) { return respondJson(400, { error: error instanceof Error ? error.message : String(error) }) }
+      },
       '/api/stories': (params) => {
         const id = String(params.get('id') ?? '')
         if (!id) return respondJson(400, { error: '缺少剧本 id。' })
@@ -379,7 +394,6 @@
     '/api/agent/archive': 'DSH 会话存档',
     '/api/billing/prices': '价目表修改',
     '/api/billing/reset': '计费重置',
-    '/api/prompts/presets': '提示词预设编辑',
     '/api/prompts/private-toggles': '预设私设开关',
     '/api/prompts/import-st': 'ST 预设导入',
     '/api/prompts': '灵感（理念）编辑',

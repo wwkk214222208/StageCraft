@@ -57,7 +57,7 @@ public final class StageCraftWebViewClient extends WebViewClient {
     public StageCraftWebViewClient(Context context, CredentialProvider credentialProvider, OfflineNavigation offlineNavigation) {
         this.context = context;
         this.credentialProvider = credentialProvider;
-        this.assetResolver = new LocalAssetResolver(context.getAssets());
+        this.assetResolver = new LocalAssetResolver(context);
         this.offlineNavigation = offlineNavigation;
     }
 

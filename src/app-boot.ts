@@ -16,6 +16,7 @@ import { NodeSqliteRepository } from './platform/node-sqlite-repository.ts'
 import { RoomRuntime } from './room-runtime.ts'
 import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } from './model-gateway.ts'
 import { createStoryPackage, listStoryPackages, loadStoryPackage, resolveStoryAssetFile, saveStoryAsPackage, saveStoryPackage, storyAssetsDir, storyPortraitUrl, type StoryPackage } from './story-packages.ts'
+import { collectStoryArchiveEntries, createStoredZip } from './story-package-archive.ts'
 import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
 import { PROMPT_PRESET_SCOPES, deletePromptPreset, getPromptPresetState, listIdeologyFiles, listPromptPresets, loadGameplayScenario, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptPresetForScope, setPromptsFilePath, setUserPromptsDir, updatePromptPreset, loadPrivateToggles, savePrivateToggle, mergePrivateToggles, type PromptTemplates } from './prompts.ts'
@@ -162,7 +163,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const promptsFilePath = options.promptsFilePath ?? join(root, 'prompts', 'prompts.json')
   const host = options.host ?? process.env.HOST ?? '127.0.0.1'
   const port = options.port === undefined ? parsePort(process.env.PORT ?? '8787') : parsePort(options.port)
-  const remoteAccess = new RemoteAccessService(typeof options.remoteAccess === 'boolean' ? { enabled: options.remoteAccess } : options.remoteAccess)
+  const remoteAccess = new RemoteAccessService({
+    ...(typeof options.remoteAccess === 'boolean' ? { enabled: options.remoteAccess } : (options.remoteAccess ?? {})),
+    ...(userDataRoot ? { persistencePath: join(dataDir, 'remote-sessions.json') } : {}),
+  })
   if (!isLoopbackHost(host) && !remoteAccess.enabled) throw new Error('Non-loopback listening requires remote access to be explicitly enabled.')
   mkdirSync(saveRoot, { recursive: true })
   mkdirSync(dataDir, { recursive: true })
@@ -399,8 +403,52 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       
       // 新架构：Core Runtime 协议端点由 HumanCoreInteractionPlugin 处理。
       if (await humanCore.handle(request, response, url)) return
+
+      // Authenticated private-device synchronization. API keys are intentionally
+      // included here because this endpoint is reachable only with a paired token.
+      if (url.pathname === '/api/remote/sync' && request.method === 'GET') {
+        const saves = listSaves().flatMap(name => {
+          try { return [{ name, archive: JSON.parse(readFileSync(join(saveRoot, `${name}.json`), 'utf8')) }] } catch { return [] }
+        })
+        const stories = listStoryPackages(storiesRoot, bundleStoriesDirs).map(item => {
+          try { return loadStoryPackage(storiesRoot, item.id, bundleStoriesDirs) } catch { return item }
+        })
+        return json(response, 200, {
+          version: 1,
+          generatedAt: new Date().toISOString(),
+          room: runtime.exportArchive(roomId),
+          saves,
+          stories,
+          providers: providerStore.exportPrivate(),
+          prompts: { presets: getPromptPresetState(promptsFilePath), privateToggles: loadPrivateToggles(promptsFilePath) },
+        })
+      }
+      if (url.pathname === '/api/remote/sync' && request.method === 'PUT') {
+        const body = await readJson(request)
+        if (body.version !== 1) throw new Error('不支持的同步数据版本。')
+        if (body.providers && typeof body.providers === 'object') {
+          providerStore.importPrivate(body.providers as any)
+          await activateProvider(providerStore.getDirector())
+        }
+        if (body.room && typeof body.room === 'object') await dispatchManagement('import-archive', { archive: body.room })
+        if (Array.isArray(body.saves)) for (const item of body.saves) {
+          const name = String(item?.name ?? '').replace(/[\\/:*?"<>|]/g, '_').trim()
+          if (name && item?.archive && typeof item.archive === 'object') writeFileSync(join(saveRoot, `${name}.json`), `${JSON.stringify(item.archive, null, 2)}\n`, 'utf8')
+        }
+        if (Array.isArray(body.stories)) for (const story of body.stories) if (story && typeof story === 'object' && String((story as any).id ?? '').trim()) saveStoryPackage(storiesRoot, story as StoryPackage)
+        const prompts = body.prompts && typeof body.prompts === 'object' ? body.prompts as any : undefined
+        if (prompts?.privateToggles && typeof prompts.privateToggles === 'object') {
+          for (const [presetId, nodes] of Object.entries(prompts.privateToggles)) for (const [nodeId, enabled] of Object.entries(nodes as any)) savePrivateToggle(promptsFilePath, presetId, nodeId, enabled === true)
+        }
+        return json(response, 200, { ok: true, files: listSaves() })
+      }
       
-      if (url.pathname === '/api/archive/export' && request.method === 'GET') return json(response, 200, runtime.exportArchive(roomId))
+      if (url.pathname === '/api/archive/export' && request.method === 'GET') {
+        const body = Buffer.from(`${JSON.stringify(runtime.exportArchive(roomId), null, 2)}\n`, 'utf8')
+        response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="${encodeURIComponent(roomId)}.json"`, 'Content-Length': body.length, 'Cache-Control': 'no-store' })
+        response.end(body)
+        return
+      }
       if (url.pathname === '/api/archive/import' && request.method === 'POST') { await dispatchManagement('import-archive', { archive: await readJson(request) }); return json(response, 200, { ok: true }) }
       if (url.pathname === '/api/archive/save' && request.method === 'POST') {
         const body = await readJson(request)
@@ -468,6 +516,21 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         return json(response, 200, { ok: true, revision, branch: name, files: listSaves() })
       }
       if (url.pathname === '/api/story/get' && request.method === 'GET') return json(response, 200, loadStoryPackage(storiesRoot, String(url.searchParams.get('id') ?? ''), bundleStoriesDirs))
+      if (url.pathname === '/api/story/import' && request.method === 'POST') {
+        const data = await readBody(request, 64 * 1024 * 1024)
+        const id = `story-${Date.now()}`
+        const story = (await import('./story-package-archive.ts')).importStoryArchive(data, storiesRoot, id)
+        return json(response, 200, { ok: true, id: story.id, title: story.title })
+      }
+      if (url.pathname === '/api/story/export' && request.method === 'GET') {
+        const id = String(url.searchParams.get('id') ?? '').trim()
+        if (!id) throw new Error('缺少剧本 id。')
+        const story = loadStoryPackage(storiesRoot, id, bundleStoriesDirs)
+        const archive = createStoredZip(collectStoryArchiveEntries(story, storyAssetsDir(storiesRoot, id, bundleStoriesDirs)))
+        response.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${encodeURIComponent(story.title || id)}.zip"`, 'Content-Length': archive.length, 'Cache-Control': 'no-store' })
+        response.end(archive)
+        return
+      }
       if (isStandalone && url.pathname.startsWith('/api/agent/') && url.pathname !== '/api/agent/capability') return json(response, 503, { error: '独立模式未启用 DSH 会话功能（剧本助手 / 预设助手）。' })
       if (url.pathname === '/api/agent/capability' && request.method === 'GET') return json(response, 200, dshStorySessions.capability())
       if (url.pathname === '/api/agent/session' && request.method === 'GET') {
@@ -600,6 +663,15 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         return json(response, 200, { ok: true, ...getPromptPresetState(promptsFilePath), presets: updatePromptPreset(preset, promptsFilePath) })
       }
       if (url.pathname === '/api/prompts/presets' && request.method === 'DELETE') return json(response, 200, { ok: true, presets: deletePromptPreset(String(url.searchParams.get('id') ?? ''), promptsFilePath) })
+       if (url.pathname === '/api/prompts/presets/export' && request.method === 'GET') {
+         const id = String(url.searchParams.get('id') ?? '').trim()
+         const preset = mergePrivateToggles(getPromptPresetState(promptsFilePath).presets, loadPrivateToggles(promptsFilePath)).find(item => item.id === id)
+         if (!preset) throw new Error('提示词预设不存在。')
+         const body = Buffer.from(`${JSON.stringify({ format: 'stagecraft-prompt-preset', version: 1, preset }, null, 2)}\n`, 'utf8')
+         response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="${encodeURIComponent(preset.name || id)}.json"`, 'Content-Length': body.length, 'Cache-Control': 'no-store' })
+         response.end(body)
+         return
+       }
       if (url.pathname === '/api/prompts/import-st' && request.method === 'POST') {
         const body = await readJson(request)
         return json(response, 200, { ok: true, result: convertSillyTavernPreset(String(body.source ?? '').slice(0, 8_000_000), String(body.message ?? '')) })
@@ -1078,11 +1150,12 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     response.end(JSON.stringify(value))
   }
 
-  async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
-    const chunks: Buffer[] = []
-    for await (const chunk of request) chunks.push(Buffer.from(chunk))
-    return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as Record<string, unknown>
+  async function readBody(request: IncomingMessage, maximum: number): Promise<Buffer> {
+    const chunks: Buffer[] = []; let total = 0
+    for await (const chunk of request) { const part = Buffer.from(chunk); total += part.length; if (total > maximum) throw new Error('请求文件过大。'); chunks.push(part) }
+    return Buffer.concat(chunks)
   }
+  async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> { return JSON.parse((await readBody(request, 4 * 1024 * 1024)).toString('utf8') || '{}') as Record<string, unknown> }
 
   function listSaves(): string[] {
     try {

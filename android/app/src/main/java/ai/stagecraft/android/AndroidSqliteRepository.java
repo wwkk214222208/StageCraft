@@ -110,6 +110,22 @@ public final class AndroidSqliteRepository extends SQLiteOpenHelper {
     public synchronized void putAsset(String path, String contentType, byte[] data) { ContentValues row = new ContentValues(); row.put("path", path); row.put("content_type", contentType); row.put("data", data); getWritableDatabase().insertWithOnConflict("assets", null, row, SQLiteDatabase.CONFLICT_REPLACE); }
     public synchronized byte[] getAsset(String path) { try (Cursor cursor = getReadableDatabase().query("assets", new String[]{"data"}, "path=?", new String[]{path}, null, null, null)) { return cursor.moveToFirst() ? cursor.getBlob(0) : null; } }
     public synchronized void removeAsset(String path) { getWritableDatabase().delete("assets", "path=?", new String[]{path}); }
+    public synchronized java.util.Map<String, byte[]> listAssets(String prefix) {
+        java.util.Map<String, byte[]> result = new java.util.LinkedHashMap<>();
+        try (Cursor cursor = getReadableDatabase().query("assets", new String[]{"path", "data"}, "path LIKE ?", new String[]{prefix + "%"}, null, null, "path ASC")) { while (cursor.moveToNext()) result.put(cursor.getString(0), cursor.getBlob(1)); }
+        return result;
+    }
+    public synchronized void importStory(String id, JSONObject story, java.util.Map<String, byte[]> assets) {
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            ContentValues record = new ContentValues(); record.put("collection", "story-packages"); record.put("id", id); record.put("value", story.toString());
+            if (db.insertWithOnConflict("records", null, record, SQLiteDatabase.CONFLICT_REPLACE) == -1) throw new IllegalStateException("Unable to import story.");
+            String prefix = "/story-assets/" + id + "/"; db.delete("assets", "path LIKE ?", new String[]{prefix + "%"});
+            for (java.util.Map.Entry<String, byte[]> item : assets.entrySet()) { ContentValues row = new ContentValues(); row.put("path", prefix + item.getKey()); row.put("content_type", contentTypeFor(item.getKey())); row.put("data", item.getValue()); if (db.insertWithOnConflict("assets", null, row, SQLiteDatabase.CONFLICT_REPLACE) == -1) throw new IllegalStateException("Unable to import story asset."); }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+    private static String contentTypeFor(String name) { String lower = name.toLowerCase(java.util.Locale.ROOT); if (lower.endsWith(".png")) return "image/png"; if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg"; if (lower.endsWith(".webp")) return "image/webp"; if (lower.endsWith(".gif")) return "image/gif"; return "image/svg+xml"; }
     public synchronized void setRecovery(String key, String value) { ContentValues row = new ContentValues(); row.put("key", key); row.put("value", value); getWritableDatabase().insertWithOnConflict("recovery", null, row, SQLiteDatabase.CONFLICT_REPLACE); }
     public synchronized String getRecovery(String key) { try (Cursor cursor = getReadableDatabase().query("recovery", new String[]{"value"}, "key=?", new String[]{key}, null, null, null)) { return cursor.moveToFirst() ? cursor.getString(0) : null; } }
 }

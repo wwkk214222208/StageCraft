@@ -510,6 +510,7 @@ function operationErrorMessage(operation, error) {
   return `${operation}失败\n\n${detail || '未知错误'}${window.__STAGECRAFT_OFFLINE__ ? '\n\n运行环境：Android 本地运行时' : ''}`
 }
 function showOperationError(operation, error) { console.error(`[StageCraft] ${operation} failed`, error); alert(operationErrorMessage(operation, error)) }
+window.showOperationError = showOperationError
 if (window.__STAGECRAFT_OFFLINE__) {
   window.addEventListener('unhandledrejection', event => { event.preventDefault(); showOperationError('本地操作', event.reason) })
   window.addEventListener('error', event => { if (event.error) showOperationError('页面脚本', event.error) })
@@ -746,6 +747,38 @@ $('#prompt-preset-save').onclick = async () => {
     alert(`提示保存失败：${error instanceof Error ? error.message : String(error)}`)
   }
 }
+async function downloadCurrentFile(path, filename, nativeExport) {
+  if (window.__STAGECRAFT_OFFLINE__ && window.StageCraftNative?.exportDocument && nativeExport) {
+    window.StageCraftNative.exportDocument(nativeExport.kind, JSON.stringify(nativeExport.payload ?? {}), filename)
+    return
+  }
+  const response = await fetch(path)
+  if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || '导出失败。') }
+  const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+async function downloadCurrentJson(path, body, filename) {
+  const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || '导出失败。') }
+  const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+$('#prompt-preset-export').onclick = async () => {
+  if (!editingPromptPreset) return
+  try { const preset = collectPromptPreset(); await downloadCurrentFile(`/api/prompts/presets/export?id=${encodeURIComponent(preset.id)}`, `${preset.name || 'preset'}.json`, { kind: 'preset', payload: { preset } }) } catch (error) { showOperationError('导出预设', error) }
+}
+$('#story-import-button').onclick = () => {
+  if (window.__STAGECRAFT_OFFLINE__ && window.StageCraftNative?.chooseStoryArchive) window.StageCraftNative.chooseStoryArchive()
+  else $('#story-import-file').click()
+}
+$('#story-import-file').onchange = async event => {
+  const file = event.target.files?.[0]; if (!file) return
+  try { const response = await fetch('/api/story/import', { method: 'POST', headers: { 'content-type': 'application/zip' }, body: await file.arrayBuffer() }); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || '导入剧本失败。'); await loadStories(); await openStoryEditor(data.id) }
+  catch (error) { showOperationError('导入剧本', error) } finally { event.target.value = '' }
+}
+$('#story-export').onclick = async () => {
+  const id = $('#story-edit-id').textContent.trim()
+  if (!id) return showOperationError('导出剧本', new Error('没有选择剧本。'))
+  try { await downloadCurrentFile(`/api/story/export?id=${encodeURIComponent(id)}`, `${$('#story-edit-title').value.trim() || id}.zip`, { kind: 'story', payload: { storyId: id } }) } catch (error) { showOperationError('导出剧本', error) }
+}
 $('#prompt-preset-save-as').onclick = async () => {
   if (!editingPromptPreset) return
   let source
@@ -926,6 +959,7 @@ $('#provider-save').onclick = event => { event.preventDefault(); const name = $(
 $('#player-save').onclick = event => { event.preventDefault(); api('/api/player-character', { name: $('#player-name').value, persona: $('#player-persona').value, currentState: $('#player-state').value }).then(ok => { if (ok) $('#player-modal').close() }) }
 $('#restart').onclick = event => { event.preventDefault(); if (confirm('重开将清除当前剧本的回合、草稿和已批准正文。继续吗？')) api('/api/restart', { storyId: $('#story-select').value, mode: $('#room-mode-select').value }).then(ok => { if (ok) $('#story-modal').close() }) }
 $('#save-archive').onclick = event => { event.preventDefault(); api('/api/archive/save', { name: $('#archive-name').value.trim() }).then(ok => { if (ok) { $('#archive-name').value = ''; refreshArchiveList() } }) }
+$('#export-archive').onclick = async event => { event.preventDefault(); try { await downloadCurrentFile('/api/archive/export', `${$('#archive-name').value.trim() || room?.storyId || 'stagecraft-save'}.json`, { kind: 'archive', payload: { archive: room } }) } catch (error) { showOperationError('导出存档', error) } }
 $('#edit-story').onclick = async event => {
   event.preventDefault()
   const button = event.currentTarget
