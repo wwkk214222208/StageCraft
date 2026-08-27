@@ -235,15 +235,18 @@ export class RemoteAccessService {
         return true
       }
       if (!this.enabled || request.method !== 'POST') {
+        console.log(`[remote] pairing-code denied from ${request.socket.remoteAddress} (enabled=${this.enabled})`)
         this.send(response, 403, { error: 'Operator request denied.' })
         return true
       }
       const pairing = this.createPairingCode()
+      console.log(`[remote] pairing-code issued from ${request.socket.remoteAddress}: ${pairing.code}`)
       this.send(response, 200, pairing)
       return true
     }
     if (url.pathname !== '/api/remote/pair') return false
     if (!this.enabled) {
+      console.log(`[remote] pair denied from ${request.socket.remoteAddress}: remote access disabled`)
       this.send(response, 403, { error: 'Remote access disabled.' })
       return true
     }
@@ -255,6 +258,7 @@ export class RemoteAccessService {
     try { body = await this.readJson(request) } catch { this.send(response, 401, { error: 'Pairing failed.' }); return true }
     const clientKey = request.socket.remoteAddress ?? 'unknown'
     const result = this.policy.exchangePairingCode(String(body.code ?? ''), clientKey)
+    console.log(`[remote] pair from ${request.socket.remoteAddress}: ${result.ok ? 'ok' : result.status}`)
     if (result.ok) {
       // 浏览器直连：下发 HttpOnly 会话 Cookie，之后对 /api、/assets、/story-assets 的所有请求自动携带。
       // SameSite=Lax：跨站子资源（如他人网页 <img>）不带 Cookie；POST/JSON 跨站更不携带。
