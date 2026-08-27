@@ -47,7 +47,7 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
     return parsed
   }
 
-  // ── 异步桥（model.request / prompts.read / story.read）──
+  // ── 异步桥（model.request / story.read）──
   let asyncSequence = 0
   const pendingAsync = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; onThinking?: (text: string) => void }>()
   const invokeAsync = (operation: string, input: Json, hooks?: { onThinking?: (text: string) => void }): Promise<unknown> => {

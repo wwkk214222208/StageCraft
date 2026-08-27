@@ -10,11 +10,30 @@ function fixture() { return join(mkdtempSync(join(tmpdir(), 'stagecraft-preset-'
 test('gameplay scenarios expose thinking override metadata', () => {
   const scenario = loadGameplayScenario('director.draft')
   assert.equal(scenario.forceThinkingOff, undefined)
+  // 新格式标记：四个创作类玩法允许用户编辑；内部玩法（咨询/消化/选角/预设助手）不作为用户预设场景
+  assert.equal(loadGameplayScenario('director.draft').userEditable, true)
+  assert.equal(loadGameplayScenario('director.role-decision').userEditable, true)
+  assert.equal(loadGameplayScenario('chat.role-speech').userEditable, true)
+  assert.equal(loadGameplayScenario('chat.world-director').userEditable, true)
+  assert.equal(loadGameplayScenario('director.consult').userEditable, undefined)
+  assert.equal(loadGameplayScenario('director.memory-digest').userEditable, undefined)
+  assert.equal(loadGameplayScenario('chat.role-selection').userEditable, undefined)
+  assert.equal(loadGameplayScenario('prompt-preset.transform').userEditable, undefined)
   // 导演选角（chat.role-selection）默认禁止思维链
   assert.equal(loadGameplayScenario('chat.role-selection').forceThinkingOff, true)
   const file = fixture()
   updatePromptPreset({ id: 'fast', name: 'Fast', modes: ['director'], scenarios: { 'director.draft': { forceThinkingOff: true, nodes: [], regexRules: [] } }, nodes: [], regexRules: [] }, file)
   assert.equal(getPromptPresetState(file).presets.find(item => item.id === 'fast')?.scenarios?.['director.draft']?.forceThinkingOff, true)
+})
+
+test('internal (non-editable) scopes bypass preset transformation entirely', () => {
+  const file = fixture()
+  // 即使旧数据/调用方携带了内部 scope 的场景，也会被过滤并透传
+  updatePromptPreset({ id: 'tweak', name: 'Tweak', modes: ['director'], scenarios: { 'director.consult': { nodes: [{ id: 'n', name: 'n', type: 'user', content: 'X', enabled: true, editable: true }], regexRules: [] } }, nodes: [], regexRules: [] }, file)
+  assert.equal(getPromptPresetState(file).presets.find(item => item.id === 'tweak')?.scenarios?.['director.consult'], undefined)
+  for (const scope of ['director.consult', 'director.memory-digest', 'chat.role-selection', 'prompt-preset.transform'] as const) {
+    assert.deepEqual(applyPromptPreset('SYS', 'USR', scope, file).messages.map(item => item.content), ['SYS', 'USR'])
+  }
 })
 
 test('gameplay scenarios define structured fixed prompt sources', () => {

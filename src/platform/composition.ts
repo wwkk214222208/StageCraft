@@ -1,7 +1,6 @@
 import type { ModelRequest, ModelResult } from '../core/protocol.ts'
 import type { CoreStateCommit, CoreStateRepository, CoreStateRestore } from '../core/state-repository.ts'
 import type { AssetRepository, SecretStore } from '../core/platform.ts'
-import type { PromptTemplates } from '../prompts.ts'
 import type { StoryPackage } from '../story-packages.ts'
 import { ModelGatewayTransport } from './model-gateway-transport.ts'
 import type { ModelTransport } from '../core/platform.ts'
@@ -14,7 +13,6 @@ export interface NativeOperations {
 
 /** JSON codecs kept at the platform boundary so Core/domain code remains runtime-neutral. */
 export interface CompositionSources {
-  prompts: () => Promise<PromptTemplates>
   story: (id: string) => Promise<StoryPackage>
 }
 
@@ -75,7 +73,6 @@ export class NativeModelTransport implements ModelTransport {
 /** Loaders used by portable composition roots; JSON parsing stays in TypeScript. */
 export function jsonSources(operations: NativeOperations): CompositionSources {
   return {
-    prompts: async () => parseJsonSource<PromptTemplates>(await Promise.resolve(operations.invoke<string | { value?: string }>('prompts.read'))),
     story: async id => parseJsonSource<StoryPackage>(await Promise.resolve(operations.invoke<string | { value?: string }>('story.read', { id }))),
   }
 }

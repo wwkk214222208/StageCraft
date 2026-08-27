@@ -2,14 +2,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export interface PromptTemplates {
-  role: { system: string; user: string; retrySystem: string; retryUser: string; digestSystem: string; digestUser: string }
-  director: { request: string; retrySystem: string; retryUser: string }
-  consult: { user: string }
-  skills: { director: string; consultation: string }
-  chat: { system: string; user: string; directorChatSystem: string; directorChatUser: string }
-}
-
 export interface PromptNode {
   id: string
   name: string
@@ -37,7 +29,7 @@ export const PROMPT_PRESET_SCOPES: PromptPresetScope[] = ['director.role-decisio
 /** 模式 ID 鐢辫繍琛屾椂娉ㄥ唽锛涢璁炬牸寮忎笉闄愬埗鏈潵妯″紡銆?*/
 export type PromptMode = string
 export interface GameplayComponent { id: string; name: string; templatePath: string[]; template?: string; dynamic: boolean; role?: 'system' | 'user' }
-export interface GameplayScenario { mode: PromptMode; scope: PromptPresetScope; name: string; components: GameplayComponent[]; forceThinkingOff?: boolean }
+export interface GameplayScenario { mode: PromptMode; scope: PromptPresetScope; name: string; components: GameplayComponent[]; forceThinkingOff?: boolean; /** 标记该玩法场景是否允许用户在预设编辑器中改动；缺省 = 内部提示词（不展示、不进预设）。 */ userEditable?: boolean }
 export interface PromptScenario {
   forceThinkingOff?: boolean
   nodes: PromptNode[]
@@ -80,7 +72,12 @@ export function loadGameplayScenario(scope: PromptPresetScope, filePath?: string
   const bundledFile = join(bundledGameplayDir(), `${scope}.json`)
   const file = existsSync(localFile) ? localFile : bundledFile
   if (!existsSync(file)) return { ...fallback }
-  try { const data = JSON.parse(readFileSync(file, 'utf8')) as GameplayScenario; return { mode: data.mode ?? fallback.mode, scope, name: data.name ?? fallback.name, components: Array.isArray(data.components) ? data.components.map(component => ({ ...component, template: typeof component.template === 'string' ? component.template : undefined })) : fallback.components, ...(data.forceThinkingOff === true ? { forceThinkingOff: true } : {}) } } catch { return { ...fallback } }
+  try { const data = JSON.parse(readFileSync(file, 'utf8')) as GameplayScenario; return { mode: data.mode ?? fallback.mode, scope, name: data.name ?? fallback.name, components: Array.isArray(data.components) ? data.components.map(component => ({ ...component, template: typeof component.template === 'string' ? component.template : undefined })) : fallback.components, ...(data.forceThinkingOff === true ? { forceThinkingOff: true } : {}), ...(data.userEditable === true ? { userEditable: true } : {}) } } catch { return { ...fallback } }
+}
+
+/** 允许用户在预设编辑器中改动的玩法场景（= 新格式标记 userEditable 的 scope）。 */
+export function userEditableScopes(filePath?: string): PromptPresetScope[] {
+  return PROMPT_PRESET_SCOPES.filter(scope => loadGameplayScenario(scope, filePath).userEditable === true)
 }
 const runtimeSystemLabels: Record<PromptPresetScope, string[]> = {
   'director.role-decision': ['角色身份、目标、记忆与边界', '玩家贡献与决策输出要求'],
@@ -146,34 +143,34 @@ function normalizeScenario(source: Partial<PromptScenario> | undefined, scope: P
   }
   return { ...(source?.forceThinkingOff === true ? { forceThinkingOff: true } : {}), nodes: normalizeNodes(source?.nodes, scope), regexRules: Array.isArray(source?.regexRules) ? source.regexRules : [] }
 }
-function normalizePreset(input: Partial<PromptPreset>, index = 0): PromptPreset {
+function normalizePreset(input: Partial<PromptPreset>, index = 0, filePath?: string): PromptPreset {
   const nodes = normalizeNodes(input.nodes, 'director.draft')
   const regexRules = Array.isArray(input.regexRules) ? input.regexRules.map((rule, ruleIndex) => ({
     id: String(rule.id ?? `regex-${ruleIndex}`), name: String(rule.name ?? '未命名规则'), pattern: String(rule.pattern ?? ''),
     replacement: String(rule.replacement ?? ''), enabled: rule.enabled !== false,
   })) : []
   const modes = Array.isArray(input.modes) ? input.modes.map(String).map(mode => mode.trim()).filter(Boolean) : ['director']
-  const scenarios = Object.fromEntries(PROMPT_PRESET_SCOPES.filter(scope => scope === 'prompt-preset.transform' || (scope.startsWith('chat.') ? modes.includes('chat') : modes.includes('director'))).map(scope => { const source = input.scenarios?.[scope] ?? (!input.scenarios ? { nodes: input.nodes, regexRules: input.regexRules } : undefined); const normalized = normalizeScenario(source, scope); const scopedRules = Array.isArray(normalized.regexRules) ? normalized.regexRules.map((rule, ruleIndex) => ({ id: String(rule.id ?? `regex-${ruleIndex}`), name: String(rule.name ?? '未命名规则'), pattern: String(rule.pattern ?? ''), replacement: String(rule.replacement ?? ''), enabled: rule.enabled === true })) : []; return [scope, { ...normalized, regexRules: scopedRules }] })) as Record<PromptPresetScope, PromptScenario>
+  const scenarios = Object.fromEntries(userEditableScopes(filePath).filter(scope => scope.startsWith('chat.') ? modes.includes('chat') : modes.includes('director')).map(scope => { const source = input.scenarios?.[scope] ?? (!input.scenarios ? { nodes: input.nodes, regexRules: input.regexRules } : undefined); const normalized = normalizeScenario(source, scope); const scopedRules = Array.isArray(normalized.regexRules) ? normalized.regexRules.map((rule, ruleIndex) => ({ id: String(rule.id ?? `regex-${ruleIndex}`), name: String(rule.name ?? '未命名规则'), pattern: String(rule.pattern ?? ''), replacement: String(rule.replacement ?? ''), enabled: rule.enabled === true })) : []; return [scope, { ...normalized, regexRules: scopedRules }] })) as Record<PromptPresetScope, PromptScenario>
   return { id: String(input.id ?? `preset-${Date.now()}-${index}`), name: String(input.name ?? `鎻愮ず璇嶉璁?${index + 1}`), enabled: input.enabled === true, modes: modes.length ? [...new Set(modes)] : (String(input.id ?? '') === 'default' ? ['director', 'chat'] : ['director']), scenarios, nodes, regexRules, ...(input.compatibility ? { compatibility: { source: input.compatibility.source === 'sillytavern' ? 'sillytavern' as const : undefined, regexEnabled: input.compatibility.regexEnabled === true } } : {}) }
 }
 function readPresetState(filePath?: string): PromptPresetState {
   const target = presetPath(filePath)
-  if (!existsSync(target)) return { presets: [normalizePreset({ id: 'default', name: '默认预设', enabled: true }, 0)], activeByScope: {} }
+  if (!existsSync(target)) return { presets: [normalizePreset({ id: 'default', name: '默认预设', enabled: true }, 0, filePath)], activeByScope: {} }
   try {
     const data = JSON.parse(readFileSync(target, 'utf8')) as Partial<PromptPresetState> | PromptPreset[]
-    if (Array.isArray(data)) return { presets: data.map(normalizePreset), activeByScope: {} }
-    return { presets: Array.isArray(data.presets) ? data.presets.map(normalizePreset) : [normalizePreset({ id: 'default', name: '默认预设' }, 0)], activeByScope: data.activeByScope ?? {} }
-  } catch { return { presets: [normalizePreset({ id: 'default', name: '默认预设', enabled: true }, 0)], activeByScope: {} } }
+    if (Array.isArray(data)) return { presets: data.map((item, index) => normalizePreset(item, index, filePath)), activeByScope: {} }
+    return { presets: Array.isArray(data.presets) ? data.presets.map((item, index) => normalizePreset(item, index, filePath)) : [normalizePreset({ id: 'default', name: '默认预设' }, 0, filePath)], activeByScope: data.activeByScope ?? {} }
+  } catch { return { presets: [normalizePreset({ id: 'default', name: '默认预设', enabled: true }, 0, filePath)], activeByScope: {} } }
 }
 export function getPromptPresetState(filePath?: string): PromptPresetState { return readPresetState(filePath) }
 export function savePromptPresets(presets: PromptPreset[], filePath?: string, activeByScope: Partial<Record<PromptPresetScope, string>> = readPresetState(filePath).activeByScope): void {
-  const stored = presets.map(normalizePreset).map(preset => ({ ...preset, scenarios: Object.fromEntries(Object.entries(preset.scenarios ?? {}).map(([scope, scenario]) => { const nodes = scenario.nodes ?? []; return [scope, { ...(scenario.forceThinkingOff === true ? { forceThinkingOff: true } : {}), order: nodes.map(node => node.runtimeBinding ?? node.id), privateNodes: nodes.filter(node => node.type === 'user' && node.removable !== false), regexRules: scenario.regexRules }] })), nodes: preset.nodes.filter(node => node.type === 'user' && node.removable !== false) }))
+  const stored = presets.map((preset, index) => normalizePreset(preset, index, filePath)).map(preset => ({ ...preset, scenarios: Object.fromEntries(Object.entries(preset.scenarios ?? {}).map(([scope, scenario]) => { const nodes = scenario.nodes ?? []; return [scope, { ...(scenario.forceThinkingOff === true ? { forceThinkingOff: true } : {}), order: nodes.map(node => node.runtimeBinding ?? node.id), privateNodes: nodes.filter(node => node.type === 'user' && node.removable !== false), regexRules: scenario.regexRules }] })), nodes: preset.nodes.filter(node => node.type === 'user' && node.removable !== false) }))
   const dir = customDir(filePath); mkdirSync(dir, { recursive: true }); writeFileSync(presetPath(filePath), `${JSON.stringify({ presets: stored, activeByScope }, null, 2)}\n`, 'utf8')
 }
 export function updatePromptPreset(preset: PromptPreset, filePath?: string): PromptPreset[] {
-  const state = readPresetState(filePath); const next = normalizePreset(preset); if (!next.modes.length) throw new Error('提示词预设至少需要服务一个游玩模式。'); const index = state.presets.findIndex(item => item.id === next.id)
+  const state = readPresetState(filePath); const next = normalizePreset(preset, 0, filePath); if (!next.modes.length) throw new Error('提示词预设至少需要服务一个游玩模式。'); const index = state.presets.findIndex(item => item.id === next.id)
   if (index >= 0) state.presets[index] = next; else state.presets.push(next)
-  if (next.enabled) for (const scope of PROMPT_PRESET_SCOPES) { const mode = scope.startsWith('chat.') ? 'chat' : scope.startsWith('director.') ? 'director' : undefined; if (!mode || next.modes.includes(mode)) state.activeByScope[scope] = next.id }
+  if (next.enabled) for (const scope of userEditableScopes(filePath)) { const mode = scope.startsWith('chat.') ? 'chat' : scope.startsWith('director.') ? 'director' : undefined; if (!mode || next.modes.includes(mode)) state.activeByScope[scope] = next.id }
   savePromptPresets(state.presets, filePath, state.activeByScope); return state.presets
 }
 export function setPromptPresetForScope(scope: PromptPresetScope, id: string, filePath?: string): PromptPresetState {
@@ -182,7 +179,7 @@ export function setPromptPresetForScope(scope: PromptPresetScope, id: string, fi
 }
 export function deletePromptPreset(id: string, filePath?: string): PromptPreset[] {
   const state = readPresetState(filePath); if (id === 'default' || state.presets.length <= 1) return state.presets
-  const next = state.presets.filter(item => item.id !== id); for (const scope of PROMPT_PRESET_SCOPES) if (state.activeByScope[scope] === id) delete state.activeByScope[scope]
+  const next = state.presets.filter(item => item.id !== id); for (const scope of userEditableScopes(filePath)) if (state.activeByScope[scope] === id) delete state.activeByScope[scope]
   savePromptPresets(next, filePath, state.activeByScope); return next
 }
 
@@ -197,6 +194,8 @@ export function isPromptThinkingForcedOff(scope: PromptPresetScope, filePath?: s
 export function applyPromptPreset(system: string, user: string, scopeOrFilePath: PromptPresetScope | string = 'director.draft', filePath?: string, componentContents?: Record<string, string>): { system: string; user: string; messages: Array<{ role: 'system' | 'user'; content: string }> } {
   const scope = PROMPT_PRESET_SCOPES.includes(scopeOrFilePath as PromptPresetScope) ? scopeOrFilePath as PromptPresetScope : 'director.draft'
   const resolvedFilePath = scope === 'director.draft' && scopeOrFilePath !== scope ? scopeOrFilePath : filePath
+  // 非用户可编辑 scope（新格式未标记 userEditable）= 内部提示词：原样透传，不进预设管线。
+  if (!userEditableScopes(resolvedFilePath).includes(scope)) return { system, user, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }
   const state = readPresetState(resolvedFilePath); const mode: PromptMode = scope.startsWith('chat.') ? 'chat' : 'director'
   const id = state.activeByScope[scope] ?? (state.presets.find(item => item.enabled && item.modes.includes(mode))?.id ?? 'default'); const preset = state.presets.find(item => item.id === id && item.modes.includes(mode))
   if (!preset) {
@@ -263,25 +262,6 @@ function customDir(filePath?: string): string {
   if (filePath) return join(dirname(filePath), 'custom')
   if (activeUserPromptsDir) return activeUserPromptsDir
   return join(dirname(getPromptsFilePath()), 'custom')
-}
-
-/** 加载提示词模板；可用环境变量 PROMPTS_FILE 指向自定义文件；自动合并私有创作理念 */
-export function loadPrompts(filePath = process.env.PROMPTS_FILE ?? getPromptsFilePath()): PromptTemplates {
-  if (!existsSync(filePath)) throw new Error(`Prompts file not found: ${filePath}`)
-  const templates = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<PromptTemplates>
-  // Prefer a complete prompts.json beside a partial custom template file.
-  const siblingDefaults = join(dirname(filePath), 'prompts.json')
-  let defaults: PromptTemplates
-  if (filePath !== siblingDefaults && existsSync(siblingDefaults)) {
-    defaults = JSON.parse(readFileSync(siblingDefaults, 'utf8')) as PromptTemplates
-  } else {
-    const bundled = existsSync(defaultPath) ? defaultPath : join(dirname(filePath), 'prompts.json')
-    defaults = JSON.parse(readFileSync(bundled, 'utf8')) as PromptTemplates
-  }
-  // Merge partial custom fields over the complete defaults.
-  const merged: PromptTemplates = { ...defaults, ...templates }
-  merged.chat = { ...defaults.chat, ...(templates.chat ?? {}) }
-  return merged
 }
 
 /** 鐢?{占位符} 替换模板变量；未提供的占位符保留原样 */

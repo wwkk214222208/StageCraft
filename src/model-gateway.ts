@@ -1,13 +1,7 @@
 import type { ConsultationMessage, Decision, Draft, Role } from './types.ts'
-import { applyPromptPreset, isPromptThinkingForcedOff, loadGameplayScenario, loadPrompts, renderPrompt, type PromptTemplates, type PromptPresetScope } from './prompts.ts'
+import { applyPromptPreset, isPromptThinkingForcedOff, loadGameplayScenario, renderPrompt, type PromptPresetScope } from './prompts.ts'
 import { buildThinkingParams } from './thinking-params.ts'
 import type { ModelRequest, ModelResult } from './core/protocol.ts'
-
-let prompts: PromptTemplates | undefined
-function getPrompts(): PromptTemplates {
-  prompts ??= loadPrompts()
-  return prompts
-}
 
 export interface ModelRoute {
   name?: string
@@ -620,22 +614,6 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
     if (result.usage) collectUsage?.(result.usage)
     return { output: result.output as T, ...(result.thinking ? { thinking: result.thinking } : {}) }
   }
-  // 缓存键：角色 id + 人设 + 世界书（不变部分）；记忆时间线每回合变化，不参与缓存
-  const prefixCache = new Map<string, string>()
-  const prefixKey = (role: Role, lore?: LoreEntry[]) => `${role.id}|${role.selfModel}|${JSON.stringify(lore ?? [])}`
-  const rolePrefix = (role: Role, lore?: LoreEntry[]) => {
-    const key = prefixKey(role, lore)
-    const cached = prefixCache.get(key)
-    if (cached !== undefined) return cached
-    const loreText = formatPrivateRoleLore(lore ?? [], role.id)
-    const prefix = renderPrompt(getPrompts().role.prefix, {
-      loreText: loreText ? `${loreText}\n` : '',
-      roleName: role.name,
-      selfModel: role.selfModel,
-    })
-    prefixCache.set(key, prefix)
-    return prefix
-  }
   return {
     supportsRequestCancellation: Boolean(options.requestModel && options.cancelModel),
     async decide(role: Role, participation: Decision['participation'], contribution: string, publicRoles: Role[] = [], scene?: import('./workers.ts').SceneContext, onThinking?: (text: string) => void, lore?: LoreEntry[], recentScene?: string): Promise<Decision> {
@@ -653,9 +631,9 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       const normalized = normalizeRoleDecision(result)
       if (normalized) return { roleId: role.id, participation, status: 'completed', brief: normalized.brief, privateReaction: normalized.privateReaction, ...(normalized.publicIdentity ? { publicIdentity: normalized.publicIdentity } : {}), ...(normalized.impressions ? { impressions: normalized.impressions } : {}), thinking: thinking || undefined, usage }
       const retrySchema = { type: 'object', additionalProperties: true, properties: { brief: { type: 'string' }, privateReaction: { type: 'string' } }, required: ['brief', 'privateReaction'] }
-      const retrySystem = renderPrompt(getPrompts().role.retrySystem, { roleName: role.name })
-      const retryUser = renderPrompt(getPrompts().role.retryUser, { contribution: contribution || '玩家空过。' })
-      const retryCoreResult = options.requestModel ? await requestCore<unknown>({ requestId: `role-decision-retry:${role.id}:${turnIdFromScene(scene)}:${++coreRequestSequence}`, capability: 'role.decision.retry', prompt: { system: retrySystem, user: retryUser, metadata: { capability: 'role.decision.retry', strategyId: 'stagecraft.director.role-decision-retry' } }, contract: { id: 'role.decision.retry', version: '1.0.0', schema: retrySchema }, tool: nativeTool('submit_role_decision', '提交角色本轮公开意图和私有即时反应。', retrySchema), thinkingStrength: role.thinkingStrength ?? options.roleThinkingStrength, route: { role: role.id, ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { model: role.modelOverride } : {}), purpose: 'director.role-decision' }, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId: scene?.turnId ?? turnIdFromScene(scene), actor: 'role', roleId: role.id } }, stream: true }, collectUsage) : undefined
+      const retrySystem = rendered.system
+      const retryUser = rendered.user
+      const retryCoreResult = options.requestModel ? await requestCore<unknown>({ requestId: `role-decision-retry:${role.id}:${turnIdFromScene(scene)}:${++coreRequestSequence}`, capability: 'role.decision.retry', prompt: { system: retrySystem, user: retryUser, messages: rendered.messages, metadata: { capability: 'role.decision.retry', strategyId: 'stagecraft.director.role-decision-retry' } }, contract: { id: 'role.decision.retry', version: '1.0.0', schema: retrySchema }, tool: nativeTool('submit_role_decision', '提交角色本轮公开意图和私有即时反应。', retrySchema), thinkingStrength: role.thinkingStrength ?? options.roleThinkingStrength, route: { role: role.id, ...(role.providerId ? { providerId: role.providerId } : {}), ...(role.modelOverride ? { model: role.modelOverride } : {}), purpose: 'director.role-decision' }, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId: scene?.turnId ?? turnIdFromScene(scene), actor: 'role', roleId: role.id } }, stream: true }, collectUsage) : undefined
       if (retryCoreResult?.thinking) thinking += retryCoreResult.thinking
       const retry = retryCoreResult?.output ?? await getRoleGateway(role).completeStreaming<unknown>(retrySystem, retryUser, 'minimal_role_decision', retrySchema, { name: 'submit_role_decision', description: '提交角色本轮公开意图和私有即时反应。', parameters: retrySchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: role.thinkingStrength })
       const recovered = normalizeRoleDecision(retry)
@@ -697,9 +675,9 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         return { id: `draft-${Date.now()}`, turnId, ...normalized, thinking: thinking || undefined, usage, createdAt: new Date().toISOString() }
       }
       const retrySchema = { type: 'object', additionalProperties: true, properties: { text: { type: 'string' }, stateUpdates: { type: 'object' } }, required: ['text', 'stateUpdates'] }
-      const retrySystem = getPrompts().director.retrySystem
-      const retryUser = renderPrompt(getPrompts().director.retryUser, { request })
-      const retryCoreResult = options.requestModel ? await requestCore<unknown>({ requestId: `director-draft-retry:${turnId}:${++coreRequestSequence}`, capability: 'director.draft.retry', prompt: { system: retrySystem, user: retryUser, metadata: { capability: 'director.draft.retry', strategyId: 'stagecraft.director.draft-retry' } }, contract: { id: 'minimal_story_draft', version: '1.0.0', schema: retrySchema }, tool: nativeTool('submit_story_draft', '提交最小可审批场景草稿。', retrySchema), thinkingStrength: directorThinking, route: directorRoute, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId, actor: 'director' } }, stream: true }, collectUsage) : undefined
+      const retrySystem = rendered.system
+      const retryUser = rendered.user
+      const retryCoreResult = options.requestModel ? await requestCore<unknown>({ requestId: `director-draft-retry:${turnId}:${++coreRequestSequence}`, capability: 'director.draft.retry', prompt: { system: retrySystem, user: retryUser, messages: rendered.messages, metadata: { capability: 'director.draft.retry', strategyId: 'stagecraft.director.draft-retry' } }, contract: { id: 'minimal_story_draft', version: '1.0.0', schema: retrySchema }, tool: nativeTool('submit_story_draft', '提交最小可审批场景草稿。', retrySchema), thinkingStrength: directorThinking, route: directorRoute, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId, actor: 'director' } }, stream: true }, collectUsage) : undefined
       if (retryCoreResult?.thinking) thinking += retryCoreResult.thinking
       const retry = retryCoreResult?.output ?? await directorGateway.completeStreaming<unknown>(retrySystem, retryUser, 'minimal_story_draft', retrySchema, { name: 'submit_story_draft', description: '提交最小可审批场景草稿。', parameters: retrySchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: directorThinking })
       const recovered = normalizeDirectorDraft(retry)
@@ -718,15 +696,16 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
     async consult(draft: Draft, messages: ConsultationMessage[], playerText: string, requestContext?: { roomId?: string; turnId?: string }): Promise<{ text: string; usage?: import('./types.ts').TokenUsage }> {
       let usage: import('./types.ts').TokenUsage | undefined
       const collectUsage = (u: { promptTokens: number; completionTokens: number }) => { usage = u }
-      const system = getPrompts().skills.consultation
-      const user = renderPrompt(getPrompts().consult.user, {
+      const rendered = renderGameplayPrompt('director.consult', {
           draftText: draft.text,
           settingProposals: JSON.stringify(draft.settingProposals),
           consultations: messages.map(message => `${message.role}: ${message.text}`).join('\n'),
           playerText,
         })
+      const system = rendered.system
+      const user = rendered.user
       const schema = { type: 'object', additionalProperties: false, properties: { text: { type: 'string' } }, required: ['text'] }
-      const coreResult = options.requestModel ? await requestCore<{ text: string }>({ requestId: `director-consult:${requestContext?.roomId ?? 'room'}:${requestContext?.turnId ?? `turn-${Date.now()}`}:${++coreRequestSequence}`, capability: 'director.consult', prompt: { system, user, metadata: { capability: 'director.consult', strategyId: 'stagecraft.director.consult' } }, contract: { id: 'director_consultation', version: '1.0.0', schema }, tool: nativeTool('submit_director_consultation', '提交导演对玩家咨询的简短回答。', schema), thinkingStrength: directorThinking, route: { ...(options.directorProviderId ? { providerId: options.directorProviderId } : {}), ...(options.directorModel ? { model: options.directorModel } : {}), purpose: 'director.consult' }, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: requestContext?.roomId, turnId: requestContext?.turnId ?? `turn-${Date.now()}`, actor: 'director' } }, stream: false }, collectUsage) : undefined
+      const coreResult = options.requestModel ? await requestCore<{ text: string }>({ requestId: `director-consult:${requestContext?.roomId ?? 'room'}:${requestContext?.turnId ?? `turn-${Date.now()}`}:${++coreRequestSequence}`, capability: 'director.consult', prompt: { system, user, messages: rendered.messages, metadata: { capability: 'director.consult', strategyId: 'stagecraft.director.consult' } }, contract: { id: 'director_consultation', version: '1.0.0', schema }, tool: nativeTool('submit_director_consultation', '提交导演对玩家咨询的简短回答。', schema), thinkingStrength: directorThinking, route: { ...(options.directorProviderId ? { providerId: options.directorProviderId } : {}), ...(options.directorModel ? { model: options.directorModel } : {}), purpose: 'director.consult' }, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: requestContext?.roomId, turnId: requestContext?.turnId ?? `turn-${Date.now()}`, actor: 'director' } }, stream: false }, collectUsage) : undefined
       const result = coreResult?.output ?? await directorGateway.complete<{ text: string }>(system, user, 'director_consultation', schema, { name: 'submit_director_consultation', description: '提交导演对玩家咨询的简短回答。', parameters: schema }, { onUsage: collectUsage }, { thinkingStrength: directorThinking })
       if (!result || typeof result.text !== 'string' || !result.text.trim()) throw new Error('Director consultation output is missing text.')
       return { text: result.text, ...(usage ? { usage } : {}) }
@@ -742,9 +721,10 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         required: ['text'],
       }
       const schema = { type: 'object', additionalProperties: false, properties: { entries: { type: 'array', items: entrySchema }, currentState: { type: 'string', description: '可选。该角色消化这段剧情后最新的人物状态（所处位置、身体/情绪/处境变化），用一句到两句现在时描述；没有变化可省略。' } }, required: ['entries'] }
+      const rendered = renderGameplayPrompt('director.memory-digest', { roleName: role.name, sceneText: scene.text })
       const result = await gateway.completeStreaming<{ entries?: import('./types.ts').MemoryDigestEntry[]; currentState?: string }>(
-        renderPrompt(getPrompts().role.digestSystem, { roleName: role.name }),
-        renderPrompt(getPrompts().role.digestUser, { sceneText: scene.text }),
+        rendered.system,
+        rendered.user,
         'memory_digest',
         schema,
         { name: 'submit_memory_digest', description: '提交该角色从场景正文中提取的结构化私有记忆与最新状态。', parameters: schema },

@@ -14,7 +14,6 @@ val webUiSource = rootProject.projectDir.parentFile.resolve("public")
 val generatedWebUi = layout.buildDirectory.dir("generated/android-web")
 val packageRemoteRenderer by tasks.registering(Copy::class) {
     from(rendererSource)
-    from(rootProject.projectDir.parentFile.resolve("prompts")) { into("prompts") }
     // The APK ships only curated built-in stories. User/private stories remain on their owner device.
     from(rootProject.projectDir.parentFile.resolve("stories/default")) { into("stories/default") }
     into(generatedRendererSource)
@@ -22,10 +21,9 @@ val packageRemoteRenderer by tasks.registering(Copy::class) {
         delete(generatedRendererSource.get().asFile.resolve("stories"))
     }
     include("index.html", "styles.css", "renderer.js", "web/local-runtime-web-entry.js")
-    include("prompts.json", "prompts/prompts.json")
     include("*.json", "stories/*.json", "default/*.json", "stories/default/*.json", "*.assets/**", "default/*.assets/**", "stories/default/*.assets/**")
-    // 打包布局契约：prompts/prompts.json 与 stories/default/*.json(+ .assets)
-    // 是 Android 侧只读内置资源；玩家私有剧本存入应用私有数据库，不进入 APK。
+    // 打包布局契约：stories/default/*.json(+ .assets) 是 Android 侧只读内置资源；
+    // 玩家私有剧本与提示词预设存入应用私有数据库，不进入 APK。
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
 val buildEmbeddedCore by tasks.registering(Exec::class) {

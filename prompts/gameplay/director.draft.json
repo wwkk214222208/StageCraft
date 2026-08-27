@@ -2,6 +2,7 @@
     "mode":  "director",
     "scope":  "director.draft",
     "name":  "导演模式 · 场景草稿",
+    "userEditable":  true,
     "components":  [
                        {
                            "id":  "director.draft.identity",

@@ -153,7 +153,7 @@
         return respondJson(200, { route: configured ? '离线' : '模拟', model: configured ? core.getProvider().model : '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: configured ? 'offline' : 'fake', billing: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
       },
       '/api/billing': () => respondJson(200, { prices: {}, stats: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } }),
-      '/api/prompts/presets': () => { const data = nativeInvokeSync('preset.list', {}); return respondJson(200, { presets: Array.isArray(data.presets) ? data.presets : [], activeByScope: data.activeByScope ?? {}, modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], promptTemplates: null, gameplayScenarios: {} }) },
+      '/api/prompts/presets': () => { const data = nativeInvokeSync('preset.list', {}); return respondJson(200, { presets: Array.isArray(data.presets) ? data.presets : [], activeByScope: data.activeByScope ?? {}, modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], gameplayScenarios: {} }) },
       '/api/prompts/private-toggles': () => respondJson(200, {}),
       '/api/roles/memories': (params) => {
         const roleId = String(params.get('roleId') ?? '')

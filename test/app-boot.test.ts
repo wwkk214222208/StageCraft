@@ -147,9 +147,6 @@ test('remote sync endpoint imports pushed prompt presets and serves them back', 
   const dataDir = mkdtempSync(join(tmpdir(), 'rp-sync-test-'))
   const saveRoot = mkdtempSync(join(tmpdir(), 'rp-sync-save-'))
   writeFileSync(join(dataDir, 'providers.json'), JSON.stringify({ providers: [] }), 'utf8')
-  // /api/prompts/presets 的 GET 处理器会 loadPrompts(promptsFilePath)——只需要一个
-  // 可解析的占位文件，缺失字段会合并进仓库默认模板；不依赖 prompts/prompts.json 旧格式。
-  writeFileSync(join(dataDir, 'prompts.json'), '{}', 'utf8')
   const app = await startTavern({ root, dataDir, saveRoot, promptsFilePath: join(dataDir, 'prompts.json'), port: 0, host: '127.0.0.1', remoteAccess: { enabled: true } })
   try {
     const address = await new Promise<{ port: number }>((resolve, reject) => {

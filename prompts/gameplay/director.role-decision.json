@@ -2,6 +2,7 @@
   "mode": "director",
   "scope": "director.role-decision",
   "name": "导演模式 · 角色决策",
+  "userEditable": true,
   "components": [
     {
       "id": "director.role.persona",

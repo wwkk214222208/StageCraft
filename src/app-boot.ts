@@ -19,7 +19,7 @@ import { createStoryPackage, listStoryPackages, loadStoryPackage, resolveStoryAs
 import { collectStoryArchiveEntries, createStoredZip } from './story-package-archive.ts'
 import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
-import { PROMPT_PRESET_SCOPES, deletePromptPreset, getPromptPresetState, loadGameplayScenario, loadPrompts, setPromptPresetForScope, setPromptsFilePath, setUserPromptsDir, updatePromptPreset, loadPrivateToggles, savePrivateToggle, mergePrivateToggles, type PromptTemplates } from './prompts.ts'
+import { deletePromptPreset, getPromptPresetState, loadGameplayScenario, setPromptPresetForScope, setPromptsFilePath, setUserPromptsDir, updatePromptPreset, loadPrivateToggles, savePrivateToggle, mergePrivateToggles, userEditableScopes } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
 import { CreatorWorkbenchService } from './creator-workbench-service.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
@@ -89,7 +89,7 @@ export interface TavernOptions {
   saveRoot?: string
   /** data/ 数据目录（默认 <root>/data） */
   dataDir?: string
-  /** prompts.json 路径（默认 <root>/prompts/prompts.json） */
+  /** 提示词目录锚点文件路径（默认 <root>/prompts/prompts.json；仅取其目录定位 prompts/custom 与 prompts/gameplay）。 */
   promptsFilePath?: string
   /**
    * 用户数据根目录（插件模式：AppData 下，卸载重装不丢数据）。
@@ -649,7 +649,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       if (url.pathname === '/api/billing' && request.method === 'GET') return json(response, 200, { prices: billing.getPrices(), stats: billing.getStats() })
       if (url.pathname === '/api/billing/prices' && request.method === 'PUT') { const body = await readJson(request); return json(response, 200, { prices: billing.savePrices(body), stats: billing.getStats() }) }
       if (url.pathname === '/api/billing/reset' && request.method === 'POST') { billing.resetStats(); return json(response, 200, billing.getStats()) }
-      if (url.pathname === '/api/prompts/presets' && request.method === 'GET') { const presetState = getPromptPresetState(promptsFilePath); return json(response, 200, { ...presetState, presets: mergePrivateToggles(presetState.presets, loadPrivateToggles(promptsFilePath)), modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], promptTemplates: loadPrompts(promptsFilePath), gameplayScenarios: Object.fromEntries(PROMPT_PRESET_SCOPES.map(scope => [scope, loadGameplayScenario(scope, promptsFilePath)])) }) }
+      if (url.pathname === '/api/prompts/presets' && request.method === 'GET') { const presetState = getPromptPresetState(promptsFilePath); return json(response, 200, { ...presetState, presets: mergePrivateToggles(presetState.presets, loadPrivateToggles(promptsFilePath)), modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], gameplayScenarios: Object.fromEntries(userEditableScopes(promptsFilePath).map(scope => [scope, loadGameplayScenario(scope, promptsFilePath)])) }) }
       if (url.pathname === '/api/prompts/private-toggles' && request.method === 'GET') return json(response, 200, loadPrivateToggles(promptsFilePath))
       if (url.pathname === '/api/prompts/private-toggles' && request.method === 'PUT') {
         const body = await readJson(request)

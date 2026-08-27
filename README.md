@@ -109,8 +109,7 @@ android/                     安卓工程（远程模式 APK；本地运行在�
 dsh-rp/                      dsh 适配壳（见其 README）
 public/                      前端（原生 JS / CSS）
 stories/default/eldoria.json   默认剧本（含 eldoria.assets/ 角色肖像）
-prompts/prompts.json           提示词分组（role / director / consult / skills / chat）
-prompts/gameplay/              玩法场景提示词（各 scope 组件 + templatePath，后端下发）
+prompts/gameplay/              玩法场景提示词（每 scope 一个文件；userEditable=true 的场景可被用户在预设编辑器中改动，其余为内部提示词，后端不下发）
 scripts/build-android-core.mjs
 ```
 

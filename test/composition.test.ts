@@ -40,10 +40,9 @@ test('portable composition keeps core state commit and restore synchronous', () 
   assert.deepEqual(repository.restore('room'), snapshot)
 })
 
-test('portable composition parses native prompt and story sources and transports model requests', async () => {
+test('portable composition parses native story sources and transports model requests', async () => {
   const operations: NativeOperations = {
     invoke(operation) {
-      if (operation === 'prompts.read') return JSON.stringify({ role: {}, director: {}, consult: {}, skills: {}, chat: {} })
       if (operation === 'story.read') return JSON.stringify({ id: 'story', title: 'Story', opening: 'Open', playerCharacter: { name: 'P', persona: 'P', currentState: 'P' }, roles: [] })
       if (operation === 'model.request') return { requestId: 'request', output: { ok: true } }
       return undefined
@@ -51,7 +50,6 @@ test('portable composition parses native prompt and story sources and transports
   }
   const composition = createPortableComposition(operations)
   assert.equal((await composition.sources.story('story')).id, 'story')
-  assert.equal((await composition.sources.prompts()).chat !== undefined, true)
   const result = await composition.model.request({ requestId: 'request', capability: 'test', prompt: { system: '', user: '' }, contract: { id: 'test', version: '1', schema: {} } })
   assert.deepEqual(result.output, { ok: true })
 })

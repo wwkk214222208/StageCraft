@@ -2,6 +2,7 @@
   "mode": "chat",
   "scope": "chat.world-director",
   "name": "群聊模式 · 世界导演",
+  "userEditable": true,
   "components": [
     {
       "id": "chat.world.identity",

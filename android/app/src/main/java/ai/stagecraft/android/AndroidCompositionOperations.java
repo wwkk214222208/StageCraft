@@ -169,10 +169,6 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
     @Override public void invoke(String operation, JSONObject input, Callback callback) {
         executor.execute(() -> {
             try {
-                if ("prompts.read".equals(operation)) {
-                    callback.onResult(new JSONObject().put("value", readAssetText("prompts/prompts.json")));
-                    return;
-                }
                 if ("story.read".equals(operation)) {
                     String id = JsonSafety.requiredString(input, "id", 128);
                     validateStoryId(id);

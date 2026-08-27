@@ -2,6 +2,7 @@
   "mode": "chat",
   "scope": "chat.role-speech",
   "name": "群聊模式 · 角色发言",
+  "userEditable": true,
   "components": [
     {
       "id": "chat.role.persona",

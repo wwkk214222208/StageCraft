@@ -161,7 +161,7 @@ test('Android embedded Core is generated, verified, and selected locally', () =>
   assert.match(gradle, /inputs\.dir\(coreSourceRoot\)/)
   assert.match(gradle, /--output-dir/)
   assert.match(gradle, /embedded-core\.js.*embedded-core\.json/s)
-  assert.match(gradle, /prompts\/prompts\.json/)
+  assert.doesNotMatch(gradle, /prompts\/prompts\.json/)
   assert.match(gradle, /stories\/\*\.json/)
   assert.match(entrypoint, /createAndroidComposition/)
   assert.match(entrypoint, /StageCraftEmbeddedCore/)
