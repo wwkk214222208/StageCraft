@@ -9,11 +9,6 @@ function getPrompts(): PromptTemplates {
   return prompts
 }
 
-/** 提示词被编辑保存后调用，使下次调用重新从文件加载 */
-export function reloadPrompts(): void {
-  prompts = undefined
-}
-
 export interface ModelRoute {
   name?: string
   baseUrl: string

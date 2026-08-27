@@ -154,7 +154,6 @@
       },
       '/api/billing': () => respondJson(200, { prices: {}, stats: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } }),
       '/api/prompts/presets': () => { const data = nativeInvokeSync('preset.list', {}); return respondJson(200, { presets: Array.isArray(data.presets) ? data.presets : [], activeByScope: data.activeByScope ?? {}, modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], promptTemplates: null, gameplayScenarios: {} }) },
-      '/api/prompts': () => respondJson(200, { files: [], presets: [] }),
       '/api/prompts/private-toggles': () => respondJson(200, {}),
       '/api/roles/memories': (params) => {
         const roleId = String(params.get('roleId') ?? '')
@@ -396,8 +395,6 @@
     '/api/billing/reset': '计费重置',
     '/api/prompts/private-toggles': '预设私设开关',
     '/api/prompts/import-st': 'ST 预设导入',
-    '/api/prompts': '灵感（理念）编辑',
-    '/api/prompts/rename': '灵感（理念）重命名',
     '/api/remote/revoke': '远程会话管理',
   }
 

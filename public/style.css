@@ -206,13 +206,6 @@
 .impression-row .impression-del:hover{color:#ffc4b8}
 #inspector-impression-add{background:none;border:1px dashed #5686fe;color:#b7c8fe;padding:4px 10px;font-size:12px;border-radius:4px;margin-top:6px;cursor:pointer;width:100%}
 #inspector-impression-add:hover{background:#2b3449}
-#prompts-modal{width:720px;max-width:92vw}
-#prompts-modal form{display:flex;flex-direction:column;gap:10px;padding:14px;max-height:86vh;overflow-y:auto}
-#prompts-modal details{border:1px solid #3a4a6e;border-radius:5px;background:#1f2739}
-#prompts-modal summary{cursor:pointer;padding:7px 10px;color:#b7c8fe;font-size:12px;font-weight:600}
-#prompts-modal .prompt-textarea{width:100%;min-height:110px;background:#1b2133;color:#e4edfd;border:0;border-top:1px solid #3a4a6e;padding:8px 10px;font:12px/1.5 ui-monospace,Consolas,monospace;resize:vertical}
-#prompts-modal .prompts-footer{display:flex;justify-content:flex-end}
-#prompts-modal .prompt-file-actions{display:flex;gap:10px;margin:2px 0 6px}
 
 #role-modal header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #3a4a6e;flex:0 0 auto}
 #role-modal header h3{margin:0;color:#b7c8fe;font:600 17px Georgia,serif}

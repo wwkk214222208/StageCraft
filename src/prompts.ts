@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -8,12 +8,6 @@ export interface PromptTemplates {
   consult: { user: string }
   skills: { director: string; consultation: string }
   chat: { system: string; user: string; directorChatSystem: string; directorChatUser: string }
-}
-
-/** 鍒涗綔鐞嗗康锛堢鏈夛紝闅忛」鐩繚鐣欑洰褰曚絾涓嶆彁浜ゅ唴瀹癸級锛氳鑹蹭笘鐣岃繍琛屽師鍒?+ 导演创作宪法/文风 */
-export interface PromptIdeology {
-  roleIdeals?: string
-  directorIdeals?: string
 }
 
 export interface PromptNode {
@@ -171,7 +165,6 @@ function readPresetState(filePath?: string): PromptPresetState {
     return { presets: Array.isArray(data.presets) ? data.presets.map(normalizePreset) : [normalizePreset({ id: 'default', name: '默认预设' }, 0)], activeByScope: data.activeByScope ?? {} }
   } catch { return { presets: [normalizePreset({ id: 'default', name: '默认预设', enabled: true }, 0)], activeByScope: {} } }
 }
-export function listPromptPresets(filePath?: string): PromptPreset[] { return readPresetState(filePath).presets }
 export function getPromptPresetState(filePath?: string): PromptPresetState { return readPresetState(filePath) }
 export function savePromptPresets(presets: PromptPreset[], filePath?: string, activeByScope: Partial<Record<PromptPresetScope, string>> = readPresetState(filePath).activeByScope): void {
   const stored = presets.map(normalizePreset).map(preset => ({ ...preset, scenarios: Object.fromEntries(Object.entries(preset.scenarios ?? {}).map(([scope, scenario]) => { const nodes = scenario.nodes ?? []; return [scope, { ...(scenario.forceThinkingOff === true ? { forceThinkingOff: true } : {}), order: nodes.map(node => node.runtimeBinding ?? node.id), privateNodes: nodes.filter(node => node.type === 'user' && node.removable !== false), regexRules: scenario.regexRules }] })), nodes: preset.nodes.filter(node => node.type === 'user' && node.removable !== false) }))
@@ -270,113 +263,6 @@ function customDir(filePath?: string): string {
   if (filePath) return join(dirname(filePath), 'custom')
   if (activeUserPromptsDir) return activeUserPromptsDir
   return join(dirname(getPromptsFilePath()), 'custom')
-}
-
-/** 绉佹湁鐞嗗康鏂囦欢锛?鐢ㄦ埛鎻愮ず璇嶇洰褰?/ideology.json（默认）；若 active.json 指定了其他文件则用该文件 */
-export function loadIdeology(filePath?: string): PromptIdeology {
-  const dir = customDir(filePath)
-  const active = join(dir, 'active.json')
-  if (existsSync(active)) {
-    try {
-      const record = JSON.parse(readFileSync(active, 'utf8')) as { file?: string }
-      const target = join(dir, String(record.file ?? ''))
-      if (record.file && existsSync(target)) return loadIdeologyFile(target)
-    } catch { /* 损坏则回退默认 */ }
-  }
-  const fallback = join(dir, 'ideology.json')
-  return existsSync(fallback) ? loadIdeologyFile(fallback) : {}
-}
-
-/** 激活指定提示词文件：写 active.json锛涙鍚?loadPrompts 注入该文件的理念 */
-export function setActiveIdeologyFile(name: string, filePath?: string): void {
-  const dir = customDir(filePath)
-  mkdirSync(dir, { recursive: true })
-  const safe = name.endsWith('.json') ? name : `${name}.json`
-  writeFileSync(join(dir, 'active.json'), `${JSON.stringify({ file: safe }, null, 2)}\n`, 'utf8')
-}
-
-/** 提示词文件名是否合法（仅允许写入 prompts/custom/ 下的 json；空/越界返回 false锛?*/
-export function isValidIdeologyFileName(name: string): boolean {
-  return /^[\w\u4e00-\u9fff-]+\.json$/.test(name)
-}
-
-/** 受保护的内部文件：不能被删除/改名 */
-function isProtected(file: string): boolean {
-  return file === 'active.json' || file === 'ideology.json'
-}
-
-function ideologyDir(filePath?: string): string {
-  return customDir(filePath)
-}
-
-/** 删除提示词文件；受保护文件（active.json / ideology.json锛夎繑鍥?false */
-export function removeIdeologyFile(name: string, filePath?: string): boolean {
-  const file = name.endsWith('.json') ? name : `${name}.json`
-  if (!isValidIdeologyFileName(file) || isProtected(file)) return false
-  const target = join(ideologyDir(filePath), file)
-  if (!existsSync(target)) return false
-  rmSync(target)
-  return true
-}
-
-/** 重命名提示词文件；受保护文件返回 false；若重命名的是激活文件则同步 active.json */
-export function renameIdeologyFile(from: string, to: string, filePath?: string): boolean {
-  const fromFile = from.endsWith('.json') ? from : `${from}.json`
-  const toFile = to.endsWith('.json') ? to : `${to}.json`
-  if (!isValidIdeologyFileName(fromFile) || !isValidIdeologyFileName(toFile) || isProtected(fromFile)) return false
-  const dir = ideologyDir(filePath)
-  const source = join(dir, fromFile)
-  if (!existsSync(source) || existsSync(join(dir, toFile))) return false
-  renameSync(source, join(dir, toFile))
-  const active = join(dir, 'active.json')
-  if (existsSync(active)) {
-    try {
-      const record = JSON.parse(readFileSync(active, 'utf8')) as { file?: string }
-      if (record.file === fromFile) setActiveIdeologyFile(toFile, filePath)
-    } catch { /* 蹇界暐鎹熷潖鐨?active.json */ }
-  }
-  return true
-}
-
-/** 淇濆瓨鍒涗綔鐞嗗康鍒?<鐢ㄦ埛鎻愮ず璇嶇洰褰?/{name}.json锛堢鏈夛紝涓嶈繘浠撳簱锛?*/
-export function saveIdeologyFile(name: string, ideology: PromptIdeology, filePath?: string): void {
-  const safe = name.endsWith('.json') ? name : `${name}.json`
-  const dir = customDir(filePath)
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, safe), `${JSON.stringify(ideology, null, 2)}\n`, 'utf8')
-}
-
-/** 列出 <鐢ㄦ埛鎻愮ず璇嶇洰褰?/ 下的全部提示词文件（含各自内容），供编辑页下拉选择 */
-export function listIdeologyFiles(filePath?: string): Array<{ name: string; roleIdeals: string; directorIdeals: string }> {
-  const dir = customDir(filePath)
-  if (!existsSync(dir)) return []
-  return readdirSync(dir)
-    .filter(name => name.endsWith('.json') && name !== 'active.json')
-    .map(name => {
-      const data = loadIdeologyFile(join(dir, name))
-      return { name, roleIdeals: data.roleIdeals ?? '', directorIdeals: data.directorIdeals ?? '' }
-    })
-    .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
-}
-
-/** 读取任意 custom 提示词文件（按绝对路径） */
-function loadIdeologyFile(path: string): PromptIdeology {
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as PromptIdeology
-    return {
-      ...(typeof parsed.roleIdeals === 'string' ? { roleIdeals: parsed.roleIdeals } : {}),
-      ...(typeof parsed.directorIdeals === 'string' ? { directorIdeals: parsed.directorIdeals } : {}),
-    }
-  } catch {
-    return {}
-  }
-}
-
-/** 鎶?{roleIdeals}/{directorIdeals} 鍗犱綅绗︽崲鎴愮鏈夌悊蹇碉紱缂哄け鍒欐浛鎹负绌轰覆锛堜笉鐣欏崰浣嶇娉勬紡锛?*/
-function applyIdeology(templates: PromptTemplates, ideology: PromptIdeology): void {
-  templates.role.system = templates.role.system.replace('{roleIdeals}', ideology.roleIdeals ?? '')
-  templates.skills.director = templates.skills.director.replace('{directorIdeals}', ideology.directorIdeals ?? '')
-  templates.chat.directorChatSystem = templates.chat.directorChatSystem.replace('{directorIdeals}', ideology.directorIdeals ?? '')
 }
 
 /** 加载提示词模板；可用环境变量 PROMPTS_FILE 指向自定义文件；自动合并私有创作理念 */

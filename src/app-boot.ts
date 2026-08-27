@@ -14,12 +14,12 @@ import { fileURLToPath } from 'node:url'
 import { Store } from './store.ts'
 import { NodeSqliteRepository } from './platform/node-sqlite-repository.ts'
 import { RoomRuntime } from './room-runtime.ts'
-import { ModelGateway, createRealWorkers, reloadPrompts, routeFromEnvironment } from './model-gateway.ts'
+import { ModelGateway, createRealWorkers, routeFromEnvironment } from './model-gateway.ts'
 import { createStoryPackage, listStoryPackages, loadStoryPackage, resolveStoryAssetFile, saveStoryAsPackage, saveStoryPackage, storyAssetsDir, storyPortraitUrl, type StoryPackage } from './story-packages.ts'
 import { collectStoryArchiveEntries, createStoredZip } from './story-package-archive.ts'
 import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
-import { PROMPT_PRESET_SCOPES, deletePromptPreset, getPromptPresetState, listIdeologyFiles, listPromptPresets, loadGameplayScenario, loadPrompts, removeIdeologyFile, renameIdeologyFile, saveIdeologyFile, setActiveIdeologyFile, setPromptPresetForScope, setPromptsFilePath, setUserPromptsDir, updatePromptPreset, loadPrivateToggles, savePrivateToggle, mergePrivateToggles, type PromptTemplates } from './prompts.ts'
+import { PROMPT_PRESET_SCOPES, deletePromptPreset, getPromptPresetState, loadGameplayScenario, loadPrompts, setPromptPresetForScope, setPromptsFilePath, setUserPromptsDir, updatePromptPreset, loadPrivateToggles, savePrivateToggle, mergePrivateToggles, type PromptTemplates } from './prompts.ts'
 import { importStCard } from './st-card-import.ts'
 import { CreatorWorkbenchService } from './creator-workbench-service.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
@@ -680,29 +680,6 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       if (url.pathname === '/api/prompts/import-st' && request.method === 'POST') {
         const body = await readJson(request)
         return json(response, 200, { ok: true, result: convertSillyTavernPreset(String(body.source ?? '').slice(0, 8_000_000), String(body.message ?? '')) })
-      }
-      if (url.pathname === '/api/prompts' && request.method === 'GET') {
-        return json(response, 200, { files: listIdeologyFiles(promptsFilePath), presets: listPromptPresets(promptsFilePath) })
-      }
-      if (url.pathname === '/api/prompts' && request.method === 'POST') {
-        const body = await readJson(request)
-        // 只允许写入 prompts/custom/ 下的 json 文件名（防路径穿越）
-        const name = /^[\w\u4e00-\u9fff-]+(\.json)?$/.test(String(body.name ?? '')) ? String(body.name).replace(/\.json$/, '') : 'ideology'
-        saveIdeologyFile(name, { roleIdeals: String(body.role ?? ''), directorIdeals: String(body.director ?? '') }, promptsFilePath)
-        if (body.activate !== false) setActiveIdeologyFile(name, promptsFilePath)
-        reloadPrompts()
-        return json(response, 200, { ok: true, files: listIdeologyFiles(promptsFilePath) })
-      }
-      if (url.pathname === '/api/prompts/rename' && request.method === 'POST') {
-        const body = await readJson(request)
-        const ok = renameIdeologyFile(String(body.from ?? ''), String(body.to ?? ''), promptsFilePath)
-        if (ok) reloadPrompts()
-        return json(response, ok ? 200 : 400, { ok, files: ok ? listIdeologyFiles(promptsFilePath) : [] })
-      }
-      if (url.pathname === '/api/prompts' && request.method === 'DELETE') {
-        const ok = removeIdeologyFile(String(url.searchParams.get('name') ?? ''), promptsFilePath)
-        if (ok) reloadPrompts()
-        return json(response, ok ? 200 : 400, { ok, files: ok ? listIdeologyFiles(promptsFilePath) : [] })
       }
       if (url.pathname === '/api/events') return events(request, response, url.searchParams.get('id') ?? roomId)
       if (url.pathname === '/api/thinking-events') return thinkingEvents(request, response, url.searchParams.get('id') ?? roomId)
