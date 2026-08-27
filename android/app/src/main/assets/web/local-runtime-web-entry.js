@@ -8,6 +8,8 @@
  */
 (function () {
   'use strict'
+  // 本地运行模式标志：即使本地 Core 未就绪也先标记，供前端（同步区、错误提示等）按本地运行时分支。
+  window.__STAGECRAFT_OFFLINE__ = true
   const core = window.StageCraftOfflineCore
   if (!core) throw new Error('本地 Core 未加载（local-runtime-web-entry.js 必须在 embedded-core.js 之后执行）。')
   const ROOM_ID = core.roomId || 'android-local-room'
@@ -567,6 +569,5 @@
   window.StageCraftSyncRemote = syncRemote
 
   // ── 连接徽标 ──
-  window.__STAGECRAFT_OFFLINE__ = true
   console.info('[offline] StageCraft 离线模式就绪（复用完整 Web UI）。')
 })()
