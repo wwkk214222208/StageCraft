@@ -12,6 +12,7 @@ public final class MainActivity extends Activity {
     private static final int PICK_CHARACTER_CARD = 7001;
     private WebView webView;
     private NativeBridge bridge;
+    private OfflineLoopbackServer offlineServer;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -36,9 +37,18 @@ public final class MainActivity extends Activity {
         EmbeddedCoreArtifact.Verification embeddedCore = EmbeddedCoreArtifact.verify(this);
         bridge = new NativeBridge(this, webView, new RemoteSessionStore(this), embeddedCore);
         webView.addJavascriptInterface(bridge, "StageCraftNative");
-        webView.setWebViewClient(new StageCraftWebViewClient(this, () -> bridge.currentCredential()));
+        // 离线完整 Web UI 走 127.0.0.1 环回服务器（http://localhost 常规 Web 语义，见 OfflineLoopbackServer）
+        OfflineLoopbackServer loopback = null;
+        try {
+            loopback = new OfflineLoopbackServer(this);
+        } catch (Exception initFailure) {
+            loopback = null;
+        }
+        offlineServer = loopback;
+        final OfflineLoopbackServer server = loopback;
+        webView.setWebViewClient(new StageCraftWebViewClient(this, () -> bridge.currentCredential(), server == null ? null : path -> server.urlFor(path)));
         setContentView(webView);
-        // 默认进入远程配对页（?mode=remote）；本地嵌入模式经配对页按钮进入（?mode=local）。
+        // 默认进入远程配对页（?mode=remote）；本地嵌入模式经配对页按钮进入 ?mode=local（离线 Web UI）。
         webView.loadUrl(StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html?mode=remote");
     }
 
@@ -78,6 +88,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if (offlineServer != null) offlineServer.close();
         if (bridge != null) bridge.close();
         if (webView != null) {
             webView.removeJavascriptInterface("StageCraftNative");

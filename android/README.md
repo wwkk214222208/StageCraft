@@ -34,7 +34,7 @@ The WebView loads only `https://appassets.androidplatform.net/` resources interc
 
 ## Offline full-UI mode (方案 B：完全离线复用 Web UI)
 
-配对页「本地模式（不连电脑，完整界面）」进入 `/web/offline.html`：**APK 内置 PC 端同一套完整 Web UI**（构建期由 Gradle 把根目录 `public/` 打包为 `assets/web/**` 并生成离线入口），游玩完全离线，模型调用经设备原生网络直连供应商。
+配对页「本地模式（不连电脑，完整界面）」经 `StageCraftWebViewClient.OfflineNavigation` 把主框架重写到 **应用内环回服务器**（`OfflineLoopbackServer`，127.0.0.1 随机端口）的 `/web/offline.html`：**APK 内置 PC 端同一套完整 Web UI**（构建期由 Gradle 把根目录 `public/` 打包为 `assets/web/**` 并生成离线入口），游玩完全离线，模型调用经设备原生网络直连供应商。环回 origin（http://localhost）按常规 Web 语义工作（ES module / fetch / EventSource / 安全上下文），`appassets://` 自定义 scheme 下 WebView 对 module 脚本支持不可靠，故仅承载配对页与身份边界；资产契约由 `LocalAssetResolver` 在 appassets 拦截与环回服务器之间共用。
 
 架构：
 

@@ -28,6 +28,9 @@ import java.util.Map;
  * - 页面自身通过补丁后的 fetch / XHR / EventSource 携带 Bearer（由注入 bootstrap 脚本完成，POST 等带 body 的请求保留原生通道）；
  * - 图片等无头请求（/assets、/story-assets、/custom）在 shouldInterceptRequest 里用 Bearer 重新拉取；
  * - 主页面 HTML 由这里以 Bearer 拉取并在 <head> 注入 bootstrap 脚本（早于 app.js 执行）。
+ *
+ * 离线模式：/web/* 主框架导航由 OfflineNavigation 重写到环回 HTTP 服务器
+ * （127.0.0.1），使完整 Web UI 以常规 Web 语义运行（见 OfflineLoopbackServer）。
  */
 public final class StageCraftWebViewClient extends WebViewClient {
     public static final String LOCAL_ORIGIN = "https://appassets.androidplatform.net";
@@ -37,12 +40,25 @@ public final class StageCraftWebViewClient extends WebViewClient {
         String currentCredential();
     }
 
+    /** 离线 Web UI 主框架导航重写：返回替代 URL（如环回地址），返回 null 保持默认。 */
+    public interface OfflineNavigation {
+        String rewriteMainFrame(String path);
+    }
+
     private final Context context;
     private final CredentialProvider credentialProvider;
+    private final LocalAssetResolver assetResolver;
+    private final OfflineNavigation offlineNavigation;
 
     public StageCraftWebViewClient(Context context, CredentialProvider credentialProvider) {
+        this(context, credentialProvider, null);
+    }
+
+    public StageCraftWebViewClient(Context context, CredentialProvider credentialProvider, OfflineNavigation offlineNavigation) {
         this.context = context;
         this.credentialProvider = credentialProvider;
+        this.assetResolver = new LocalAssetResolver(context.getAssets());
+        this.offlineNavigation = offlineNavigation;
     }
 
     @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
@@ -70,72 +86,33 @@ public final class StageCraftWebViewClient extends WebViewClient {
         Uri url = request.getUrl();
         String scheme = url.getScheme();
         String host = url.getHost();
+        String path = url.getPath() == null ? "/" : url.getPath();
+        // 离线模式：appassets 下的 /web/* 主框架导航重写到环回服务器（http://localhost 常规 Web 语义）
+        if ("https".equals(scheme) && "appassets.androidplatform.net".equals(host) && path.startsWith("/web/") && offlineNavigation != null) {
+            String target = offlineNavigation.rewriteMainFrame(path);
+            if (target != null && !target.isEmpty()) {
+                view.loadUrl(target);
+                return true;
+            }
+        }
         if ("https".equals(scheme) && "appassets.androidplatform.net".equals(host)) return false;
-        if ("http".equals(scheme) || "https".equals(scheme)) return false; // 远程 UI 保持在本 WebView 内
+        if ("http".equals(scheme) || "https".equals(scheme)) return false; // 远程 UI / 环回离线页保持在本 WebView 内
         return true;
     }
 
     private WebResourceResponse serveLocalAsset(Uri url) {
         String path = url.getPath() == null ? "/" : url.getPath();
-        String mime = mimeFor(path);
-        if (mime == null) return forbidden();
-        String assetPath = localAssetPath(path);
-        if (assetPath == null) return forbidden();
+        LocalAssetResolver.Resolved resolved = assetResolver.resolve(path);
+        if (resolved == null) return forbidden();
         try {
-            InputStream input = openLocalAsset(assetPath);
+            InputStream input = assetResolver.open(resolved.assetPath);
             if (input == null) return forbidden();
-            return new WebResourceResponse(mime, "UTF-8", input);
+            String mime = resolved.mime;
+            String encoding = mime != null && mime.startsWith("text/") || mime != null && mime.startsWith("application/") ? "UTF-8" : null;
+            return new WebResourceResponse(mime, encoding, input);
         } catch (IOException error) {
             return forbidden();
         }
-    }
-
-    /** 本地 asset 路径映射：配对页/核心文件在根目录；Web UI（public 打包）在 web/，
-     *  其中的资源公约为根路径引用（/app.js、/style.css、/core-client.js 等），映射到 web/；
-     *  头像资源 /assets/** 取自打包的 public/assets，剧本自包含资源 /story-assets/<id>/<file>
-     *  取自 stories/{default,custom}/<id>.assets/。拒绝路径穿越。 */
-    private static String localAssetPath(String path) {
-        if (path.contains("..")) return null;
-        if (path.startsWith("/story-assets/")) {
-            String remaining = path.substring("/story-assets/".length());
-            int slash = remaining.indexOf('/');
-            if (slash <= 0 || slash == remaining.length() - 1) return null;
-            String id = remaining.substring(0, slash);
-            String file = remaining.substring(slash + 1);
-            return id + ".assets/" + file; // resolved against stories/{default,custom}/
-        }
-        if (path.startsWith("/assets/") || path.startsWith("/custom/")) return "web" + path;
-        if (path.startsWith("/web/")) return path.substring(1);
-        // 根级引用：优先根资产（配对页 index.html/styles.css + 核心），否则回退 web/（Web UI 资源）。
-        return path.substring(1);
-    }
-
-    private static String mimeFor(String path) {
-        String lower = path.toLowerCase(Locale.ROOT);
-        if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
-        if (lower.endsWith(".js") || lower.endsWith(".mjs")) return "text/javascript";
-        if (lower.endsWith(".css")) return "text/css";
-        if (lower.endsWith(".json")) return "application/json";
-        if (lower.endsWith(".png")) return "image/png";
-        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-        if (lower.endsWith(".webp")) return "image/webp";
-        if (lower.endsWith(".gif")) return "image/gif";
-        if (lower.endsWith(".svg")) return "image/svg+xml";
-        if (lower.endsWith(".txt")) return "text/plain";
-        if (lower.endsWith(".map")) return "application/json";
-        return "application/octet-stream";
-    }
-
-    private InputStream openLocalAsset(String assetPath) throws IOException {
-        if (assetPath.contains(".assets/")) {
-            // /story-assets/<id>/<file>：先查 default，再查 custom
-            try { return context.getAssets().open("stories/default/" + assetPath); }
-            catch (IOException ignored) { return context.getAssets().open("stories/custom/" + assetPath); }
-        }
-        if (assetPath.startsWith("web/")) return context.getAssets().open(assetPath);
-        // 根级引用：先试根资产（配对页/核心），再回退 web/（Web UI 根引用资源，如 /app.js）
-        try { return context.getAssets().open(assetPath); }
-        catch (IOException ignored) { return context.getAssets().open("web/" + assetPath); }
     }
 
     private WebResourceResponse fetchWithToken(Uri url, String credential, boolean mainFrame) {
