@@ -9,8 +9,8 @@
 (function () {
   'use strict'
   // 本地运行模式标志：即使本地 Core 未就绪也先标记，供前端（同步区、错误提示等）按本地运行时分支。
-  window.__STAGECRAFT_OFFLINE__ = true
-  const core = window.StageCraftOfflineCore
+  window.__STAGECRAFT_LOCAL__ = true
+  const core = window.StageCraftLocalCore
   if (!core) throw new Error('本地 Core 未加载（local-runtime-web-entry.js 必须在 embedded-core.js 之后执行）。')
   const ROOM_ID = core.roomId || 'android-local-room'
 
@@ -20,7 +20,7 @@
     const listeners = channels[channel]
     if (!listeners || listeners.length === 0) return
     for (const listener of [...listeners]) {
-      try { listener(payload) } catch (error) { console.error('[offline] listener error', error) }
+      try { listener(payload) } catch (error) { console.error('[local] listener error', error) }
     }
   }
   function onChannel(channel, listener) {
@@ -33,13 +33,13 @@
     return { ...room, roles: (room.roles ?? []).map(role => ({ ...role, name: role.name ?? '', currentState: role.currentState ?? '', presence: role.presence ?? 'present', portraitRef: role.portraitRef ?? '/assets/default.svg', selfModel: role.selfModel ?? '', goals: role.goals ?? [], impressions: role.impressions ?? {}, memories: role.memories ?? [] })) }
   }
 
-  // ── 离线核心消息 → 频道 ──
+  // ── 本地核心消息 → 频道 ──
   core.start(messageStr => {
     let message
     try { message = typeof messageStr === 'string' ? JSON.parse(messageStr) : messageStr } catch { return }
     if (message.type === 'connection.state') {
-      if (message.state === 'connected') publish('core', { type: 'offline.connected' })
-      console.info('[offline]', message.state)
+      if (message.state === 'connected') publish('core', { type: 'local.connected' })
+      console.info('[local]', message.state)
     } else if (message.type === 'core.resync' || message.type === 'room.changed') {
       try { publish('room', publicRoomSnapshot(core.getRoom())) } catch { /* 房间尚未就绪 */ }
     } else if (message.type === 'thinking') {
@@ -47,7 +47,7 @@
     } else if (message.type === 'core.event') {
       publish('core', message.event)
     } else if (message.type === 'connection.error') {
-      console.error('[offline]', message.message)
+      console.error('[local]', message.message)
       publish('core', { type: 'error', message: message.message })
       if (typeof window.showOperationError === 'function') window.showOperationError('本地文件操作', new Error(message.message || '操作失败。'))
     }
@@ -55,7 +55,7 @@
 
   // ── SSE 模拟（EventSource 补丁）──
   const NativeEventSource = window.EventSource
-  class OfflineEventSource {
+  class LocalEventSource {
     constructor(url, options) {
       this.url = String(url)
       this.readyState = 0
@@ -65,7 +65,7 @@
       const channel = path.includes('thinking') ? 'thinking' : path.includes('debug') ? 'summary' : 'room'
       if (path.includes('debug')) {
         // 调试通道：无事件可发，保持连接
-        this._push('summary', { text: '离线模式调试摘要：仅记录本地生成事件。', at: new Date().toISOString() })
+        this._push('summary', { text: '本地模式调试摘要：仅记录本地生成事件。', at: new Date().toISOString() })
       } else if (channel === 'room') {
         try { this._push('room', publicRoomSnapshot(core.getRoom())) } catch { /* 稍后由消息流补齐 */ }
       }
@@ -76,7 +76,7 @@
     _push(eventName, payload) {
       const event = new MessageEvent(eventName, { data: typeof payload === 'string' ? payload : JSON.stringify(payload) })
       for (const listener of this._listeners.get(eventName) ?? []) {
-        try { listener.call(this, event) } catch (error) { console.error('[offline]', error) }
+        try { listener.call(this, event) } catch (error) { console.error('[local]', error) }
       }
       try { if (this.onmessage && eventName === 'message') this.onmessage(event) } catch { /* 忽略 */ }
     }
@@ -95,7 +95,7 @@
       this._unsub = null
     }
   }
-  window.EventSource = OfflineEventSource
+  window.EventSource = LocalEventSource
   window.NativeEventSource = NativeEventSource
 
   // ── 通用工具 ──
@@ -105,7 +105,7 @@
   }
   /** 降级：POST 返回 {ok:false,error}（前端 alert 展示），GET 返回 400 {error}。 */
   function unavailable(message) {
-    return { status: 200, body: { ok: false, error: `离线模式暂不支持：${message}` } }
+    return { status: 200, body: { ok: false, error: `本地模式暂不支持：${message}` } }
   }
   function throwError(message) {
     return { throw: new Error(message) }
@@ -114,24 +114,33 @@
     return core.dispatchCommand(command)
   }
   function management(operation, payload = {}) {
-    return dispatchCommand({ id: `offline-mgmt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, actor: 'operator', type: 'role-management', payload: { roomId: ROOM_ID, operation, ...payload } })
+    return dispatchCommand({ id: `local-mgmt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, actor: 'operator', type: 'role-management', payload: { roomId: ROOM_ID, operation, ...payload } })
   }
   function playerCommand(type, payload) {
-    return dispatchCommand({ id: `offline-${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, actor: 'player', type, payload })
+    return dispatchCommand({ id: `local-${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, actor: 'player', type, payload })
   }
   const guardRoom = () => {
-    try { return core.getRoom() } catch { throw new Error('离线房间不可用。') }
+    try { return core.getRoom() } catch { throw new Error('本地房间不可用。') }
   }
   function providerMeta() {
     try {
-      const raw = window.StageCraftNative.invokeSync('secret.get', JSON.stringify({ key: 'offline.provider.meta' }))
-      const parsed = raw ? JSON.parse(raw) : {}
+      const raw = window.StageCraftNative.invokeSync('secret.get', JSON.stringify({ key: 'local.provider.meta' }))
+      let parsed = raw ? JSON.parse(raw) : {}
+      if (!(parsed && typeof parsed === 'object' && parsed.found && typeof parsed.value === 'string')) {
+        // 兼容旧命名 offline.provider.meta：读到后迁移到新 key
+        const legacy = window.StageCraftNative.invokeSync('secret.get', JSON.stringify({ key: 'offline.provider.meta' }))
+        const legacyParsed = legacy ? JSON.parse(legacy) : {}
+        if (legacyParsed && typeof legacyParsed === 'object' && legacyParsed.found && typeof legacyParsed.value === 'string') {
+          parsed = { found: true, value: legacyParsed.value }
+          saveProviderMeta(JSON.parse(legacyParsed.value))
+        }
+      }
       if (parsed && typeof parsed === 'object' && parsed.found && typeof parsed.value === 'string') return JSON.parse(parsed.value)
     } catch { /* 无配置 */ }
     return { providers: [], defaults: {} }
   }
   function saveProviderMeta(meta) {
-    nativeInvokeSync('secret.set', { key: 'offline.provider.meta', value: JSON.stringify(meta) })
+    nativeInvokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify(meta) })
   }
   /** 前端视图：剔除 apiKey、补 hasApiKey（与桌面 /api/providers 契约一致）。 */
   function providerMetaView() {
@@ -160,7 +169,7 @@
       '/api/providers': () => respondJson(200, providerMetaView()),
       '/api/usage': () => {
         const configured = core.getProvider().configured === true
-        return respondJson(200, { route: configured ? '离线' : '模拟', model: configured ? core.getProvider().model : '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: configured ? 'offline' : 'fake', billing: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
+        return respondJson(200, { route: configured ? '本地' : '模拟', model: configured ? core.getProvider().model : '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: configured ? 'local' : 'fake', billing: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
       },
       '/api/billing': () => respondJson(200, { prices: {}, stats: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } }),
       '/api/prompts/presets': async () => {
@@ -212,7 +221,7 @@
         management('update-player-character', { name: String(body.name ?? ''), persona: String(body.persona ?? ''), currentState: String(body.currentState ?? '') })
         return respondJson(200, { ok: true, room: guardRoom() })
       },
-      '/api/player/avatar': () => respondJson(200, { ok: false, error: '离线模式暂不支持上传头像；可在角色设置里填写头像路径。' }),
+      '/api/player/avatar': () => respondJson(200, { ok: false, error: '本地模式暂不支持上传头像；可在角色设置里填写头像路径。' }),
       '/api/turn': (body) => {
         const room = guardRoom()
         const action = room.mode === 'chat' ? 'chat-contribution' : 'director-turn'
@@ -283,7 +292,7 @@
         if (!roleIds.length) return respondJson(400, { error: '缺少角色顺序列表。' })
         management('reorder-roles', { roleIds }); return respondJson(200, { ok: true })
       },
-      '/api/roles/avatar': () => respondJson(200, { ok: false, error: '离线模式暂不支持上传头像；可在角色设置里填写头像路径。' }),
+      '/api/roles/avatar': () => respondJson(200, { ok: false, error: '本地模式暂不支持上传头像；可在角色设置里填写头像路径。' }),
       '/api/roles/state': (body) => { management('set-role-state', { roleId: String(body.roleId ?? ''), currentState: String(body.currentState ?? '') }); return respondJson(200, { ok: true }) },
       '/api/roles/intervene': (body) => {
         management('intervene-role', { roleId: String(body.roleId ?? ''), selfModel: String(body.selfModel ?? ''), config: { ...(body.providerId ? { providerId: String(body.providerId) } : {}), ...(body.modelOverride ? { modelOverride: String(body.modelOverride) } : {}), ...(typeof body.impressions === 'string' ? { impressions: JSON.parse(body.impressions) } : {}), ...(typeof body.goals === 'string' ? { goals: JSON.parse(body.goals) } : {}), ...(body.thinkingStrength ? { thinkingStrength: String(body.thinkingStrength) } : {}) } })
@@ -293,39 +302,39 @@
         management('store-memories', { roleId: String(body.roleId ?? ''), entries: Array.isArray(body.entries) ? body.entries : [] })
         return respondJson(200, { ok: true })
       },
-      '/api/roles/memories/retract': (body) => management('retract-memory', { memoryId: String(body.memoryId ?? '') }).then(() => respondJson(200, { ok: true })).catch(error => respondJson(200, { ok: false, error: `离线暂不支持：${error.message}` })),
-      '/api/roles/memories/update': (body) => management('update-memory', { memoryId: String(body.memoryId ?? ''), entry: body.entry ?? {} }).then(() => respondJson(200, { ok: true })).catch(error => respondJson(200, { ok: false, error: `离线暂不支持：${error.message}` })),
+      '/api/roles/memories/retract': (body) => management('retract-memory', { memoryId: String(body.memoryId ?? '') }).then(() => respondJson(200, { ok: true })).catch(error => respondJson(200, { ok: false, error: `本地暂不支持：${error.message}` })),
+      '/api/roles/memories/update': (body) => management('update-memory', { memoryId: String(body.memoryId ?? ''), entry: body.entry ?? {} }).then(() => respondJson(200, { ok: true })).catch(error => respondJson(200, { ok: false, error: `本地暂不支持：${error.message}` })),
       '/api/roles/memories/reorder': (body) => {
         const memoryIds = Array.isArray(body.memoryIds) ? body.memoryIds.map(String) : []
         if (!memoryIds.length) return respondJson(400, { error: '缺少记忆顺序列表。' })
-        return management('reorder-memories', { roleId: String(body.roleId ?? ''), memoryIds }).then(() => respondJson(200, { ok: true })).catch(error => respondJson(200, { ok: false, error: `离线暂不支持：${error.message}` }))
+        return management('reorder-memories', { roleId: String(body.roleId ?? ''), memoryIds }).then(() => respondJson(200, { ok: true })).catch(error => respondJson(200, { ok: false, error: `本地暂不支持：${error.message}` }))
       },
-      '/api/roles/memories/supersede': (body) => management('supersede-memory', { memoryId: String(body.memoryId ?? ''), entry: body.entry ?? {} }).then(() => respondJson(200, { ok: true })).catch(error => respondJson(200, { ok: false, error: `离线暂不支持：${error.message}` })),
+      '/api/roles/memories/supersede': (body) => management('supersede-memory', { memoryId: String(body.memoryId ?? ''), entry: body.entry ?? {} }).then(() => respondJson(200, { ok: true })).catch(error => respondJson(200, { ok: false, error: `本地暂不支持：${error.message}` })),
       '/api/providers/save': (body) => {
         const meta = providerMeta()
         const baseUrl = String(body.baseUrl ?? '').replace(/\/$/, '')
         const apiKey = String(body.apiKey ?? '')
-        const existing = meta.providers.find(provider => provider.id === 'offline-default')
+        const existing = meta.providers.find(provider => provider.id === 'local-default')
         const models = Array.isArray(body.models) ? body.models.map(String) : typeof body.models === 'string' && body.models.trim() ? body.models.split(/[,，]/).map(item => item.trim()).filter(Boolean) : (existing?.models ?? [])
         const selectedModel = String(body.selectedModel ?? '') || models[0] || existing?.selectedModel || ''
-        if (!baseUrl || !apiKey || !selectedModel) return respondJson(400, { error: '离线模式需要接口地址、API Key 与至少一个模型名。' })
-        const provider = { id: 'offline-default', name: String(body.name ?? '离线供应商'), baseUrl, apiKey, models, selectedModel, responseFormat: body.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: body.toolCalling !== false }
+        if (!baseUrl || !apiKey || !selectedModel) return respondJson(400, { error: '本地模式需要接口地址、API Key 与至少一个模型名。' })
+        const provider = { id: 'local-default', name: String(body.name ?? '本地供应商'), baseUrl, apiKey, models, selectedModel, responseFormat: body.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: body.toolCalling !== false }
         meta.providers = [provider]
         saveProviderMeta(meta)
         core.setProvider({ baseUrl, apiKey, model: selectedModel, responseFormat: provider.responseFormat })
-        return respondJson(200, { providers: providerMetaView().providers, defaults: meta.defaults, active: { route: '离线', model: selectedModel } })
+        return respondJson(200, { providers: providerMetaView().providers, defaults: meta.defaults, active: { route: '本地', model: selectedModel } })
       },
       '/api/providers/delete': () => {
         saveProviderMeta({ providers: [], defaults: {} })
-        window.StageCraftNative.invokeSync('secret.remove', JSON.stringify({ key: 'offline.provider.default' }))
+        window.StageCraftNative.invokeSync('secret.remove', JSON.stringify({ key: 'local.provider.default' }))
         return respondJson(200, { providers: [], defaults: {}, active: { route: '模拟', model: '模拟' } })
       },
       '/api/providers/default-role': (body) => {
         const meta = providerMeta()
-        const provider = meta.providers.find(item => item.id === 'offline-default')
+        const provider = meta.providers.find(item => item.id === 'local-default')
         if (provider) {
           if (body.model) provider.selectedModel = String(body.model)
-          meta.defaults = { ...(meta.defaults ?? {}), role: { providerId: 'offline-default', model: String(body.model ?? provider.selectedModel) } }
+          meta.defaults = { ...(meta.defaults ?? {}), role: { providerId: 'local-default', model: String(body.model ?? provider.selectedModel) } }
           saveProviderMeta(meta)
           core.setProvider({ baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: String(body.model ?? provider.selectedModel), responseFormat: provider.responseFormat })
         }
@@ -333,17 +342,17 @@
       },
       '/api/providers/director': (body) => {
         const meta = providerMeta()
-        const provider = meta.providers.find(item => item.id === 'offline-default')
+        const provider = meta.providers.find(item => item.id === 'local-default')
         if (provider) {
           if (body.model) provider.selectedModel = String(body.model)
-          meta.defaults = { ...(meta.defaults ?? {}), director: { providerId: 'offline-default', model: String(body.model ?? provider.selectedModel) } }
+          meta.defaults = { ...(meta.defaults ?? {}), director: { providerId: 'local-default', model: String(body.model ?? provider.selectedModel) } }
           saveProviderMeta(meta)
           core.setProvider({ baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: String(body.model ?? provider.selectedModel), responseFormat: provider.responseFormat })
         }
         return respondJson(200, { providers: providerMetaView().providers, defaults: meta.defaults })
       },
       '/api/providers/director-thinking': () => respondJson(200, { ok: true, defaults: providerMeta().defaults }),
-      '/api/providers/discover': () => respondJson(400, { error: '离线模式不支持自动发现模型；请直接在模型列表里填写模型名（如 deepseek-chat）。' }),
+      '/api/providers/discover': () => respondJson(400, { error: '本地模式不支持自动发现模型；请直接在模型列表里填写模型名（如 deepseek-chat）。' }),
       '/api/prompts/presets': (body) => {
         try {
           if (body.scope && body.activePresetId) {
@@ -465,7 +474,7 @@
           .catch(error => resolve(respondJson(400, { error: error.message })))
       })
     }
-    if (pathname === '/api/core/ui/action') return respondJsonAsync(200, { ok: false, error: '离线模式暂不支持扩展面板操作。' })
+    if (pathname === '/api/core/ui/action') return respondJsonAsync(200, { ok: false, error: '本地模式暂不支持扩展面板操作。' })
 
     const handler = routes[method.toLowerCase()] && routes[method.toLowerCase()][pathname]
     if (handler) {
@@ -540,7 +549,7 @@
         const models = Array.isArray(preferred?.models) ? preferred.models.map(String) : []
         const selectedModel = String(preferred?.selectedModel ?? models[0] ?? '')
         if (baseUrl && String(preferred?.apiKey ?? '') && selectedModel) {
-          const provider = { id: 'offline-default', name: String(preferred?.name ?? '同步供应商'), baseUrl, apiKey: String(preferred.apiKey ?? ''), models, selectedModel, responseFormat: preferred?.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: preferred?.toolCalling !== false }
+          const provider = { id: 'local-default', name: String(preferred?.name ?? '同步供应商'), baseUrl, apiKey: String(preferred.apiKey ?? ''), models, selectedModel, responseFormat: preferred?.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: preferred?.toolCalling !== false }
           saveProviderMeta({ providers: [provider], defaults: {} })
           core.setProvider({ baseUrl, apiKey: String(preferred.apiKey ?? ''), model: selectedModel, responseFormat: provider.responseFormat })
           result.providers = true
@@ -584,5 +593,5 @@
   window.StageCraftSyncRemote = syncRemote
 
   // ── 连接徽标 ──
-  console.info('[offline] StageCraft 离线模式就绪（复用完整 Web UI）。')
+  console.info('[local] StageCraft 本地模式就绪（复用完整 Web UI）。')
 })()

@@ -20,7 +20,7 @@ public final class MainActivity extends Activity {
     private static final int OPEN_STORY_DOCUMENT = 7003;
     private WebView webView;
     private NativeBridge bridge;
-    private OfflineLoopbackServer offlineServer;
+    private LocalLoopbackServer localServer;
     private WebChromeClient webChromeClient;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -70,15 +70,15 @@ public final class MainActivity extends Activity {
             }
         };
         webView.setWebChromeClient(webChromeClient);
-        // 离线完整 Web UI 走 127.0.0.1 环回服务器（http://localhost 常规 Web 语义，见 OfflineLoopbackServer）
-        OfflineLoopbackServer loopback = null;
+        // 本地完整 Web UI 走 127.0.0.1 环回服务器（http://localhost 常规 Web 语义，见 LocalLoopbackServer）
+        LocalLoopbackServer loopback = null;
         try {
-            loopback = new OfflineLoopbackServer(this);
+            loopback = new LocalLoopbackServer(this);
         } catch (Exception initFailure) {
             loopback = null;
         }
-        offlineServer = loopback;
-        final OfflineLoopbackServer server = loopback;
+        localServer = loopback;
+        final LocalLoopbackServer server = loopback;
         webView.setWebViewClient(new StageCraftWebViewClient(this, () -> bridge.currentCredential(), server == null ? null : path -> server.urlFor(path)));
         setContentView(webView);
         // APK defaults to the packaged full Web UI. Remote pairing remains available
@@ -92,9 +92,9 @@ public final class MainActivity extends Activity {
 
     /** Open the packaged full Web UI directly, without passing through the pairing renderer. */
     void showLocalUi() {
-        String localUrl = offlineServer == null
-            ? StageCraftWebViewClient.LOCAL_ORIGIN + "/web/offline.html"
-            : offlineServer.urlFor("/web/offline.html");
+        String localUrl = localServer == null
+            ? StageCraftWebViewClient.LOCAL_ORIGIN + "/web/local.html"
+            : localServer.urlFor("/web/local.html");
         webView.loadUrl(localUrl);
     }
 
@@ -153,7 +153,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        if (offlineServer != null) offlineServer.close();
+        if (localServer != null) localServer.close();
         if (bridge != null) bridge.close();
         if (webView != null) {
             webView.removeJavascriptInterface("StageCraftNative");

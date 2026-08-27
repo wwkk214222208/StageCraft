@@ -15,16 +15,16 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 离线 Web UI 环回静态服务器（127.0.0.1:随机端口）。
+ * 本地 Web UI 环回静态服务器（127.0.0.1:随机端口）。
  *
  * 独立 APK 的完整 Web UI 以 http://localhost 打开：该 origin 是安全上下文，
  * ES module / fetch / EventSource 全部按常规 Web 语义工作（appassets:// 自定义
- * scheme 下 WebView 对 module 脚本支持不可靠，曾导致离线页只剩 HTML 骨架）。
- * API 路由仍由页面内 offline-adapter.js 的 fetch 补丁承担；本服务器只负责
+ * scheme 下 WebView 对 module 脚本支持不可靠，曾导致本地页只剩 HTML 骨架）。
+ * API 路由仍由页面内 local-adapter.js 的 fetch 补丁承担；本服务器只负责
  * 静态资产（web/**、/assets、/story-assets 与根资源），资产契约与
  * StageCraftWebViewClient 共用 LocalAssetResolver。
  */
-public final class OfflineLoopbackServer implements AutoCloseable {
+public final class LocalLoopbackServer implements AutoCloseable {
     private static final int MAX_BODY_BYTES = 16 * 1024 * 1024;
     private final LocalAssetResolver resolver;
     private final ServerSocket serverSocket;
@@ -32,12 +32,12 @@ public final class OfflineLoopbackServer implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile int port;
 
-    public OfflineLoopbackServer(Context context) throws IOException {
+    public LocalLoopbackServer(Context context) throws IOException {
         this.resolver = new LocalAssetResolver(context);
         this.serverSocket = new ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"));
         this.port = serverSocket.getLocalPort();
         this.executor = Executors.newCachedThreadPool(runnable -> {
-            Thread thread = new Thread(runnable, "offline-loopback");
+            Thread thread = new Thread(runnable, "local-loopback");
             thread.setDaemon(true);
             return thread;
         });
@@ -100,7 +100,7 @@ public final class OfflineLoopbackServer implements AutoCloseable {
             }
             if (resolved == null) {
                 if ("/".equals(path)) {
-                    writeResponse(connection, 302, "text/plain", new byte[0], "Location: /web/offline.html");
+                    writeResponse(connection, 302, "text/plain", new byte[0], "Location: /web/local.html");
                     return;
                 }
                 writeResponse(connection, 404, "text/plain; charset=utf-8", "not found".getBytes(StandardCharsets.UTF_8));

@@ -25,9 +25,9 @@ public final class MainActivityWebViewTest {
         long deadline = System.currentTimeMillis() + 10_000L;
         while (System.currentTimeMillis() < deadline) {
             String url = webView.getUrl();
-            if (url != null && url.endsWith("/web/offline.html")) return;
+            if (url != null && url.endsWith("/web/local.html")) return;
             Thread.sleep(100L);
         }
-        assertTrue("Activity must load the packaged offline.html entry", webView.getUrl() != null && webView.getUrl().contains("/web/offline.html"));
+        assertTrue("Activity must load the packaged local.html entry", webView.getUrl() != null && webView.getUrl().contains("/web/local.html"));
     }
 }

@@ -16,7 +16,7 @@ This document is the reproducible certification contract for web, Android, DSH, 
 | Linux | Node/web full suite and packaging | Same commands on Linux | Run on Linux CI/workstation |
 | macOS | Node/web full suite and packaging | Same commands on macOS | Run on macOS CI/workstation |
 | DSH/Cordis | Bundle build, package privacy, local and real Cordis lifecycle | `node dsh-rp/verify.mjs`, `npm test` DSH contract | Run when Node/Cordis dependencies exist |
-| Android JVM | Unit tests, debug assemble, lint | `android/gradlew.bat testDebugUnitTest assembleDebug lintDebug --offline --no-daemon` | Run when Android SDK/Gradle cache exists |
+| Android JVM | Unit tests, debug assemble, lint | `android/gradlew.bat testDebugUnitTest assembleDebug lintDebug __KEEP_GRADLE_LOCAL__ --no-daemon` | Run when Android SDK/Gradle cache exists |
 | Android emulator/device | Install, launch, local/remote vertical flows, lifecycle recovery | Reserved integration lane; runner records `skip` without an emulator/device | Requires explicit AVD or physical device |
 | Local mode | Shared protocol and renderer behavior | `core-connection`, Android renderer/contracts, local Core tests | Automated in Node; Android local app is device-gated |
 | Remote mode | Pairing, authenticated view/command/events, reconnect and resync | `remote-access`, `core-connection`, Android contract tests | Automated with fakes; device flow is gated |

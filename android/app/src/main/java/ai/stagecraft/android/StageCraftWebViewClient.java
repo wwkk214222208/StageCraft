@@ -29,8 +29,8 @@ import java.util.Map;
  * - 图片等无头请求（/assets、/story-assets、/custom）在 shouldInterceptRequest 里用 Bearer 重新拉取；
  * - 主页面 HTML 由这里以 Bearer 拉取并在 <head> 注入 bootstrap 脚本（早于 app.js 执行）。
  *
- * 离线模式：/web/* 主框架导航由 OfflineNavigation 重写到环回 HTTP 服务器
- * （127.0.0.1），使完整 Web UI 以常规 Web 语义运行（见 OfflineLoopbackServer）。
+ * 本地模式：/web/* 主框架导航由 LocalNavigation 重写到环回 HTTP 服务器
+ * （127.0.0.1），使完整 Web UI 以常规 Web 语义运行（见 LocalLoopbackServer）。
  */
 public final class StageCraftWebViewClient extends WebViewClient {
     public static final String LOCAL_ORIGIN = "https://appassets.androidplatform.net";
@@ -40,25 +40,25 @@ public final class StageCraftWebViewClient extends WebViewClient {
         String currentCredential();
     }
 
-    /** 离线 Web UI 主框架导航重写：返回替代 URL（如环回地址），返回 null 保持默认。 */
-    public interface OfflineNavigation {
+    /** 本地 Web UI 主框架导航重写：返回替代 URL（如环回地址），返回 null 保持默认。 */
+    public interface LocalNavigation {
         String rewriteMainFrame(String path);
     }
 
     private final Context context;
     private final CredentialProvider credentialProvider;
     private final LocalAssetResolver assetResolver;
-    private final OfflineNavigation offlineNavigation;
+    private final LocalNavigation localNavigation;
 
     public StageCraftWebViewClient(Context context, CredentialProvider credentialProvider) {
         this(context, credentialProvider, null);
     }
 
-    public StageCraftWebViewClient(Context context, CredentialProvider credentialProvider, OfflineNavigation offlineNavigation) {
+    public StageCraftWebViewClient(Context context, CredentialProvider credentialProvider, LocalNavigation localNavigation) {
         this.context = context;
         this.credentialProvider = credentialProvider;
         this.assetResolver = new LocalAssetResolver(context);
-        this.offlineNavigation = offlineNavigation;
+        this.localNavigation = localNavigation;
     }
 
     @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
@@ -87,16 +87,16 @@ public final class StageCraftWebViewClient extends WebViewClient {
         String scheme = url.getScheme();
         String host = url.getHost();
         String path = url.getPath() == null ? "/" : url.getPath();
-        // 离线模式：appassets 下的 /web/* 主框架导航重写到环回服务器（http://localhost 常规 Web 语义）
-        if ("https".equals(scheme) && "appassets.androidplatform.net".equals(host) && path.startsWith("/web/") && offlineNavigation != null) {
-            String target = offlineNavigation.rewriteMainFrame(path);
+        // 本地模式：appassets 下的 /web/* 主框架导航重写到环回服务器（http://localhost 常规 Web 语义）
+        if ("https".equals(scheme) && "appassets.androidplatform.net".equals(host) && path.startsWith("/web/") && localNavigation != null) {
+            String target = localNavigation.rewriteMainFrame(path);
             if (target != null && !target.isEmpty()) {
                 view.loadUrl(target);
                 return true;
             }
         }
         if ("https".equals(scheme) && "appassets.androidplatform.net".equals(host)) return false;
-        if ("http".equals(scheme) || "https".equals(scheme)) return false; // 远程 UI / 环回离线页保持在本 WebView 内
+        if ("http".equals(scheme) || "https".equals(scheme)) return false; // 远程 UI / 环回本地页保持在本 WebView 内
         return true;
     }
 

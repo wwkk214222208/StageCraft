@@ -32,7 +32,7 @@ const nodeBuiltinStubPlugin = {
 }
 
 await build({
-  entryPoints: [resolve(root, 'src/portable/android-offline-core.ts')],
+  entryPoints: [resolve(root, 'src/portable/android-local-core.ts')],
   outfile: output,
   bundle: true,
   format: 'iife',

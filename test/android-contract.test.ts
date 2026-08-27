@@ -111,8 +111,8 @@ test('Android credentials stay native, encrypted, and out of URLs or Javascript'
 test('Android APK defaults to the packaged full Web UI while retaining remote entry points', () => {
   const activity = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'MainActivity.java')
   assert.match(activity, /showLocalUi\(\);/)
-  assert.match(activity, /offlineServer\.urlFor\("\/web\/offline\.html"\)/)
-  assert.match(activity, /LOCAL_ORIGIN \+ "\/web\/offline\.html"/)
+  assert.match(activity, /localServer\.urlFor\("\/web\/local\.html"\)/)
+  assert.match(activity, /LOCAL_ORIGIN \+ "\/web\/local\.html"/)
   assert.match(activity, /void showRemoteUi\(String address\)/)
   assert.match(activity, /void showPairingPage\(\)/)
   const client = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'StageCraftWebViewClient.java')
@@ -130,7 +130,7 @@ test('built Android APK contains the verified embedded Core and full Web UI asse
   const zipNames = bytes.toString('latin1')
   for (const asset of [
     'assets/embedded-core.js', 'assets/embedded-core.json', 'assets/index.html', 'assets/renderer.js',
-    'assets/web/offline.html', 'assets/web/index.html', 'assets/web/app.js', 'assets/web/style.css',
+    'assets/web/local.html', 'assets/web/index.html', 'assets/web/app.js', 'assets/web/style.css',
     'assets/web/core-client.js', 'assets/web/local-runtime-web-entry.js',
   ]) {
     assert.ok(zipNames.includes(asset), `missing ${asset} from APK`)
@@ -233,7 +233,7 @@ test('Android media and PNG import remain native, bounded, authenticated, and pa
   assert.doesNotMatch(appGradle, /stories\/custom\/\*\.json/)
   assert.match(appGradle, /include\("index\.html", "styles\.css", "renderer\.js", "embedded-core\.js", "embedded-core\.json", "prompts\/\*\*", "stories\/\*\*", "web\/\*\*"\)/)
   assert.match(appGradle, /from\(generatedWebUi\) \{ into\("web"\); include\("\*\*\/\*"\) \}/)
-  assert.match(appGradle, /generateOfflineEntry/)
+  assert.match(appGradle, /generateLocalEntry/)
   assert.match(appGradle, /preBuild.*dependsOn\(verifyEmbeddedCoreAssets\)/s)
   assert.match(connection, /public void loadMedia/)
   assert.match(connection, /RemoteAssetPolicy\.requireAssetPath/)
@@ -250,7 +250,7 @@ test('Android media and PNG import remain native, bounded, authenticated, and pa
   assert.match(renderer, /bridge\.chooseCharacterCard\(\)/)
   assert.doesNotMatch(renderer, /FileReader|arrayBuffer/)
   const localRuntimeEntry = readFileSync(join(root, 'android', 'app', 'src', 'main', 'assets', 'web', 'local-runtime-web-entry.js'), 'utf8')
-  assert.doesNotMatch(localRuntimeEntry, /offline-adapter/)
+  assert.doesNotMatch(localRuntimeEntry, /local-adapter/)
   assert.match(localRuntimeEntry, /\(method === 'GET' \|\| method === 'DELETE'\) \? handler\(url\.searchParams\) : handler\(body\)/)
   assert.doesNotMatch(localRuntimeEntry, /handler\(url\.searchParams, body\)/)
   assert.match(localRuntimeEntry, /'\/api\/story\/save'/)
@@ -258,9 +258,9 @@ test('Android media and PNG import remain native, bounded, authenticated, and pa
   assert.match(localRuntimeEntry, /'\/api\/stories': \(body\)/)
   assert.match(localRuntimeEntry, /nativeInvokeSync\('story\.create'/)
   assert.match(localRuntimeEntry, /nativeInvokeSync\('story\.save'/)
-  const offlineCore = readFileSync(join(root, 'src', 'portable', 'android-offline-core.ts'), 'utf8')
-  assert.match(offlineCore, /'story\.read'/)
-  assert.match(offlineCore, /Promise\.resolve\(invokeSync\('story\.read'/)
+  const localCore = readFileSync(join(root, 'src', 'portable', 'android-local-core.ts'), 'utf8')
+  assert.match(localCore, /'story\.read'/)
+  assert.match(localCore, /Promise\.resolve\(invokeSync\('story\.read'/)
   assert.match(localRuntimeEntry, /nativeInvokeSync\('story\.saveAs'/)
   assert.match(localRuntimeEntry, /nativeInvokeSync\('story\.delete'/)
   assert.match(localRuntimeEntry, /story\.create/)
@@ -325,7 +325,7 @@ test('Android local prompt IO: bundled gameplay data source plus SQLite preset p
   const operations = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'AndroidCompositionOperations.java')
   const buildScript = readFileSync(join(root, 'scripts', 'build-android-core.mjs'), 'utf8')
   const bundled = readFileSync(join(root, 'src', 'portable', 'bundled-gameplay.ts'), 'utf8')
-  const offlineCore = readFileSync(join(root, 'src', 'portable', 'android-offline-core.ts'), 'utf8')
+  const localCore = readFileSync(join(root, 'src', 'portable', 'android-local-core.ts'), 'utf8')
   const runtime = readFileSync(join(root, 'android', 'app', 'src', 'main', 'assets', 'web', 'local-runtime-web-entry.js'), 'utf8')
   const appGradle = read('app', 'build.gradle.kts')
   assert.match(operations, /"preset\.active-scope\.set"/)
@@ -333,12 +333,12 @@ test('Android local prompt IO: bundled gameplay data source plus SQLite preset p
   assert.match(buildScript, /android-node-builtin-stubs/)
   assert.match(buildScript, /node:fs/)
   assert.match(bundled, /with \{ type: 'json' \}/)
-  assert.match(offlineCore, /setPromptStorage\(createAndroidPromptStorage\(/)
+  assert.match(localCore, /setPromptStorage\(createAndroidPromptStorage\(/)
   assert.match(runtime, /preset\.active-scope\.set/)
   assert.match(runtime, /userEditable === true/)
   assert.match(appGradle, /prompts\/gameplay/)
   // 双端共用同一生成内核：第二套自包含提示词 workers 已删除
-  assert.equal(existsSync(join(root, 'src', 'portable', 'offline-workers.ts')), false)
-  assert.match(offlineCore, /createRealWorkers\(/)
-  assert.doesNotMatch(offlineCore, /createOfflineWorkers/)
+  assert.equal(existsSync(join(root, 'src', 'portable', 'local-workers.ts')), false)
+  assert.match(localCore, /createRealWorkers\(/)
+  assert.doesNotMatch(localCore, /createLocalWorkers/)
 })

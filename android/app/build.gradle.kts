@@ -42,7 +42,7 @@ val packageEmbeddedCore by tasks.registering(Copy::class) {
     include("embedded-core.js", "embedded-core.json")
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
-/** 完整 Web UI（public/）打包为 assets/web：离线模式复用同一套前端。 */
+/** 完整 Web UI（public/）打包为 assets/web：本地模式复用同一套前端。 */
 val packageWebUi by tasks.registering(Copy::class) {
     from(webUiSource) { into("") }
     // gameplay 玩法场景提示词（每 scope 一个文件）随 Web UI 打包，供本地运行时按 userEditable 过滤下发
@@ -50,11 +50,11 @@ val packageWebUi by tasks.registering(Copy::class) {
     into(generatedWebUi)
     include("**/*")
 }
-/** 生成离线入口 offline.html：public/index.html + __MODE_FLAG__=true + 离线核心/适配脚本注入。 */
-val generateOfflineEntry by tasks.registering {
+/** 生成本地入口 local.html：public/index.html + __MODE_FLAG__=true + 本地核心/适配脚本注入。 */
+val generateLocalEntry by tasks.registering {
     dependsOn(packageWebUi)
     inputs.file(generatedWebUi.map { it.file("index.html") })
-    outputs.file(generatedWebUi.map { it.file("offline.html") })
+    outputs.file(generatedWebUi.map { it.file("local.html") })
     doLast {
         val target = generatedWebUi.get().asFile
         val html = target.resolve("index.html").readText()
@@ -63,21 +63,21 @@ val generateOfflineEntry by tasks.registering {
             .replace("__STYLE_HASH__", "")
             .replace("__CORE_CSS_HASH__", "")
         val injection = "<script src=\"/embedded-core.js\"></script>\n<script src=\"/web/local-runtime-web-entry.js\"></script>"
-        val offline = if (html.contains("</head>", ignoreCase = true)) {
+        val local = if (html.contains("</head>", ignoreCase = true)) {
             html.replaceFirst("</head>", injection + "\n</head>", ignoreCase = true)
         } else {
             injection + html
         }
-        target.resolve("offline.html").writeText(offline)
+        target.resolve("local.html").writeText(local)
     }
 }
 val packageAndroidAssets by tasks.registering(Sync::class) {
-    dependsOn(packageRemoteRenderer, packageEmbeddedCore, generateOfflineEntry)
+    dependsOn(packageRemoteRenderer, packageEmbeddedCore, generateLocalEntry)
     from(generatedRendererSource)
     from(generatedWebUi) { into("web"); include("**/*") }
     into(generatedRenderer)
     // Keep the small native pairing renderer at the asset root, and package the
-    // complete public Web UI under web/ so offline mode can reuse its module graph.
+    // complete public Web UI under web/ so local mode can reuse its module graph.
     include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json", "prompts/**", "stories/**", "web/**")
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }

@@ -243,7 +243,7 @@ if (typeof window !== 'undefined' && window.document) {
     if (localAvailable) {
       const button = element(window.document, 'button', '本地模式（不连电脑，完整界面）', 'secondary')
       button.id = 'local-mode-button'
-      button.onclick = () => { window.location.href = '/web/offline.html' }
+      button.onclick = () => { window.location.href = '/web/local.html' }
       const anchor = window.document.getElementById('connection-error')
       if (anchor?.parentElement) anchor.parentElement.insertBefore(button, anchor)
       else window.document.getElementById('pairing-panel')?.append(button)

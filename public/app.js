@@ -508,11 +508,11 @@ function collectPromptPreset() { const preset = editingPromptPreset; const suppo
 async function refreshRoom() { const response = await fetch('/api/room'); render(await response.json()) }
 function operationErrorMessage(operation, error) {
   const detail = error instanceof Error ? error.message : typeof error === 'string' ? error : error?.message || JSON.stringify(error ?? {})
-  return `${operation}失败\n\n${detail || '未知错误'}${window.__STAGECRAFT_OFFLINE__ ? '\n\n运行环境：Android 本地运行时' : ''}`
+  return `${operation}失败\n\n${detail || '未知错误'}${window.__STAGECRAFT_LOCAL__ ? '\n\n运行环境：Android 本地运行时' : ''}`
 }
 function showOperationError(operation, error) { console.error(`[StageCraft] ${operation} failed`, error); alert(operationErrorMessage(operation, error)) }
 window.showOperationError = showOperationError
-if (window.__STAGECRAFT_OFFLINE__) {
+if (window.__STAGECRAFT_LOCAL__) {
   window.addEventListener('unhandledrejection', event => { event.preventDefault(); showOperationError('本地操作', event.reason) })
   window.addEventListener('error', event => { if (event.error) showOperationError('页面脚本', event.error) })
 }
@@ -658,7 +658,7 @@ $('#remote-pairing-revoke').onclick = async event => {
   }
 }
 
-// ── 手机 APK 与电脑双向同步（仅离线运行时；配对凭据与远端 HTTP 都在原生侧） ──
+// ── 手机 APK 与电脑双向同步（仅本地运行时；配对凭据与远端 HTTP 都在原生侧） ──
 function describeSyncResult(result) {
   const parts = []
   if (result?.room) parts.push('房间已更新')
@@ -727,7 +727,7 @@ $('#sync-remote-push').onclick = async () => {
     $('#sync-remote-error').textContent = `推送完成：${describeSyncResult(result)}。`
   } catch (error) { $('#sync-remote-error').textContent = `推送失败：${error instanceof Error ? error.message : String(error)}` }
 }
-if (window.__STAGECRAFT_OFFLINE__ && window.StageCraftNative && typeof window.StageCraftNative.syncStatus === 'function') {
+if (window.__STAGECRAFT_LOCAL__ && window.StageCraftNative && typeof window.StageCraftNative.syncStatus === 'function') {
   const row = $('#sync-remote-row')
   if (row) row.hidden = false
   // 本地模式下整栏隐藏桌面操作员专属「手机远程配对」（手机上生成配对码/清除配对无意义，本地运行时也没有对应服务端路由）
@@ -828,7 +828,7 @@ $('#prompt-preset-save').onclick = async () => {
   }
 }
 async function downloadCurrentFile(path, filename, nativeExport) {
-  if (window.__STAGECRAFT_OFFLINE__ && window.StageCraftNative?.exportDocument && nativeExport) {
+  if (window.__STAGECRAFT_LOCAL__ && window.StageCraftNative?.exportDocument && nativeExport) {
     window.StageCraftNative.exportDocument(nativeExport.kind, JSON.stringify(nativeExport.payload ?? {}), filename)
     return
   }
@@ -846,7 +846,7 @@ $('#prompt-preset-export').onclick = async () => {
   try { const preset = collectPromptPreset(); await downloadCurrentFile(`/api/prompts/presets/export?id=${encodeURIComponent(preset.id)}`, `${preset.name || 'preset'}.json`, { kind: 'preset', payload: { preset } }) } catch (error) { showOperationError('导出预设', error) }
 }
 $('#story-import-button').onclick = () => {
-  if (window.__STAGECRAFT_OFFLINE__ && window.StageCraftNative?.chooseStoryArchive) window.StageCraftNative.chooseStoryArchive()
+  if (window.__STAGECRAFT_LOCAL__ && window.StageCraftNative?.chooseStoryArchive) window.StageCraftNative.chooseStoryArchive()
   else $('#story-import-file').click()
 }
 $('#story-import-file').onchange = async event => {

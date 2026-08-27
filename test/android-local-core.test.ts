@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { installOfflineCore, ANDROID_CORE_BUNDLE_VERSION, PROVIDER_SECRET_KEY } from '../src/portable/android-offline-core.ts'
+import { installLocalCore, ANDROID_CORE_BUNDLE_VERSION, PROVIDER_SECRET_KEY } from '../src/portable/android-local-core.ts'
 
 /** 带异步桥的假原生：同步操作 + 模型/源异步回调。 */
 function fakeNative(room: any) {
@@ -26,7 +26,7 @@ function fakeNative(room: any) {
         return
       }
       if (operation === 'model.request') {
-        const thinking = input.requestId.startsWith('offline:role-decision')
+        const thinking = input.requestId.startsWith('local:role-decision')
           ? '先掂量局势…'
           : ''
         const output = input.requestId.includes('role-decision')
@@ -37,7 +37,7 @@ function fakeNative(room: any) {
         if (thinking) {
           globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, thinkingDelta: thinking.slice(0, 1) }))
         }
-        // 与 Java 原生传输一致：output 以 JSON 字符串返回，由离线核心归一化解析
+        // 与 Java 原生传输一致：output 以 JSON 字符串返回，由本地核心归一化解析
         globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, output, thinking, usage: { promptTokens: 10, completionTokens: 5 } }))
         return
       }
@@ -47,50 +47,50 @@ function fakeNative(room: any) {
   return { transport, secrets }
 }
 
-test('offline Core installs with async bridge and exposes the rich API facade', async () => {
+test('local Core installs with async bridge and exposes the rich API facade', async () => {
   const room = makeRoom()
   const { transport, secrets } = fakeNative(room)
   const globalObject: Record<string, unknown> = { StageCraftNative: transport }
-  installOfflineCore(globalObject)
+  installLocalCore(globalObject)
   const embedded = globalObject.StageCraftEmbeddedCore as any
-  const offline = globalObject.StageCraftOfflineCore as any
+  const local = globalObject.StageCraftLocalCore as any
   assert.equal(embedded.bundleVersion, ANDROID_CORE_BUNDLE_VERSION)
-  assert.equal(typeof offline.getRoom, 'function')
-  assert.equal(typeof offline.submitTurn, 'function')
-  assert.equal(typeof offline.dispatchCommand, 'function')
+  assert.equal(typeof local.getRoom, 'function')
+  assert.equal(typeof local.submitTurn, 'function')
+  assert.equal(typeof local.dispatchCommand, 'function')
 
   const messages: any[] = []
-  offline.start((message: string) => messages.push(JSON.parse(message)))
+  local.start((message: string) => messages.push(JSON.parse(message)))
   assert.ok(messages.some(message => message.type === 'connection.state'), 'start must emit connection.state')
   assert.ok(messages.some(message => message.type === 'core.resync'), 'start must emit core.resync')
-  assert.equal(offline.getRoom().id, 'android-local-room')
+  assert.equal(local.getRoom().id, 'android-local-room')
 
   // 供应商配置往返（secret 加密存储由 Java 侧负责，这里仅验证桥契约）
-  offline.setProvider({ baseUrl: 'https://api.example.com/v1', apiKey: 'secret-key', model: 'deepseek-chat' })
-  assert.equal(offline.getProvider().configured, true)
+  local.setProvider({ baseUrl: 'https://api.example.com/v1', apiKey: 'secret-key', model: 'deepseek-chat' })
+  assert.equal(local.getProvider().configured, true)
   assert.equal(secrets.get(PROVIDER_SECRET_KEY), JSON.stringify({ baseUrl: 'https://api.example.com/v1', apiKey: 'secret-key', model: 'deepseek-chat', responseFormat: 'json_object' }))
 
   // 剧本目录与剧本加载
-  assert.equal(offline.stories()[0].id, 'eldoria')
-  const story = await offline.story('eldoria')
+  assert.equal(local.stories()[0].id, 'eldoria')
+  const story = await local.story('eldoria')
   assert.equal(story.title, 'Eldoria')
-  offline.dispose()
+  local.dispose()
 })
 
-test('offline workers drive real model requests through the async bridge', async () => {
+test('local workers drive real model requests through the async bridge', async () => {
   const room = makeRoom([{ id: 'aria', name: 'Aria', portraitRef: '/assets/default.svg', currentState: 'At the festival.', presence: 'present', selfModel: 'Reserved.' }])
   const { transport } = fakeNative(room)
   const globalObject: Record<string, unknown> = { StageCraftNative: transport }
-  installOfflineCore(globalObject)
-  const offline = globalObject.StageCraftOfflineCore as any
-  offline.setProvider({ baseUrl: 'https://api.example.com/v1', apiKey: 'key', model: 'deepseek-chat' })
+  installLocalCore(globalObject)
+  const local = globalObject.StageCraftLocalCore as any
+  local.setProvider({ baseUrl: 'https://api.example.com/v1', apiKey: 'key', model: 'deepseek-chat' })
   const messages: any[] = []
-  offline.start((message: string) => messages.push(JSON.parse(message)))
+  local.start((message: string) => messages.push(JSON.parse(message)))
   // 提交导演回合：真实 workers 经异步桥请求模型并产生草稿/思考事件（fake transport 返回固定决策 JSON）
-  await offline.submitTurn({ text: '玩家向 Aria 搭话。' })
+  await local.submitTurn({ text: '玩家向 Aria 搭话。' })
   assert.ok(room.revision > 0 || messages.some(message => message.type === 'room.changed'), 'turn must progress the room')
   assert.ok(messages.some(message => message.type === 'thinking'), 'turn must emit thinking events')
-  offline.dispose()
+  local.dispose()
 })
 
 function makeRoom(roles: any[] = []) {

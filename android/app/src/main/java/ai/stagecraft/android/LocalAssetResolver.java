@@ -11,7 +11,7 @@ import java.util.Locale;
  * 本地资产解析：配对页/核心文件在根目录；Web UI（public 打包）在 web/，其资源以根路径引用
  * （/app.js、/style.css、/core-client.js 等）映射到 web/；头像 /assets/** 取自打包的 public/assets；
  * 剧本自包含资源 /story-assets/<id>/<file> 取自 stories/{default,custom}/<id>.assets/。
- * 由 StageCraftWebViewClient（appassets 拦截）与 OfflineLoopbackServer（127.0.0.1）共用，
+ * 由 StageCraftWebViewClient（appassets 拦截）与 LocalLoopbackServer（127.0.0.1）共用，
  * 保证两条投递路径的资产契约完全一致。
  */
 public final class LocalAssetResolver {

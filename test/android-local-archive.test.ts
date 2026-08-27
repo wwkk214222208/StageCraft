@@ -26,11 +26,11 @@ function runtime() {
   const core = { roomId: room.id, start() {}, getRoom: () => room, getView: () => ({ revision: 0 }), stories: () => [], getProvider: () => ({ configured: false }), dispatchCommand: async () => {}, refresh() {} }
   const context = { console, URL, Response, ReadableStream, TextEncoder, Event, MessageEvent, queueMicrotask, setTimeout, clearTimeout, window: null }
   context.window = context
-  context.location = new URL('http://127.0.0.1/web/offline.html')
+  context.location = new URL('http://127.0.0.1/web/local.html')
   context.fetch = async () => new Response('not found', { status: 404 })
   context.EventSource = class {}
   context.StageCraftNative = native
-  context.StageCraftOfflineCore = core
+  context.StageCraftLocalCore = core
   vm.runInNewContext(readFileSync(entryPath, 'utf8'), context, { filename: entryPath })
   return context
 }

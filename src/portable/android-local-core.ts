@@ -1,6 +1,6 @@
 /**
- * Android 离线（WebView 内）组合根：在保留既有 StageCraftEmbeddedCore 会话面的同时，
- * 暴露 StageCraftOfflineCore —— 供打包的完整 Web UI（public/）离线复用。
+ * Android 本地（WebView 内）组合根：在保留既有 StageCraftEmbeddedCore 会话面的同时，
+ * 暴露 StageCraftLocalCore —— 供打包的完整 Web UI（public/）本地复用。
  *
  * - 同一组共享服务（chat/director/management）与 CoreRuntimeSkeleton 在页面内运行；
  * - 模型生成走与桌面同一个 createRealWorkers（gameplay 提示词渲染 + 预设管线）→ Android 原生传输（凭据在 Java）；
@@ -17,14 +17,14 @@ import { createAndroidPromptStorage } from './android-prompt-storage.ts'
 
 export const ANDROID_CORE_BUNDLE_VERSION = '1.1.0'
 export const ANDROID_CORE_BRIDGE_VERSION = '1'
-export const PROVIDER_SECRET_KEY = 'offline.provider.default'
-export const OFFLINE_ROOM_ID = 'android-local-room'
+export const PROVIDER_SECRET_KEY = 'local.provider.default'
+export const LOCAL_ROOM_ID = 'android-local-room'
 
 type Json = Record<string, unknown>
 type ResultValue = Record<string, unknown>
 
 /** Android 本地模型供应商配置（凭据在 Java Keystore）。 */
-export interface OfflineProviderConfig {
+export interface LocalProviderConfig {
   baseUrl: string
   apiKey: string
   model: string
@@ -39,11 +39,11 @@ const SYNC_OPERATIONS = new Set([
   'model.cancel',
 ])
 
-/** WebView 入口：安装离线组合根与富 API 门面。 */
-export function installOfflineCore(global: Record<string, unknown> = globalThis as unknown as Record<string, unknown>): void {
+/** WebView 入口：安装本地组合根与富 API 门面。 */
+export function installLocalCore(global: Record<string, unknown> = globalThis as unknown as Record<string, unknown>): void {
   const native = (global.StageCraftNative ?? {}) as Record<string, unknown>
   if (global.StageCraftNative === undefined || typeof native.invokeSync !== 'function' || typeof native.invokeAsync !== 'function') {
-    throw new Error('Android offline Core requires the native operations bridge (invokeSync + invokeAsync).')
+    throw new Error('Android local Core requires the native operations bridge (invokeSync + invokeAsync).')
   }
   const invokeSync = (operation: string, input: Json = {}): unknown => {
     const method = native.invokeSync as (name: string, value: string) => string
@@ -64,7 +64,7 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
   const pendingAsync = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; onThinking?: (text: string) => void }>()
   const invokeAsync = (operation: string, input: Json, hooks?: { onThinking?: (text: string) => void }): Promise<unknown> => {
     return new Promise((resolve, reject) => {
-      const callbackId = `offline-${Date.now().toString(36)}-${++asyncSequence}`
+      const callbackId = `local-${Date.now().toString(36)}-${++asyncSequence}`
       pendingAsync.set(callbackId, { resolve, reject, onThinking: hooks?.onThinking })
       const method = native.invokeAsync as (name: string, value: string, callbackId: string) => void
       method.call(native, operation, JSON.stringify(input), callbackId)
@@ -98,11 +98,20 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
   globalThis.StageCraftNativeResult = resultHandler
 
   // ── 供应商配置（凭据只存 Java Keystore 加密的 secret，不落在页面存储）──
-  const readProvider = (): OfflineProviderConfig | undefined => {
-    const raw = invokeSync('secret.get', { key: PROVIDER_SECRET_KEY }) as { found?: boolean; value?: string } | undefined
+  const readProvider = (): LocalProviderConfig | undefined => {
+    let raw = invokeSync('secret.get', { key: PROVIDER_SECRET_KEY }) as { found?: boolean; value?: string } | undefined
+    if (!raw?.found) {
+      // 兼容旧命名 offline.provider.default：读到后迁移到新 key
+      const legacy = invokeSync('secret.get', { key: 'offline.provider.default' }) as { found?: boolean; value?: string } | undefined
+      if (legacy?.found && typeof legacy.value === 'string') {
+        raw = legacy
+        invokeSync('secret.set', { key: PROVIDER_SECRET_KEY, value: legacy.value })
+        invokeSync('secret.remove', { key: 'offline.provider.default' })
+      }
+    }
     if (!raw?.found || typeof raw.value !== 'string' || !raw.value) return undefined
     try {
-      const parsed = JSON.parse(raw.value) as Partial<OfflineProviderConfig>
+      const parsed = JSON.parse(raw.value) as Partial<LocalProviderConfig>
       if (parsed && typeof parsed.baseUrl === 'string' && typeof parsed.apiKey === 'string' && typeof parsed.model === 'string'
         && parsed.baseUrl.trim() && parsed.apiKey.trim() && parsed.model.trim()) {
         return { baseUrl: parsed.baseUrl.trim(), apiKey: parsed.apiKey.trim(), model: parsed.model.trim(), responseFormat: parsed.responseFormat === 'none' ? 'none' : 'json_object' }
@@ -110,7 +119,7 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
     } catch { /* 非法配置按未配置处理 */ }
     return undefined
   }
-  const writeProvider = (config: OfflineProviderConfig): void => {
+  const writeProvider = (config: LocalProviderConfig): void => {
     invokeSync('secret.set', { key: PROVIDER_SECRET_KEY, value: JSON.stringify(config) })
   }
 
@@ -120,7 +129,7 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
     return `${normalized}/chat/completions`
   }
 
-  const toOpenAiBody = (request: ModelRequest, config: OfflineProviderConfig): Json => {
+  const toOpenAiBody = (request: ModelRequest, config: LocalProviderConfig): Json => {
     const messages: Array<{ role: string; content: string }> = []
     if (request.prompt?.system) messages.push({ role: 'system', content: request.prompt.system })
     for (const message of request.prompt?.messages ?? []) {
@@ -178,7 +187,7 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
   const emit = (message: unknown): void => sink?.(JSON.stringify(message))
   const start = (nextSink: (message: string) => void): void => {
     sink = nextSink
-    composition ??= createAndroidComposition(operations, { roomId: OFFLINE_ROOM_ID, workers, onMessage: message => emit(message) })
+    composition ??= createAndroidComposition(operations, { roomId: LOCAL_ROOM_ID, workers, onMessage: message => emit(message) })
     if (!coreListenerInstalled) {
       coreListenerInstalled = true
       composition.core.subscribe((event: CoreEvent) => emit({ type: 'core.event', event }))
@@ -186,7 +195,7 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
     composition.start()
   }
   const requireComposition = (): AndroidComposition => {
-    if (!composition) throw new Error('离线核心未启动。')
+    if (!composition) throw new Error('本地核心未启动。')
     return composition
   }
 
@@ -197,11 +206,11 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
     dispatchCommand: (command: HumanCommand): Promise<void> => requireComposition().dispatch(command),
     cancel: (requestId?: string): Promise<void> => requireComposition().cancel(requestId),
     refresh: (): void => requireComposition().refresh(),
-    getProvider: (): { configured: boolean } & Partial<OfflineProviderConfig> => {
+    getProvider: (): { configured: boolean } & Partial<LocalProviderConfig> => {
       const config = readProvider()
       return config ? { configured: true, baseUrl: config.baseUrl, model: config.model } : { configured: false }
     },
-    setProvider: (config: OfflineProviderConfig): void => {
+    setProvider: (config: LocalProviderConfig): void => {
       if (!config || typeof config.baseUrl !== 'string' || typeof config.apiKey !== 'string' || typeof config.model !== 'string' || !config.baseUrl.trim() || !config.apiKey.trim() || !config.model.trim()) {
         throw new Error('供应商配置必须是 { baseUrl, apiKey, model } 且不能为空。')
       }
@@ -216,58 +225,58 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
     submitTurn: (input: { text: string; requiredRoleIds?: string[] }): Promise<void> => {
       const core = requireComposition()
       const room = core.getRoom()
-      if (room.mode === 'chat') return core.chat.submitContribution(OFFLINE_ROOM_ID, input.text)
-      return core.director.submitTurn(OFFLINE_ROOM_ID, input)
+      if (room.mode === 'chat') return core.chat.submitContribution(LOCAL_ROOM_ID, input.text)
+      return core.director.submitTurn(LOCAL_ROOM_ID, input)
     },
-    speak: (roleId: string, feedback = ''): Promise<void> => requireComposition().chat.speak(OFFLINE_ROOM_ID, roleId, feedback),
-    speakAll: (): Promise<void> => requireComposition().chat.speakAll(OFFLINE_ROOM_ID),
-    directorDecide: (): Promise<void> => requireComposition().chat.directorDecide(OFFLINE_ROOM_ID),
-    rejectSpeech: (): Promise<void> => requireComposition().chat.rejectSpeech(OFFLINE_ROOM_ID),
-    retrySpeak: (): Promise<void> => requireComposition().chat.retrySpeak(OFFLINE_ROOM_ID),
-    approveSpeech: (text: string, worldChangeOverride?: WorldChangeRequest | null): Promise<void> => requireComposition().chat.approveSpeech(OFFLINE_ROOM_ID, text, worldChangeOverride ?? null),
-    directorChat: (text: string): Promise<void> => requireComposition().chat.directorChat(OFFLINE_ROOM_ID, text),
-    approveWorldChange: (override?: WorldChangeRequest | null): Promise<void> => requireComposition().chat.approveWorldChange(OFFLINE_ROOM_ID, override ?? null),
-    rejectWorldChange: (): Promise<void> => requireComposition().chat.rejectWorldChange(OFFLINE_ROOM_ID),
+    speak: (roleId: string, feedback = ''): Promise<void> => requireComposition().chat.speak(LOCAL_ROOM_ID, roleId, feedback),
+    speakAll: (): Promise<void> => requireComposition().chat.speakAll(LOCAL_ROOM_ID),
+    directorDecide: (): Promise<void> => requireComposition().chat.directorDecide(LOCAL_ROOM_ID),
+    rejectSpeech: (): Promise<void> => requireComposition().chat.rejectSpeech(LOCAL_ROOM_ID),
+    retrySpeak: (): Promise<void> => requireComposition().chat.retrySpeak(LOCAL_ROOM_ID),
+    approveSpeech: (text: string, worldChangeOverride?: WorldChangeRequest | null): Promise<void> => requireComposition().chat.approveSpeech(LOCAL_ROOM_ID, text, worldChangeOverride ?? null),
+    directorChat: (text: string): Promise<void> => requireComposition().chat.directorChat(LOCAL_ROOM_ID, text),
+    approveWorldChange: (override?: WorldChangeRequest | null): Promise<void> => requireComposition().chat.approveWorldChange(LOCAL_ROOM_ID, override ?? null),
+    rejectWorldChange: (): Promise<void> => requireComposition().chat.rejectWorldChange(LOCAL_ROOM_ID),
     cancelTurn: (): void => {
       const core = requireComposition()
-      if (core.getRoom().mode === 'chat') core.chat.cancel(OFFLINE_ROOM_ID)
-      else core.director.cancel(OFFLINE_ROOM_ID)
+      if (core.getRoom().mode === 'chat') core.chat.cancel(LOCAL_ROOM_ID)
+      else core.director.cancel(LOCAL_ROOM_ID)
     },
-    proceedToDraft: (): Promise<void> => requireComposition().director.proceedToDraft(OFFLINE_ROOM_ID),
-    rejectDraft: (): Promise<void> => requireComposition().director.rejectDraft(OFFLINE_ROOM_ID),
-    retryDirector: (): Promise<void> => requireComposition().director.retryDirector(OFFLINE_ROOM_ID),
-    reconsiderReaction: (roleId: string, feedback: string): Promise<void> => requireComposition().director.reconsiderReaction(OFFLINE_ROOM_ID, roleId, feedback),
-    restart: (story: StoryPackage, options?: { mode?: RoomMode; autoPublish?: boolean }): void => requireComposition().management.restart(OFFLINE_ROOM_ID, story, options ?? {}),
-    setRoomConfig: (config: { mode?: RoomMode; autoPublish?: boolean; speechMode?: string; hidePlayerSpeech?: boolean }): void => requireComposition().management.setRoomConfig(OFFLINE_ROOM_ID, config as never),
-    updatePlayerCharacter: (player: PlayerCharacter): void => requireComposition().management.updatePlayerCharacter(OFFLINE_ROOM_ID, { name: player.name, persona: player.persona, currentState: player.currentState }),
-    setPlayerAvatar: (portraitRef: string): void => requireComposition().management.setPlayerAvatar(OFFLINE_ROOM_ID, portraitRef),
-    interveneRole: (roleId: string, selfModel: string, config: Json = {}): void => requireComposition().management.interveneRole(OFFLINE_ROOM_ID, roleId, selfModel, config),
-    storeNpcMemories: (roleId: string, entries: Array<{ id?: string; text?: string; occurredAt?: string }>): void => requireComposition().management.storeNpcMemories(OFFLINE_ROOM_ID, roleId, entries),
-    retractNpcMemory: (memoryId: string): void => requireComposition().management.retractNpcMemory(OFFLINE_ROOM_ID, memoryId),
-    updateNpcMemory: (memoryId: string, entry: { text?: string; occurredAt?: string }): void => requireComposition().management.updateNpcMemory(OFFLINE_ROOM_ID, memoryId, entry),
-    reorderNpcMemories: (roleId: string, memoryIds: string[]): void => requireComposition().management.reorderNpcMemories(OFFLINE_ROOM_ID, roleId, memoryIds),
-    supersedeNpcMemory: (memoryId: string, entry: { text: string; occurredAt: string }): void => requireComposition().management.supersedeNpcMemory(OFFLINE_ROOM_ID, memoryId, entry),
-    saveLore: (lore: LoreEntry[]): void => requireComposition().management.saveLore(OFFLINE_ROOM_ID, lore),
-    createRole: (role: Parameters<import('../stagecraft-repository.ts').StageCraftRepository['createRole']>[1]): void => requireComposition().management.createRole(OFFLINE_ROOM_ID, role),
-    deleteRole: (roleId: string): void => requireComposition().management.deleteRole(OFFLINE_ROOM_ID, roleId),
-    setRolePresence: (roleId: string, presence: Role['presence']): void => requireComposition().management.setRolePresence(OFFLINE_ROOM_ID, roleId, presence),
-    setRoleThinking: (roleId: string, thinkingStrength: ThinkingStrength): void => requireComposition().management.setRoleThinking(OFFLINE_ROOM_ID, roleId, thinkingStrength),
-    reorderRoles: (roleIds: string[]): void => requireComposition().management.reorderRoles(OFFLINE_ROOM_ID, roleIds),
-    setRoleAvatar: (roleId: string, portraitRef: string): void => requireComposition().management.setRoleAvatar(OFFLINE_ROOM_ID, roleId, portraitRef),
-    setRoleCurrentState: (roleId: string, currentState: string): void => requireComposition().management.setRoleCurrentState(OFFLINE_ROOM_ID, roleId, currentState),
-    setDirectorSetting: (text: string): void => requireComposition().management.setDirectorSetting(OFFLINE_ROOM_ID, text),
-    updateScene: (updates: { time?: string; location?: string }): void => requireComposition().management.updateScene(OFFLINE_ROOM_ID, updates),
-    consult: (draftId: string, playerText: string, context = ''): Promise<void> => requireComposition().director.consult(OFFLINE_ROOM_ID, draftId, playerText, context),
-    finishConsultation: (): void => requireComposition().director.finishConsultation(OFFLINE_ROOM_ID),
-    redraft: (draftId: string): Promise<void> => requireComposition().director.redraft(OFFLINE_ROOM_ID, draftId),
-    approve: (draftId: string, text: string, stateUpdates: Record<string, string>, sceneUpdates?: { time?: string; location?: string }): void => requireComposition().director.approve(OFFLINE_ROOM_ID, draftId, text, stateUpdates, sceneUpdates),
+    proceedToDraft: (): Promise<void> => requireComposition().director.proceedToDraft(LOCAL_ROOM_ID),
+    rejectDraft: (): Promise<void> => requireComposition().director.rejectDraft(LOCAL_ROOM_ID),
+    retryDirector: (): Promise<void> => requireComposition().director.retryDirector(LOCAL_ROOM_ID),
+    reconsiderReaction: (roleId: string, feedback: string): Promise<void> => requireComposition().director.reconsiderReaction(LOCAL_ROOM_ID, roleId, feedback),
+    restart: (story: StoryPackage, options?: { mode?: RoomMode; autoPublish?: boolean }): void => requireComposition().management.restart(LOCAL_ROOM_ID, story, options ?? {}),
+    setRoomConfig: (config: { mode?: RoomMode; autoPublish?: boolean; speechMode?: string; hidePlayerSpeech?: boolean }): void => requireComposition().management.setRoomConfig(LOCAL_ROOM_ID, config as never),
+    updatePlayerCharacter: (player: PlayerCharacter): void => requireComposition().management.updatePlayerCharacter(LOCAL_ROOM_ID, { name: player.name, persona: player.persona, currentState: player.currentState }),
+    setPlayerAvatar: (portraitRef: string): void => requireComposition().management.setPlayerAvatar(LOCAL_ROOM_ID, portraitRef),
+    interveneRole: (roleId: string, selfModel: string, config: Json = {}): void => requireComposition().management.interveneRole(LOCAL_ROOM_ID, roleId, selfModel, config),
+    storeNpcMemories: (roleId: string, entries: Array<{ id?: string; text?: string; occurredAt?: string }>): void => requireComposition().management.storeNpcMemories(LOCAL_ROOM_ID, roleId, entries),
+    retractNpcMemory: (memoryId: string): void => requireComposition().management.retractNpcMemory(LOCAL_ROOM_ID, memoryId),
+    updateNpcMemory: (memoryId: string, entry: { text?: string; occurredAt?: string }): void => requireComposition().management.updateNpcMemory(LOCAL_ROOM_ID, memoryId, entry),
+    reorderNpcMemories: (roleId: string, memoryIds: string[]): void => requireComposition().management.reorderNpcMemories(LOCAL_ROOM_ID, roleId, memoryIds),
+    supersedeNpcMemory: (memoryId: string, entry: { text: string; occurredAt: string }): void => requireComposition().management.supersedeNpcMemory(LOCAL_ROOM_ID, memoryId, entry),
+    saveLore: (lore: LoreEntry[]): void => requireComposition().management.saveLore(LOCAL_ROOM_ID, lore),
+    createRole: (role: Parameters<import('../stagecraft-repository.ts').StageCraftRepository['createRole']>[1]): void => requireComposition().management.createRole(LOCAL_ROOM_ID, role),
+    deleteRole: (roleId: string): void => requireComposition().management.deleteRole(LOCAL_ROOM_ID, roleId),
+    setRolePresence: (roleId: string, presence: Role['presence']): void => requireComposition().management.setRolePresence(LOCAL_ROOM_ID, roleId, presence),
+    setRoleThinking: (roleId: string, thinkingStrength: ThinkingStrength): void => requireComposition().management.setRoleThinking(LOCAL_ROOM_ID, roleId, thinkingStrength),
+    reorderRoles: (roleIds: string[]): void => requireComposition().management.reorderRoles(LOCAL_ROOM_ID, roleIds),
+    setRoleAvatar: (roleId: string, portraitRef: string): void => requireComposition().management.setRoleAvatar(LOCAL_ROOM_ID, roleId, portraitRef),
+    setRoleCurrentState: (roleId: string, currentState: string): void => requireComposition().management.setRoleCurrentState(LOCAL_ROOM_ID, roleId, currentState),
+    setDirectorSetting: (text: string): void => requireComposition().management.setDirectorSetting(LOCAL_ROOM_ID, text),
+    updateScene: (updates: { time?: string; location?: string }): void => requireComposition().management.updateScene(LOCAL_ROOM_ID, updates),
+    consult: (draftId: string, playerText: string, context = ''): Promise<void> => requireComposition().director.consult(LOCAL_ROOM_ID, draftId, playerText, context),
+    finishConsultation: (): void => requireComposition().director.finishConsultation(LOCAL_ROOM_ID),
+    redraft: (draftId: string): Promise<void> => requireComposition().director.redraft(LOCAL_ROOM_ID, draftId),
+    approve: (draftId: string, text: string, stateUpdates: Record<string, string>, sceneUpdates?: { time?: string; location?: string }): void => requireComposition().director.approve(LOCAL_ROOM_ID, draftId, text, stateUpdates, sceneUpdates),
   }
 
-  const offlineCore = Object.assign({
+  const localCore = Object.assign({
     bundleVersion: ANDROID_CORE_BUNDLE_VERSION,
     bridgeVersion: ANDROID_CORE_BRIDGE_VERSION,
     protocolVersion: CORE_PROTOCOL_VERSION,
-    roomId: OFFLINE_ROOM_ID,
+    roomId: LOCAL_ROOM_ID,
     start,
     stop: (): void => { composition?.stop(); sink = undefined },
     reconnect: (): void => composition?.start(),
@@ -276,7 +285,7 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
     cancel: (requestId?: string): void => { void composition?.cancel(requestId).catch(() => {}) },
     dispose: (): void => { composition?.dispose(); composition = undefined; sink = undefined },
   }, facade)
-  global.StageCraftOfflineCore = Object.freeze(offlineCore)
+  global.StageCraftLocalCore = Object.freeze(localCore)
 
   // 兼容既有 StageCraftEmbeddedCore 会话面（配对页 ?mode=local 迷你渲染器 / 旧调用方）
   global.StageCraftEmbeddedCore = Object.freeze({
@@ -300,5 +309,5 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
 }
 
 const nativeAtLoad = typeof globalThis !== 'undefined' ? (globalThis as { StageCraftNative?: Record<string, unknown> }).StageCraftNative : undefined
-// 仅当原生桥提供 invokeAsync 时安装离线核心；旧客户端（无异步桥）保留既有表面由 android-core.ts 提供。
-if (nativeAtLoad && typeof nativeAtLoad.invokeAsync === 'function') installOfflineCore()
+// 仅当原生桥提供 invokeAsync 时安装本地核心；旧客户端（无异步桥）保留既有表面由 android-core.ts 提供。
+if (nativeAtLoad && typeof nativeAtLoad.invokeAsync === 'function') installLocalCore()
