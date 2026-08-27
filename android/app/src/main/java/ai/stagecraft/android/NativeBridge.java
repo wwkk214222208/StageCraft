@@ -25,6 +25,7 @@ public final class NativeBridge implements AutoCloseable {
     private final AtomicLong connectionGeneration = new AtomicLong();
     private final AtomicLong operationGeneration = new AtomicLong();
     private final AtomicLong fileGeneration = new AtomicLong();
+    private final AtomicLong asyncGeneration = new AtomicLong();
     private volatile RemoteCoreConnection connection;
     private volatile HttpURLConnection activePairRequest;
     private volatile boolean foreground;
@@ -59,6 +60,47 @@ public final class NativeBridge implements AutoCloseable {
             JSONObject input = new JSONObject(inputJson);
             return compositionOperations.invokeSync(operation, input).toString();
         } catch (Exception error) { return errorJson(error.getMessage() == null ? "Native operation failed." : error.getMessage()); }
+    }
+
+    /**
+     * 异步原生操作桥（模型请求 / 提示词、剧本源读取）。每个回调 id 允许多次
+     * onResult（如模型 thinking 增量 + 最终结果）；页面侧按契约聚合。
+     */
+    @JavascriptInterface public void invokeAsync(String operation, String inputJson, String callbackId) {
+        if (closed) { deliverAsync(callbackId, errorJson("Native bridge is closed.")); return; }
+        if (operation == null || operation.length() > 64 || inputJson == null || inputJson.length() > 4 * 1024 * 1024 || callbackId == null || callbackId.length() > 96) {
+            deliverAsync(callbackId, errorJson("Invalid native request."));
+            return;
+        }
+        final long generation = asyncGeneration.incrementAndGet();
+        networkExecutor.execute(() -> {
+            try {
+                JSONObject input = new JSONObject(inputJson);
+                compositionOperations.invoke(operation, input, new AndroidNativeOperations.Callback() {
+                    @Override public void onResult(org.json.JSONObject result) {
+                        if (!closed && generation == asyncGeneration.get()) deliverAsync(callbackId, result.toString());
+                    }
+
+                    @Override public void onError(String message) {
+                        if (!closed && generation == asyncGeneration.get()) deliverAsync(callbackId, errorMessageJson(message));
+                    }
+                });
+            } catch (Exception error) {
+                if (!closed && generation == asyncGeneration.get()) deliverAsync(callbackId, errorMessageJson(error.getMessage() == null ? "Native operation failed." : error.getMessage()));
+            }
+        });
+    }
+
+    private void deliverAsync(String callbackId, String resultJson) {
+        activity.runOnUiThread(() -> {
+            if (closed) return;
+            webView.evaluateJavascript("window.StageCraftNativeResult && window.StageCraftNativeResult.handle(" + JSONObject.quote(callbackId) + "," + JSONObject.quote(resultJson) + ")", null);
+        });
+    }
+
+    private String errorMessageJson(String message) {
+        try { return new JSONObject().put("ok", false).put("error", new JSONObject().put("code", "NATIVE_OPERATION_FAILED").put("message", message == null || message.isEmpty() ? "Native operation failed." : message)).toString(); }
+        catch (Exception ignored) { return "{\"ok\":false,\"error\":{\"code\":\"NATIVE_OPERATION_FAILED\",\"message\":\"Native operation failed.\"}}"; }
     }
 
     private String errorJson(String message) {

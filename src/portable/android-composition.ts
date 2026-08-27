@@ -5,7 +5,8 @@ import { StageCraftChatService } from '../stagecraft-chat-service.ts'
 import { StageCraftDirectorService } from '../stagecraft-director-service.ts'
 import { StageCraftManagementService } from '../stagecraft-management-service.ts'
 import { fakeWorkers, type WorkerSet } from '../workers.ts'
-import type { RoomSnapshot } from '../types.ts'
+import type { ConsultationMessage, LoreEntry, PlayerCharacter, RoomSnapshot, TokenUsage } from '../types.ts'
+import { type Decision, type Draft } from '../types.ts'
 import { createPortableComposition, type NativeOperations } from '../platform/composition.ts'
 import type { StageCraftRepository } from '../stagecraft-repository.ts'
 import type { CoreLlmRouterPlugin, Disposable } from '../core/plugins.ts'
@@ -48,6 +49,12 @@ export type AndroidComposition = {
   readonly dispatch: (command: import('../core/protocol.ts').HumanCommand) => Promise<void>
   readonly cancel: (requestId?: string) => Promise<void>
   readonly dispose: () => void
+  /** Rich-API 外壳所需的内部服务/房间访问（与 PC 端 RoomRuntime 同一组共享服务）。 */
+  readonly getRoom: () => RoomSnapshot
+  readonly chat: StageCraftChatService
+  readonly director: StageCraftDirectorService
+  readonly management: StageCraftManagementService
+  readonly setWorkers: (workers: WorkerSet) => void
 }
 
 /** Boots the real shared StageCraft solution in the WebView, never a Java domain replica. */
@@ -85,6 +92,12 @@ export function createAndroidComposition(operations: NativeOperations, options: 
     },
     async dispatch(command) { if (!running) return; await core.dispatch(command); emit({ type: 'core.resync', reason: 'command', revision: core.getView().revision, view: core.getView() }) },
     async cancel(requestId) { await core.cancel(requestId) },
+    getRoom: () => readRoom(),
+    chat, director, management,
+    setWorkers(next) {
+      chat.setWorkers(next)
+      director.setWorkers(next)
+    },
     dispose() { if (!running) return; chat.dispose(); director.dispose(); void container.dispose(); running = false },
   }
 }

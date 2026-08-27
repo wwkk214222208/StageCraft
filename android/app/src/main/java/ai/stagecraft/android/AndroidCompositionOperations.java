@@ -47,6 +47,27 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
             }
             return room;
         }
+        if ("stories.list".equals(operation)) {
+            org.json.JSONArray result = new org.json.JSONArray();
+            for (String scope : new String[] {"default", "custom"}) {
+                String[] files = context.getAssets().list("stories/" + scope);
+                if (files == null) continue;
+                for (String file : files) {
+                    if (!file.endsWith(".json")) continue;
+                    String id = file.substring(0, file.length() - 5);
+                    try (InputStream stream = context.getAssets().open("stories/" + scope + "/" + file)) {
+                        byte[] data = StageCraftArchive.readLimited(stream, 4 * 1024 * 1024);
+                        JSONObject story = new JSONObject(new String(data, StandardCharsets.UTF_8));
+                        result.put(new JSONObject()
+                            .put("id", id)
+                            .put("title", story.optString("title", id))
+                            .put("mode", story.optString("mode", "director"))
+                            .put("custom", "custom".equals(scope)));
+                    } catch (Exception ignore) { /* 跳过损坏的剧本文件 */ }
+                }
+            }
+            return new JSONObject().put("stories", result);
+        }
         if ("stagecraft.repository".equals(operation)) return dispatchRepository(input);
         if ("asset.read".equals(operation)) {
             String path = JsonSafety.requiredString(input, "path", 512); JsonSafety.path(path);
@@ -79,7 +100,7 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
                 if ("story.read".equals(operation)) {
                     String id = JsonSafety.requiredString(input, "id", 128);
                     if (!id.matches("[A-Za-z0-9._-]+")) throw new IllegalArgumentException("Invalid story id.");
-                    callback.onResult(new JSONObject().put("value", readAssetText("stories/" + id + ".json")));
+                    callback.onResult(new JSONObject().put("value", readStoryText(id)));
                     return;
                 }
                 if ("model.request".equals(operation)) {
@@ -189,14 +210,20 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
             return new JSONObject()
                 .put("id", roomId)
                 .put("title", "Royal Festival")
+                .put("storyId", "eldoria")
                 .put("mode", "director")
+                .put("speechMode", "manual")
+                .put("hidePlayerSpeech", false)
                 .put("autoPublish", false)
                 .put("phase", "awaiting-player-input")
                 .put("revision", 0)
                 .put("playerCharacter", new JSONObject().put("name", "Player").put("persona", "A careful observer.").put("currentState", "Just entered the scene."))
                 .put("roles", new org.json.JSONArray().put(new JSONObject().put("id", "aria").put("name", "Aria").put("portraitRef", "/assets/default.svg").put("currentState", "At the royal festival, watching the crowd.").put("presence", "present").put("memoryTimeline", new JSONObject().put("Past", new org.json.JSONArray().put("The festival has begun."))).put("selfModel", "Reserved and observant.")))
                 .put("lore", new org.json.JSONArray().put(new JSONObject().put("name", "Royal Festival").put("content", "A public festival where old alliances are tested.")))
-                .put("scenes", new org.json.JSONArray().put(new JSONObject().put("id", "opening-" + roomId).put("turnId", "opening").put("text", "Music drifts through the royal festival hall as evening falls.").put("kind", "narration").put("createdAt", now())));
+                .put("scenes", new org.json.JSONArray().put(new JSONObject().put("id", "opening-" + roomId).put("turnId", "opening").put("text", "Music drifts through the royal festival hall as evening falls.").put("kind", "narration").put("createdAt", now())))
+                .put("consultations", new org.json.JSONArray())
+                .put("reactions", new org.json.JSONArray())
+                .put("decisions", new org.json.JSONArray());
         } catch (Exception error) {
             throw new IllegalStateException("Unable to create the default local room.", error);
         }
@@ -209,5 +236,11 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
             byte[] data = StageCraftArchive.readLimited(input, 4 * 1024 * 1024);
             return new String(data, StandardCharsets.UTF_8);
         }
+    }
+
+    /** 剧本文件打包布局：stories/default/<id>.json 与 stories/custom/<id>.json。 */
+    private String readStoryText(String id) throws Exception {
+        try { return readAssetText("stories/default/" + id + ".json"); }
+        catch (Exception defaultMissing) { return readAssetText("stories/custom/" + id + ".json"); }
     }
 }

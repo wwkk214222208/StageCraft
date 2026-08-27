@@ -32,6 +32,19 @@ The WebView loads only `https://appassets.androidplatform.net/` resources interc
 - 原生 `RemoteCoreConnection` 继续作为**授权看门狗**：SSE 收到 401 → `onUnauthorized` → 清会话并回到本地配对页。
 - 本地资产（配对页 / 嵌入核心模式）仍由同一客户端拦截服务。
 
+## Offline full-UI mode (方案 B：完全离线复用 Web UI)
+
+配对页「本地模式（不连电脑，完整界面）」进入 `/web/offline.html`：**APK 内置 PC 端同一套完整 Web UI**（构建期由 Gradle 把根目录 `public/` 打包为 `assets/web/**` 并生成离线入口），游玩完全离线，模型调用经设备原生网络直连供应商。
+
+架构：
+
+- `offline.html` = `public/index.html`（`__MODE_FLAG__=true` 关闭 DSH 依赖组件）+ 注入 `embedded-core.js`（离线组合根）与 `offline-adapter.js`（HTTP 适配层），均早于 `app.js` 执行。
+- `src/portable/android-offline-core.ts`（esbuild 打包为 `embedded-core.js`）：在页面内运行共享 `CoreRuntimeSkeleton` + chat/director/management 服务（`android-composition.ts`），并以 **真实 workers**（`offline-workers.ts`，自包含提示词 + JSON 契约）驱动生成；凭据只存 `AndroidSecretStore`，网络由 `AndroidModelTransport`（OpenAI 兼容 SSE 解析，含 `reasoning_content` 思考增量）在 Java 侧发起。
+- `offline-adapter.js`：补丁 `fetch`/`EventSource`，把 `/api/*` 路由到离线核心；与 PC 端 `app-boot.ts` 同一套 HTTP 契约与 **Core 命令协议**（`{roomId, scope, action}` 载荷：`submit-text`/`select-role`/`approve`/`reject`/`retry`/`cancel`/`restart`/`role-management`），房间快照经 `/api/events` SSE 推送，思维链经 `/api/thinking-events` 推送；桌面专属能力（DSH 助手、账单、剧本编辑器持久化、存档/读档、状态回滚、头像上传、ST 卡导入、模型自动发现等）返回明确的「离线暂不支持」提示。
+- 原生异步桥：`NativeBridge.invokeAsync`（operation + callbackId）承载 `model.request` / `prompts.read` / `story.read`。
+- 模型供应商：应用内「连接 → 管理供应商」新建（接口地址、API Key、模型名），写入 `offline.provider.default`（Keystore 加密 secret）；模型名单离线不可自动发现，需手动填写（如 `deepseek-chat`）。
+- 离线边界：`StageCraftWebViewClient` 仅放行 `appassets://` 本地资源（`/web`、`/assets`、`/story-assets`），文件/内容/Cookie/混合内容仍全禁。
+
 ## Build and verification
 
 The standard Gradle 8.9 wrapper and AGP 8.7.3 contract are checked in. With the required AGP artifact available in the Gradle cache and SDK 35 installed:

@@ -241,9 +241,9 @@ if (typeof window !== 'undefined' && window.document) {
     window.StageCraftNativeReceive = message => renderer.receive(message)
     native.ready()
     if (localAvailable) {
-      const button = element(window.document, 'button', '本地模式（不连电脑）', 'secondary')
+      const button = element(window.document, 'button', '本地模式（不连电脑，完整界面）', 'secondary')
       button.id = 'local-mode-button'
-      button.onclick = () => { window.location.href = 'index.html?mode=local' }
+      button.onclick = () => { window.location.href = '/web/offline.html' }
       const anchor = window.document.getElementById('connection-error')
       if (anchor?.parentElement) anchor.parentElement.insertBefore(button, anchor)
       else window.document.getElementById('pairing-panel')?.append(button)

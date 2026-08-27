@@ -31,16 +31,6 @@ import java.util.Map;
  */
 public final class StageCraftWebViewClient extends WebViewClient {
     public static final String LOCAL_ORIGIN = "https://appassets.androidplatform.net";
-    private static final Map<String, String> LOCAL_ASSETS;
-    static {
-        Map<String, String> assets = new HashMap<>();
-        assets.put("/index.html", "text/html");
-        assets.put("/styles.css", "text/css");
-        assets.put("/renderer.js", "text/javascript");
-        assets.put("/embedded-core.js", "text/javascript");
-        assets.put("/embedded-core.json", "application/json");
-        LOCAL_ASSETS = Collections.unmodifiableMap(assets);
-    }
 
     public interface CredentialProvider {
         /** 当前已配对会话的 Bearer token；未配对返回 null。 */
@@ -86,14 +76,65 @@ public final class StageCraftWebViewClient extends WebViewClient {
     }
 
     private WebResourceResponse serveLocalAsset(Uri url) {
-        String mime = LOCAL_ASSETS.get(url.getPath());
+        String path = url.getPath() == null ? "/" : url.getPath();
+        String mime = mimeFor(path);
         if (mime == null) return forbidden();
+        String assetPath = localAssetPath(path);
+        if (assetPath == null) return forbidden();
         try {
-            String name = url.getPath().substring(1);
-            return new WebResourceResponse(mime, "UTF-8", context.getAssets().open(name));
+            InputStream input = openLocalAsset(assetPath);
+            if (input == null) return forbidden();
+            return new WebResourceResponse(mime, "UTF-8", input);
         } catch (IOException error) {
             return forbidden();
         }
+    }
+
+    /** 本地 asset 路径映射：配对页/配色/渲染器/核心在根目录，Web UI 在 web/（public 打包），
+     *  头像资源 /assets/** 取自打包的 public/assets，剧本自包含资源 /story-assets/<id>/<file>
+     *  取自 stories/{default,custom}/<id>.assets/。拒绝路径穿越。 */
+    private static String localAssetPath(String path) {
+        if (path.contains("..")) return null;
+        if ("/index.html".equals(path) || "/styles.css".equals(path) || "/renderer.js".equals(path)
+            || "/embedded-core.js".equals(path) || "/embedded-core.json".equals(path)) return path.substring(1);
+        if (path.startsWith("/web/")) return path.substring(1);
+        if (path.startsWith("/assets/")) return "web" + path;
+        if (path.startsWith("/custom/")) return "web" + path;
+        if (path.startsWith("/story-assets/")) {
+            String remaining = path.substring("/story-assets/".length());
+            int slash = remaining.indexOf('/');
+            if (slash <= 0 || slash == remaining.length() - 1) return null;
+            String id = remaining.substring(0, slash);
+            String file = remaining.substring(slash + 1);
+            return id + ".assets/" + file; // resolved against stories/{default,custom}/
+        }
+        return null;
+    }
+
+    private static String mimeFor(String path) {
+        String lower = path.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
+        if (lower.endsWith(".js") || lower.endsWith(".mjs")) return "text/javascript";
+        if (lower.endsWith(".css")) return "text/css";
+        if (lower.endsWith(".json")) return "application/json";
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".svg")) return "image/svg+xml";
+        if (lower.endsWith(".txt")) return "text/plain";
+        if (lower.endsWith(".map")) return "application/json";
+        return "application/octet-stream";
+    }
+
+    private InputStream openLocalAsset(String assetPath) throws IOException {
+        if (assetPath.endsWith(".assets/")) return null;
+        if (assetPath.contains(".assets/")) {
+            // /story-assets/<id>/<file>：先查 default，再查 custom
+            try { return context.getAssets().open("stories/default/" + assetPath); }
+            catch (IOException ignored) { return context.getAssets().open("stories/custom/" + assetPath); }
+        }
+        return context.getAssets().open(assetPath);
     }
 
     private WebResourceResponse fetchWithToken(Uri url, String credential, boolean mainFrame) {

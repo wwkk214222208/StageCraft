@@ -14,7 +14,7 @@ const version = '1.1.0'
 const protocolVersion = '1.0'
 await mkdir(dirname(output), { recursive: true })
 await build({
-  entryPoints: [resolve(root, 'src/portable/android-core.ts')],
+  entryPoints: [resolve(root, 'src/portable/android-offline-core.ts')],
   outfile: output,
   bundle: true,
   format: 'iife',
