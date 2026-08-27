@@ -657,6 +657,73 @@ $('#remote-pairing-revoke').onclick = async event => {
   }
 }
 
+// ── 手机 APK 与电脑双向同步（仅离线运行时；配对凭据与远端 HTTP 都在原生侧） ──
+function describeSyncResult(result) {
+  const parts = []
+  if (result?.room) parts.push('房间已更新')
+  if (result?.providers) parts.push('供应商已更新')
+  if (result?.saves != null) parts.push(`存档 ${result.saves}`)
+  if (result?.stories != null) parts.push(`剧本 ${result.stories}`)
+  if (result?.presets != null) parts.push(`预设 ${result.presets}`)
+  return parts.length ? parts.join('，') : '完成'
+}
+async function refreshSyncRemoteStatus() {
+  const statusEl = $('#sync-remote-status')
+  if (!statusEl || !window.StageCraftSyncRemote) return
+  try {
+    const status = await window.StageCraftSyncRemote.status()
+    statusEl.textContent = status && status.paired ? `已绑定：${status.address}` : '未绑定电脑。'
+  } catch { statusEl.textContent = '未绑定电脑。' }
+}
+$('#sync-remote-pair').onclick = async () => {
+  if (!window.StageCraftSyncRemote) return
+  $('#sync-remote-error').textContent = ''
+  const address = prompt('电脑地址：如 http://192.168.1.5:8787（与电脑实际监听地址一致；局域网 IP 用 http 即可）')
+  if (!address || !address.trim()) return
+  const code = prompt('一次性配对码：在电脑「设置 → 手机远程配对 → 生成手机配对码」查看（5 分钟内有效）')
+  if (!code || !code.trim()) return
+  try {
+    const result = await window.StageCraftSyncRemote.pair(address.trim(), code.trim())
+    if (result && result.ok) { await refreshSyncRemoteStatus(); alert('已绑定电脑，可以开始同步。') }
+    else $('#sync-remote-error').textContent = (result && result.message) || '绑定失败，请检查地址与配对码。'
+  } catch (error) { $('#sync-remote-error').textContent = error instanceof Error ? error.message : '绑定失败。' }
+}
+$('#sync-remote-pull').onclick = async () => {
+  const sync = window.StageCraftSyncRemote
+  if (!sync) return
+  $('#sync-remote-error').textContent = ''
+  const status = await sync.status()
+  if (!status || !status.paired) { $('#sync-remote-error').textContent = '请先「绑定电脑（配对码）」。'; return }
+  if (!confirm('从电脑拉取会用电脑数据覆盖本机的房间、存档、剧本与供应商配置，并导入电脑的提示词预设。确认继续？')) return
+  $('#sync-remote-error').textContent = '正在从电脑拉取…'
+  try {
+    const result = await sync.pull()
+    $('#sync-remote-error').textContent = `拉取完成：${describeSyncResult(result)}。`
+    await refreshRoom()
+    await loadStories()
+    await loadPromptPresets()
+  } catch (error) { $('#sync-remote-error').textContent = `拉取失败：${error instanceof Error ? error.message : String(error)}` }
+}
+$('#sync-remote-push').onclick = async () => {
+  const sync = window.StageCraftSyncRemote
+  if (!sync) return
+  $('#sync-remote-error').textContent = ''
+  const status = await sync.status()
+  if (!status || !status.paired) { $('#sync-remote-error').textContent = '请先「绑定电脑（配对码）」。'; return }
+  if (!confirm('推送到电脑会用本机数据覆盖电脑上的房间、存档、剧本与供应商配置，并上传本机的提示词预设。确认继续？')) return
+  $('#sync-remote-error').textContent = '正在推送到电脑…'
+  try {
+    const result = await sync.push()
+    $('#sync-remote-error').textContent = `推送完成：${describeSyncResult(result)}。`
+  } catch (error) { $('#sync-remote-error').textContent = `推送失败：${error instanceof Error ? error.message : String(error)}` }
+}
+if (window.__STAGECRAFT_OFFLINE__ && window.StageCraftNative && typeof window.StageCraftNative.syncStatus === 'function') {
+  const row = $('#sync-remote-row')
+  if (row) row.hidden = false
+  $('#app-settings').addEventListener('click', refreshSyncRemoteStatus)
+  void refreshSyncRemoteStatus()
+}
+
 // ── ST 角色卡导入（兼容旧房间导入与 Creator Workbench 预览） ──
 let stImportFile = null
 $('#st-import-open').onclick = () => { stImportFile = null; $('#st-import-file').value = ''; $('#st-import-run').disabled = true; $('#st-import-preview').innerHTML = '<p class="hint">选择 JSON 或 PNG 角色卡后显示解析结果。</p>'; $('#st-import-modal').showModal() }

@@ -440,6 +440,11 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         if (prompts?.privateToggles && typeof prompts.privateToggles === 'object') {
           for (const [presetId, nodes] of Object.entries(prompts.privateToggles)) for (const [nodeId, enabled] of Object.entries(nodes as any)) savePrivateToggle(promptsFilePath, presetId, nodeId, enabled === true)
         }
+        const presetSource = prompts?.presets
+        if (presetSource && typeof presetSource === 'object') {
+          const presets = Array.isArray(presetSource) ? presetSource : (Array.isArray((presetSource as any).presets) ? (presetSource as any).presets : [])
+          for (const preset of presets) if (preset && typeof preset === 'object' && String((preset as any).id ?? '').trim()) updatePromptPreset(preset as any, promptsFilePath)
+        }
         return json(response, 200, { ok: true, files: listSaves() })
       }
       

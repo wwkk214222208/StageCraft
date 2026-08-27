@@ -205,6 +205,131 @@ public final class NativeBridge implements AutoCloseable {
         });
     }
 
+    @JavascriptInterface public String syncStatus() {
+        try {
+            RemoteSessionStore.SavedSession saved = sessionStore.load();
+            if (saved == null) return new JSONObject().put("paired", false).toString();
+            return new JSONObject().put("paired", true).put("address", saved.address()).toString();
+        } catch (Exception error) {
+            try { return new JSONObject().put("paired", false).toString(); } catch (Exception ignored) { return "{\"paired\":false}"; }
+        }
+    }
+
+    /** 仅配对并保存会话（不切换到远程 Web UI），供设置页「与电脑同步」使用。 */
+    @JavascriptInterface public void syncPair(String addressInput, boolean allowInsecureHttp, String pairingCode) {
+        if (closed) return;
+        final URI address;
+        try {
+            address = ServerAddressValidator.validate(addressInput, allowInsecureHttp);
+            if (pairingCode == null || pairingCode.trim().isEmpty() || pairingCode.length() > 32) throw new IllegalArgumentException("Pairing code is invalid.");
+        } catch (IllegalArgumentException error) {
+            deliverSyncPairResult("{\"ok\":false,\"message\":\"地址或配对码无效。\"}");
+            return;
+        }
+        long operation = operationGeneration.incrementAndGet();
+        cancelPairRequest();
+        networkExecutor.execute(() -> exchangeSyncPair(operation, address, allowInsecureHttp, pairingCode.trim()));
+    }
+
+    /** 带配对会话 Bearer 调用电脑端同步端点（GET/PUT /api/remote/sync）；配对凭据不进入页面。 */
+    @JavascriptInterface public void syncRemoteFetch(String method, String bodyJson, String callbackId) {
+        if (closed || callbackId == null || callbackId.length() > 96) return;
+        final String verb = "GET".equals(method) ? "GET" : "PUT";
+        networkExecutor.execute(() -> {
+            HttpURLConnection request = null;
+            try {
+                RemoteSessionStore.SavedSession saved = sessionStore.load();
+                if (saved == null) throw new IllegalStateException("未绑定电脑，请先配对。");
+                URI address = ServerAddressValidator.validate(saved.address(), saved.allowInsecureHttp());
+                request = (HttpURLConnection) address.resolve("/api/remote/sync").toURL().openConnection();
+                request.setRequestMethod(verb);
+                request.setRequestProperty("Accept", "application/json");
+                request.setRequestProperty("Authorization", "Bearer " + saved.credential());
+                request.setConnectTimeout(10_000);
+                request.setReadTimeout(60_000);
+                request.setUseCaches(false);
+                request.setInstanceFollowRedirects(false);
+                if ("PUT".equals(verb)) {
+                    if (bodyJson == null || bodyJson.length() > 32 * 1024 * 1024) throw new IllegalStateException("同步数据过大。");
+                    byte[] body = bodyJson.getBytes(StandardCharsets.UTF_8);
+                    request.setRequestProperty("Content-Type", "application/json");
+                    request.setFixedLengthStreamingMode(body.length);
+                    request.setDoOutput(true);
+                    try (OutputStream output = request.getOutputStream()) { output.write(body); }
+                }
+                int status = request.getResponseCode();
+                if (status == 401 || status == 403) {
+                    sessionStore.clearSession();
+                    activeCredential = null;
+                    throw new IllegalStateException("电脑会话已失效，请重新绑定。");
+                }
+                if (status < 200 || status >= 300) throw new IllegalStateException("同步失败（HTTP " + status + "）。");
+                String responseText = readLimited(request.getInputStream(), 32 * 1024 * 1024);
+                deliverSyncFetch(callbackId, true, status, responseText, null);
+            } catch (Exception error) {
+                if (!closed) deliverSyncFetch(callbackId, false, 0, null, error.getMessage() == null ? "同步失败。" : error.getMessage());
+            } finally {
+                if (request != null) request.disconnect();
+            }
+        });
+    }
+
+    private void exchangeSyncPair(long operation, URI address, boolean allowInsecureHttp, String pairingCode) {
+        HttpURLConnection request = null;
+        try {
+            if (closed || operation != operationGeneration.get()) return;
+            request = (HttpURLConnection) address.resolve("/api/remote/pair").toURL().openConnection();
+            activePairRequest = request;
+            if (closed || operation != operationGeneration.get()) return;
+            request.setRequestMethod("POST");
+            request.setRequestProperty("Accept", "application/json");
+            request.setRequestProperty("Content-Type", "application/json");
+            request.setConnectTimeout(10_000);
+            request.setReadTimeout(20_000);
+            request.setUseCaches(false);
+            request.setInstanceFollowRedirects(false);
+            request.setDoOutput(true);
+            byte[] body = new JSONObject().put("code", pairingCode).toString().getBytes(StandardCharsets.UTF_8);
+            request.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = request.getOutputStream()) { output.write(body); }
+            int status = request.getResponseCode();
+            if (status < 200 || status >= 300) throw new IllegalStateException("Pairing failed.");
+            JSONObject response = new JSONObject(readLimited(request.getInputStream(), 65_536));
+            String credential = response.optString("token", "");
+            if (credential.length() < 32) throw new IllegalStateException("Pairing failed.");
+            if (closed || operation != operationGeneration.get()) return;
+            String normalized = address.toString();
+            sessionStore.save(normalized, allowInsecureHttp, credential);
+            activeCredential = credential;
+            deliverSyncPairResult(new JSONObject().put("ok", true).put("address", normalized).toString());
+        } catch (Exception error) {
+            if (!closed && operation == operationGeneration.get()) deliverSyncPairResult("{\"ok\":false,\"message\":\"绑定失败，请检查地址和一次性配对码。\"}");
+        } finally {
+            if (request != null) request.disconnect();
+            if (activePairRequest == request) activePairRequest = null;
+        }
+    }
+
+    private void deliverSyncPairResult(String resultJson) {
+        activity.runOnUiThread(() -> {
+            if (closed) return;
+            webView.evaluateJavascript("window.StageCraftSyncPairResult && window.StageCraftSyncPairResult(" + JSONObject.quote(resultJson) + ")", null);
+        });
+    }
+
+    private void deliverSyncFetch(String callbackId, boolean ok, int status, String bodyText, String message) {
+        final JSONObject result = new JSONObject();
+        try {
+            result.put("callbackId", callbackId).put("ok", ok).put("status", status);
+            if (ok) result.put("body", bodyText == null ? "" : bodyText);
+            else result.put("message", message == null ? "同步失败。" : message);
+        } catch (Exception ignored) { }
+        activity.runOnUiThread(() -> {
+            if (closed) return;
+            webView.evaluateJavascript("window.StageCraftSyncFetchResult && window.StageCraftSyncFetchResult(" + JSONObject.quote(result.toString()) + ")", null);
+        });
+    }
+
     @JavascriptInterface public void chooseCharacterCard() {
         if (closed || !(activity instanceof MainActivity)) return;
         activity.runOnUiThread(() -> ((MainActivity) activity).openCharacterCardPicker());

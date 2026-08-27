@@ -464,6 +464,93 @@
     return Promise.resolve(method === 'GET' ? respondJson(404, { error: 'Not found' }) : respondJson(404, { error: '未知的本地接口。' }))
   }
 
+  // ── 与电脑双向同步（原生桥承载配对与远端 HTTP；配对凭据不进入页面） ──
+  const syncPendingFetches = new Map()
+  window.StageCraftSyncFetchResult = result => {
+    const entry = result && syncPendingFetches.get(result.callbackId)
+    if (!entry) return
+    syncPendingFetches.delete(result.callbackId)
+    if (!result.ok) { entry.reject(new Error(result.message || '同步请求失败。')); return }
+    try { entry.resolve(result.body ? JSON.parse(result.body) : null) } catch { entry.reject(new Error('同步响应无效。')) }
+  }
+  function syncRemoteFetch(method, body) {
+    return new Promise((resolve, reject) => {
+      const callbackId = `sync-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+      syncPendingFetches.set(callbackId, { resolve, reject })
+      window.StageCraftNative.syncRemoteFetch(method, body ? JSON.stringify(body) : '', callbackId)
+    })
+  }
+  window.StageCraftSyncPairResult = result => {
+    const pending = window.__syncPairPending
+    if (!pending) return
+    window.__syncPairPending = null
+    pending(result || { ok: false, message: '绑定无响应。' })
+  }
+  const syncRemote = {
+    async status() {
+      try { const raw = window.StageCraftNative.syncStatus(); const parsed = raw ? JSON.parse(String(raw)) : null; return parsed && typeof parsed === 'object' ? parsed : { paired: false } }
+      catch { return { paired: false } }
+    },
+    pair(address, code) {
+      return new Promise(resolve => {
+        window.__syncPairPending = resolve
+        window.StageCraftNative.syncPair(String(address || ''), !/^https:\/\//i.test(String(address || '')), String(code || ''))
+      })
+    },
+    async pull() {
+      const payload = await syncRemoteFetch('GET')
+      if (!payload || typeof payload !== 'object') throw new Error('电脑返回的同步数据无效。')
+      const result = { room: false, providers: false, saves: 0, stories: 0, presets: 0 }
+      const providerList = payload.providers && Array.isArray(payload.providers.providers) ? payload.providers.providers : []
+      if (providerList.length) {
+        const preferred = providerList.find(item => item && item.selectedModel) || providerList[0]
+        const baseUrl = String(preferred?.baseUrl ?? '').replace(/\/$/, '')
+        const models = Array.isArray(preferred?.models) ? preferred.models.map(String) : []
+        const selectedModel = String(preferred?.selectedModel ?? models[0] ?? '')
+        if (baseUrl && String(preferred?.apiKey ?? '') && selectedModel) {
+          const provider = { id: 'offline-default', name: String(preferred?.name ?? '同步供应商'), baseUrl, apiKey: String(preferred.apiKey ?? ''), models, selectedModel, responseFormat: preferred?.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: preferred?.toolCalling !== false }
+          saveProviderMeta({ providers: [provider], defaults: {} })
+          core.setProvider({ baseUrl, apiKey: String(preferred.apiKey ?? ''), model: selectedModel, responseFormat: provider.responseFormat })
+          result.providers = true
+        }
+      }
+      if (payload.room && typeof payload.room === 'object' && payload.room.room && typeof payload.room.room === 'object') {
+        nativeInvokeSync('stagecraft.repository', { method: 'importRoom', args: [ROOM_ID, payload.room] })
+        core.refresh()
+        result.room = true
+      }
+      if (Array.isArray(payload.saves)) for (const item of payload.saves) if (item && typeof item === 'object' && String(item.name ?? '').trim() && item.archive && typeof item.archive === 'object') { try { nativeInvokeSync('archive.save', { name: String(item.name), archive: item.archive }); result.saves++ } catch { /* 跳过无效存档 */ } }
+      if (Array.isArray(payload.stories)) for (const story of payload.stories) if (story && typeof story === 'object' && String(story.id ?? '').trim()) { try { nativeInvokeSync('story.save', { story }); result.stories++ } catch { /* 跳过本机不支持的剧本 */ } }
+      const presetList = Array.isArray(payload.prompts?.presets) ? payload.prompts.presets : (Array.isArray(payload.prompts?.presets?.presets) ? payload.prompts.presets.presets : [])
+      for (const preset of presetList) if (preset && typeof preset === 'object' && String(preset.id ?? '').trim()) { try { nativeInvokeSync('preset.save', { preset }); result.presets++ } catch { /* 跳过无效预设 */ } }
+      return result
+    },
+    async push() {
+      const result = { room: false, providers: false, saves: 0, stories: 0, presets: 0 }
+      const roomPayload = (() => { try { return { version: 1, exportedAt: new Date().toISOString(), room: guardRoom() } } catch { return null } })()
+      if (roomPayload) result.room = true
+      const saves = []
+      try { for (const name of (nativeInvokeSync('archive.list', {}).files ?? [])) { try { saves.push({ name, archive: nativeInvokeSync('archive.load', { name }) }) } catch { /* 跳过损坏存档 */ } } } catch { /* 无存档 */ }
+      result.saves = saves.length
+      const stories = []
+      try {
+        const raw = core.stories()
+        const list = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.stories) ? raw.stories : [])
+        for (const item of list) { const id = String(item?.id ?? '').trim(); if (!id) continue; try { stories.push(await core.story(id)) } catch { /* 跳过不可读剧本 */ } }
+      } catch { /* 本地剧本不可用 */ }
+      result.stories = stories.length
+      const presets = []
+      try { const data = nativeInvokeSync('preset.list', {}); if (Array.isArray(data.presets)) presets.push(...data.presets) } catch { /* 无预设 */ }
+      result.presets = presets.length
+      const meta = providerMeta()
+      const providerEntry = Array.isArray(meta.providers) && meta.providers.length ? meta : null
+      result.providers = Boolean(providerEntry)
+      await syncRemoteFetch('PUT', { version: 1, generatedAt: new Date().toISOString(), room: roomPayload, saves, stories, providers: providerEntry, prompts: { presets, privateToggles: {} } })
+      return result
+    },
+  }
+  window.StageCraftSyncRemote = syncRemote
+
   // ── 连接徽标 ──
   window.__STAGECRAFT_OFFLINE__ = true
   console.info('[offline] StageCraft 离线模式就绪（复用完整 Web UI）。')

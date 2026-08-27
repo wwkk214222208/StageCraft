@@ -655,3 +655,8 @@ html.android-device #story-edit-modal .creator-editor{min-height:0}
 .reply-failed-msg p{margin:0 0 8px;font-size:12px;line-height:1.5;word-break:break-word}
 .reply-failed-actions{display:flex;gap:8px;flex-wrap:wrap}
 .reply-failed-actions button{padding:6px 14px}
+/* ── 设置页：手机 APK 与电脑双向同步区 ── */
+.sync-remote-actions{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.sync-remote-actions button{font-size:12px;padding:6px 9px}
+#sync-remote-row hr{border:none;border-top:1px solid #2f3c58;margin:10px 0}
+#sync-remote-error.error{color:#ffad9d}

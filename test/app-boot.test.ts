@@ -142,3 +142,44 @@ test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', asy
     rmSync(saveRoot, { recursive: true, force: true })
   }
 })
+
+test('remote sync endpoint imports pushed prompt presets and serves them back', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'rp-sync-test-'))
+  const saveRoot = mkdtempSync(join(tmpdir(), 'rp-sync-save-'))
+  writeFileSync(join(dataDir, 'providers.json'), JSON.stringify({ providers: [] }), 'utf8')
+  // /api/prompts/presets 的 GET 处理器会 loadPrompts(promptsFilePath)——只需要一个
+  // 可解析的占位文件，缺失字段会合并进仓库默认模板；不依赖 prompts/prompts.json 旧格式。
+  writeFileSync(join(dataDir, 'prompts.json'), '{}', 'utf8')
+  const app = await startTavern({ root, dataDir, saveRoot, promptsFilePath: join(dataDir, 'prompts.json'), port: 0, host: '127.0.0.1', remoteAccess: { enabled: true } })
+  try {
+    const address = await new Promise<{ port: number }>((resolve, reject) => {
+      const deadline = Date.now() + 5_000
+      const tick = (): void => {
+        const addr = app.server.address()
+        if (addr && typeof addr === 'object') resolve(addr as { port: number })
+        else if (Date.now() > deadline) reject(new Error('服务器未完成监听'))
+        else setTimeout(tick, 10)
+      }
+      tick()
+    })
+    const base = `http://127.0.0.1:${address.port}`
+
+    // loopback + remoteAccess 开启（未开 authenticateLoopback）时同步端点可直接验证；
+    // PUT 的提示词预设应通过 updatePromptPreset 写入 prompts 文件。
+    const pushed = await fetch(`${base}/api/remote/sync`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: 1, prompts: { presets: [{ id: 'synced-preset', name: '同步预设', modes: ['director'] }], privateToggles: {} } }),
+    })
+    assert.equal(pushed.status, 200)
+    const presetsAfter = await (await fetch(`${base}/api/prompts/presets`)).json() as { presets: Array<{ id: string; name: string }> }
+    assert.ok(presetsAfter.presets.some(item => item.id === 'synced-preset' && item.name === '同步预设'))
+    const exported = await (await fetch(`${base}/api/remote/sync`)).json() as { prompts?: { presets?: { presets?: Array<{ id?: string }> } } }
+    const exportedPresets = Array.isArray(exported.prompts?.presets?.presets) ? exported.prompts.presets.presets : (Array.isArray(exported.prompts?.presets) ? exported.prompts.presets as Array<{ id?: string }> : [])
+    assert.ok(exportedPresets.some(item => item.id === 'synced-preset'))
+  } finally {
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+    rmSync(saveRoot, { recursive: true, force: true })
+  }
+})
