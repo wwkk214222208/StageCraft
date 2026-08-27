@@ -46,7 +46,10 @@ mkdirSync(join(distRoot, 'prompts'), { recursive: true })
 if (existsSync(join(repositoryRoot, 'prompts', 'gameplay'))) cpSync(join(repositoryRoot, 'prompts', 'gameplay'), join(distRoot, 'prompts', 'gameplay'), { recursive: true })
 // 默认剧本与示范资产目录（stories/default/，自包含 /story-assets/eldoria/... 随包分发）
 cpSync(join(repositoryRoot, 'stories', 'default'), join(distRoot, 'stories', 'default'), { recursive: true })
-cpSync(join(repositoryRoot, 'prompts', 'prompts.json'), join(distRoot, 'prompts', 'prompts.json'))
+// prompts.json 已随 e1456f2 重构删除（内联 gameplay + SQLite 预设），保留存在性保护以兼容旧版
+if (existsSync(join(repositoryRoot, 'prompts', 'prompts.json'))) {
+  cpSync(join(repositoryRoot, 'prompts', 'prompts.json'), join(distRoot, 'prompts', 'prompts.json'))
+}
 cpSync(join(repositoryRoot, 'providers.example.json'), join(distRoot, 'providers.example.json'))
 cpSync(join(repositoryRoot, 'LICENSE'), join(distRoot, 'LICENSE'))
 cpSync(join(repositoryRoot, 'NOTICE.md'), join(distRoot, 'NOTICE.md'))

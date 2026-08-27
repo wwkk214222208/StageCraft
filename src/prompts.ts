@@ -277,7 +277,7 @@ function applyRules(text: string, rules: PromptRegexRule[]): string {
   return result
 }
 
-const defaultPath = join(fileURLToPath(new URL('..', import.meta.url)), 'prompts', 'prompts.json')
+const defaultPath = join((typeof import.meta !== 'undefined' && import.meta.url ? fileURLToPath(new URL('..', import.meta.url)) : '/'), 'prompts', 'prompts.json')
 
 /** 运行时提示词模板路径（包内只读）；由 startTavern 瑁呴厤鏃惰缃紝鏈缃椂鍥為€€榛樿銆?*/
 let activePromptsPath: string | undefined
