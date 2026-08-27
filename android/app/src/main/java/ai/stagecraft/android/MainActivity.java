@@ -1,13 +1,18 @@
 package ai.stagecraft.android;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.pm.ApplicationInfo;
 import android.content.Intent;
 import android.os.Bundle;
 import android.webkit.CookieManager;
+import android.webkit.JsPromptResult;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebChromeClient;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 public final class MainActivity extends Activity {
     private static final int PICK_CHARACTER_CARD = 7001;
@@ -42,7 +47,28 @@ public final class MainActivity extends Activity {
         bridge = new NativeBridge(this, webView, new RemoteSessionStore(this), embeddedCore);
         webView.addJavascriptInterface(bridge, "StageCraftNative");
         // Enable browser dialogs used by the Web UI (prompt/confirm/alert).
-        webChromeClient = new WebChromeClient();
+        // WebView 默认不实现 onJsPrompt（prompt() 会静默失败）——「与电脑同步」绑定等流程依赖它输入地址/配对码。
+        webChromeClient = new WebChromeClient() {
+            @Override public boolean onJsPrompt(WebView view, String url, String message, String defaultValue, JsPromptResult result) {
+                LinearLayout layout = new LinearLayout(MainActivity.this);
+                layout.setOrientation(LinearLayout.VERTICAL);
+                layout.setPadding(48, 16, 48, 16);
+                TextView label = new TextView(MainActivity.this);
+                label.setText(message);
+                layout.addView(label);
+                EditText input = new EditText(MainActivity.this);
+                if (defaultValue != null) input.setText(defaultValue);
+                layout.addView(input);
+                new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("StageCraft")
+                    .setView(layout)
+                    .setPositiveButton(android.R.string.ok, (dialog, which) -> result.confirm(input.getText().toString()))
+                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> result.cancel())
+                    .setOnCancelListener(dialog -> result.cancel())
+                    .show();
+                return true;
+            }
+        };
         webView.setWebChromeClient(webChromeClient);
         // 离线完整 Web UI 走 127.0.0.1 环回服务器（http://localhost 常规 Web 语义，见 OfflineLoopbackServer）
         OfflineLoopbackServer loopback = null;

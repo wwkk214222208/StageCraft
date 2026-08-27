@@ -37,6 +37,8 @@ test('Android manifest and trusted WebView fail closed around the Javascript bri
   assert.doesNotMatch(manifest, /android:debuggable="true"/)
   assert.match(activity, /ApplicationInfo\.FLAG_DEBUGGABLE/)
   assert.match(activity, /setWebContentsDebuggingEnabled\(debuggable\)/)
+  assert.match(activity, /onJsPrompt/)
+  assert.match(activity, /result\.confirm\(input\.getText\(\)\.toString\(\)\)/)
   for (const setting of ['setAllowFileAccess(false)', 'setAllowContentAccess(false)', 'setDomStorageEnabled(false)', 'setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW)']) assert.ok(activity.includes(setting))
   assert.match(activity, /setAcceptCookie\(false\)/)
   assert.match(client, /appassets\.androidplatform\.net/)
