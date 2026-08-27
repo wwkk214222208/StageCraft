@@ -51,7 +51,24 @@ export interface PromptPreset {
   compatibility?: { source?: 'sillytavern'; regexEnabled?: boolean }
 }
 
-interface PromptPresetState { presets: PromptPreset[]; activeByScope: Partial<Record<PromptPresetScope, string>> }
+export interface PromptPresetState { presets: PromptPreset[]; activeByScope: Partial<Record<PromptPresetScope, string>> }
+
+/**
+ * 提示词 IO 端口：双端只有这里不同（桌面=fs 文件，Android=构建期内联 gameplay + SQLite 预设）。
+ * 运行时 prompt 行为（渲染 / 预设应用 / userEditable 过滤 / 归一化）与 IO 无关，全部共享本文件逻辑。
+ */
+export interface PromptStorage {
+  loadGameplayScenario(scope: PromptPresetScope, filePath?: string): GameplayScenario
+  loadPresetState(filePath?: string): PromptPresetState
+  savePresetState(state: PromptPresetState, filePath?: string): void
+  loadPrivateToggles(filePath?: string): PromptToggleState
+  savePrivateToggle(presetId: string, nodeId: string, enabled: boolean, filePath?: string): PromptToggleState
+}
+
+let activePromptStorage: PromptStorage | undefined
+/** 注入提示词 IO 实现：桌面/测试默认 fs；Android 本地注入同源实现。 */
+export function setPromptStorage(storage: PromptStorage | undefined): void { activePromptStorage = storage }
+function promptStorage(): PromptStorage { return activePromptStorage ?? fsPromptStorage }
 const presetFileName = 'presets.json'
 function presetPath(filePath?: string): string { return join(customDir(filePath), presetFileName) }
 function gameplayDir(filePath?: string): string { return join(dirname(filePath ?? getPromptsFilePath()), 'gameplay') }
@@ -67,6 +84,11 @@ const gameplayDefaults: Record<PromptPresetScope, { mode: PromptMode; name: stri
   'prompt-preset.transform': { mode: 'system', name: '提示词预设助手', components: [] },
 }
 export function loadGameplayScenario(scope: PromptPresetScope, filePath?: string): GameplayScenario {
+  return promptStorage().loadGameplayScenario(scope, filePath)
+}
+
+/** 桌面默认 IO：从 prompts/gameplay 文件读取玩法场景（Android 注入内联实现）。 */
+function fsLoadGameplayScenario(scope: PromptPresetScope, filePath?: string): GameplayScenario {
   const fallback = gameplayDefaults[scope]
   const localFile = join(gameplayDir(filePath), `${scope}.json`)
   const bundledFile = join(bundledGameplayDir(), `${scope}.json`)
@@ -153,7 +175,8 @@ function normalizePreset(input: Partial<PromptPreset>, index = 0, filePath?: str
   const scenarios = Object.fromEntries(userEditableScopes(filePath).filter(scope => scope.startsWith('chat.') ? modes.includes('chat') : modes.includes('director')).map(scope => { const source = input.scenarios?.[scope] ?? (!input.scenarios ? { nodes: input.nodes, regexRules: input.regexRules } : undefined); const normalized = normalizeScenario(source, scope); const scopedRules = Array.isArray(normalized.regexRules) ? normalized.regexRules.map((rule, ruleIndex) => ({ id: String(rule.id ?? `regex-${ruleIndex}`), name: String(rule.name ?? '未命名规则'), pattern: String(rule.pattern ?? ''), replacement: String(rule.replacement ?? ''), enabled: rule.enabled === true })) : []; return [scope, { ...normalized, regexRules: scopedRules }] })) as Record<PromptPresetScope, PromptScenario>
   return { id: String(input.id ?? `preset-${Date.now()}-${index}`), name: String(input.name ?? `鎻愮ず璇嶉璁?${index + 1}`), enabled: input.enabled === true, modes: modes.length ? [...new Set(modes)] : (String(input.id ?? '') === 'default' ? ['director', 'chat'] : ['director']), scenarios, nodes, regexRules, ...(input.compatibility ? { compatibility: { source: input.compatibility.source === 'sillytavern' ? 'sillytavern' as const : undefined, regexEnabled: input.compatibility.regexEnabled === true } } : {}) }
 }
-function readPresetState(filePath?: string): PromptPresetState {
+function readPresetState(filePath?: string): PromptPresetState { return promptStorage().loadPresetState(filePath) }
+function fsLoadPresetState(filePath?: string): PromptPresetState {
   const target = presetPath(filePath)
   if (!existsSync(target)) return { presets: [normalizePreset({ id: 'default', name: '默认预设', enabled: true }, 0, filePath)], activeByScope: {} }
   try {
@@ -164,8 +187,11 @@ function readPresetState(filePath?: string): PromptPresetState {
 }
 export function getPromptPresetState(filePath?: string): PromptPresetState { return readPresetState(filePath) }
 export function savePromptPresets(presets: PromptPreset[], filePath?: string, activeByScope: Partial<Record<PromptPresetScope, string>> = readPresetState(filePath).activeByScope): void {
-  const stored = presets.map((preset, index) => normalizePreset(preset, index, filePath)).map(preset => ({ ...preset, scenarios: Object.fromEntries(Object.entries(preset.scenarios ?? {}).map(([scope, scenario]) => { const nodes = scenario.nodes ?? []; return [scope, { ...(scenario.forceThinkingOff === true ? { forceThinkingOff: true } : {}), order: nodes.map(node => node.runtimeBinding ?? node.id), privateNodes: nodes.filter(node => node.type === 'user' && node.removable !== false), regexRules: scenario.regexRules }] })), nodes: preset.nodes.filter(node => node.type === 'user' && node.removable !== false) }))
-  const dir = customDir(filePath); mkdirSync(dir, { recursive: true }); writeFileSync(presetPath(filePath), `${JSON.stringify({ presets: stored, activeByScope }, null, 2)}\n`, 'utf8')
+  promptStorage().savePresetState({ presets, activeByScope }, filePath)
+}
+function fsSavePresetState(state: PromptPresetState, filePath?: string): void {
+  const stored = state.presets.map((preset, index) => normalizePreset(preset, index, filePath)).map(preset => ({ ...preset, scenarios: Object.fromEntries(Object.entries(preset.scenarios ?? {}).map(([scope, scenario]) => { const nodes = scenario.nodes ?? []; return [scope, { ...(scenario.forceThinkingOff === true ? { forceThinkingOff: true } : {}), order: nodes.map(node => node.runtimeBinding ?? node.id), privateNodes: nodes.filter(node => node.type === 'user' && node.removable !== false), regexRules: scenario.regexRules }] })), nodes: preset.nodes.filter(node => node.type === 'user' && node.removable !== false) }))
+  const dir = customDir(filePath); mkdirSync(dir, { recursive: true }); writeFileSync(presetPath(filePath), `${JSON.stringify({ presets: stored, activeByScope: state.activeByScope }, null, 2)}\n`, 'utf8')
 }
 export function updatePromptPreset(preset: PromptPreset, filePath?: string): PromptPreset[] {
   const state = readPresetState(filePath); const next = normalizePreset(preset, 0, filePath); if (!next.modes.length) throw new Error('提示词预设至少需要服务一个游玩模式。'); const index = state.presets.findIndex(item => item.id === next.id)
@@ -275,11 +301,15 @@ function privateTogglesFilePath(filePath?: string): string {
   return join(dirname(customDir(filePath)), 'private-toggles.json')
 }
 export type PromptToggleState = Record<string, Record<string, boolean>>
-export function loadPrivateToggles(filePath?: string): PromptToggleState {
+export function loadPrivateToggles(filePath?: string): PromptToggleState { return promptStorage().loadPrivateToggles(filePath) }
+export function savePrivateToggle(filePath: string | undefined, presetId: string, nodeId: string, enabled: boolean): PromptToggleState {
+  return promptStorage().savePrivateToggle(presetId, nodeId, enabled, filePath)
+}
+function fsLoadPrivateToggles(filePath?: string): PromptToggleState {
   try { return JSON.parse(readFileSync(privateTogglesFilePath(filePath), 'utf8')) as PromptToggleState } catch { return {} }
 }
-export function savePrivateToggle(filePath: string | undefined, presetId: string, nodeId: string, enabled: boolean): PromptToggleState {
-  const toggles = loadPrivateToggles(filePath)
+function fsSavePrivateToggle(presetId: string, nodeId: string, enabled: boolean, filePath?: string): PromptToggleState {
+  const toggles = fsLoadPrivateToggles(filePath)
   toggles[presetId] = toggles[presetId] ?? {}
   toggles[presetId][nodeId] = enabled
   mkdirSync(dirname(privateTogglesFilePath(filePath)), { recursive: true })
@@ -298,4 +328,13 @@ export function mergePrivateToggles(presets: PromptPreset[], toggles: PromptTogg
     }
     return { ...preset, scenarios }
   })
+}
+
+/** 桌面默认 IO 实现：fs 文件存储（Android 本地通过 setPromptStorage 注入同源实现）。 */
+const fsPromptStorage: PromptStorage = {
+  loadGameplayScenario: fsLoadGameplayScenario,
+  loadPresetState: fsLoadPresetState,
+  savePresetState: fsSavePresetState,
+  loadPrivateToggles: fsLoadPrivateToggles,
+  savePrivateToggle: fsSavePrivateToggle,
 }
