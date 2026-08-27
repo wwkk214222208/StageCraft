@@ -133,6 +133,14 @@
   function saveProviderMeta(meta) {
     nativeInvokeSync('secret.set', { key: 'offline.provider.meta', value: JSON.stringify(meta) })
   }
+  /** 前端视图：剔除 apiKey、补 hasApiKey（与桌面 /api/providers 契约一致）。 */
+  function providerMetaView() {
+    const meta = providerMeta()
+    return {
+      providers: Array.isArray(meta.providers) ? meta.providers.map(provider => ({ id: provider.id, name: provider.name, baseUrl: provider.baseUrl, models: Array.isArray(provider.models) ? provider.models : [], selectedModel: provider.selectedModel, hasApiKey: Boolean(provider.apiKey) })) : [],
+      defaults: meta.defaults ?? {},
+    }
+  }
   function nativeInvokeSync(operation, input) {
     const raw = window.StageCraftNative.invokeSync(operation, JSON.stringify(input ?? {}))
     const result = JSON.parse(String(raw ?? 'null'))
@@ -149,7 +157,7 @@
       '/api/archive/export': () => respondJson(200, { version: 1, exportedAt: new Date().toISOString(), room: guardRoom() }),
       '/api/archive/list': () => respondJson(200, nativeInvokeSync('archive.list', {})),
       '/api/story/get': (params) => core.story(String(params.get('id') ?? '')).then(story => respondJson(200, story)).catch(error => respondJson(400, { error: error.message })),
-      '/api/providers': () => respondJson(200, providerMeta()),
+      '/api/providers': () => respondJson(200, providerMetaView()),
       '/api/usage': () => {
         const configured = core.getProvider().configured === true
         return respondJson(200, { route: configured ? '离线' : '模拟', model: configured ? core.getProvider().model : '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: configured ? 'offline' : 'fake', billing: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
@@ -305,7 +313,7 @@
         meta.providers = [provider]
         saveProviderMeta(meta)
         core.setProvider({ baseUrl, apiKey, model: selectedModel, responseFormat: provider.responseFormat })
-        return respondJson(200, { providers: meta.providers, defaults: meta.defaults, active: { route: '离线', model: selectedModel } })
+        return respondJson(200, { providers: providerMetaView().providers, defaults: meta.defaults, active: { route: '离线', model: selectedModel } })
       },
       '/api/providers/delete': () => {
         saveProviderMeta({ providers: [], defaults: {} })
@@ -321,7 +329,7 @@
           saveProviderMeta(meta)
           core.setProvider({ baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: String(body.model ?? provider.selectedModel), responseFormat: provider.responseFormat })
         }
-        return respondJson(200, { providers: meta.providers, defaults: meta.defaults })
+        return respondJson(200, { providers: providerMetaView().providers, defaults: meta.defaults })
       },
       '/api/providers/director': (body) => {
         const meta = providerMeta()
@@ -332,7 +340,7 @@
           saveProviderMeta(meta)
           core.setProvider({ baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: String(body.model ?? provider.selectedModel), responseFormat: provider.responseFormat })
         }
-        return respondJson(200, { providers: meta.providers, defaults: meta.defaults })
+        return respondJson(200, { providers: providerMetaView().providers, defaults: meta.defaults })
       },
       '/api/providers/director-thinking': () => respondJson(200, { ok: true, defaults: providerMeta().defaults }),
       '/api/providers/discover': () => respondJson(400, { error: '离线模式不支持自动发现模型；请直接在模型列表里填写模型名（如 deepseek-chat）。' }),
