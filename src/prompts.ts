@@ -73,7 +73,7 @@ const presetFileName = 'presets.json'
 function presetPath(filePath?: string): string { return join(customDir(filePath), presetFileName) }
 function gameplayDir(filePath?: string): string { return join(dirname(filePath ?? getPromptsFilePath()), 'gameplay') }
 function bundledGameplayDir(): string { return join(dirname(defaultPath), 'gameplay') }
-const gameplayDefaults: Record<PromptPresetScope, { mode: PromptMode; name: string; components: GameplayComponent[] }> = {
+export const gameplayDefaults: Record<PromptPresetScope, { mode: PromptMode; name: string; components: GameplayComponent[] }> = {
   'director.role-decision': { mode: 'director', name: '导演模式 · 角色决策', components: [] },
   'director.draft': { mode: 'director', name: '导演模式 · 场景草稿', components: [] },
   'director.consult': { mode: 'director', name: '导演模式 · 导演咨询', components: [] },
@@ -175,22 +175,28 @@ function normalizePreset(input: Partial<PromptPreset>, index = 0, filePath?: str
   const scenarios = Object.fromEntries(userEditableScopes(filePath).filter(scope => scope.startsWith('chat.') ? modes.includes('chat') : modes.includes('director')).map(scope => { const source = input.scenarios?.[scope] ?? (!input.scenarios ? { nodes: input.nodes, regexRules: input.regexRules } : undefined); const normalized = normalizeScenario(source, scope); const scopedRules = Array.isArray(normalized.regexRules) ? normalized.regexRules.map((rule, ruleIndex) => ({ id: String(rule.id ?? `regex-${ruleIndex}`), name: String(rule.name ?? '未命名规则'), pattern: String(rule.pattern ?? ''), replacement: String(rule.replacement ?? ''), enabled: rule.enabled === true })) : []; return [scope, { ...normalized, regexRules: scopedRules }] })) as Record<PromptPresetScope, PromptScenario>
   return { id: String(input.id ?? `preset-${Date.now()}-${index}`), name: String(input.name ?? `鎻愮ず璇嶉璁?${index + 1}`), enabled: input.enabled === true, modes: modes.length ? [...new Set(modes)] : (String(input.id ?? '') === 'default' ? ['director', 'chat'] : ['director']), scenarios, nodes, regexRules, ...(input.compatibility ? { compatibility: { source: input.compatibility.source === 'sillytavern' ? 'sillytavern' as const : undefined, regexEnabled: input.compatibility.regexEnabled === true } } : {}) }
 }
-function readPresetState(filePath?: string): PromptPresetState { return promptStorage().loadPresetState(filePath) }
+/** 运行时归一化（双端共享）：把 IO 返回的原始预设状态规整为内部形态。 */
+export function normalizePromptPresetState(state: PromptPresetState, filePath?: string): PromptPresetState {
+  return { presets: state.presets.map((preset, index) => normalizePreset(preset, index, filePath)), activeByScope: state.activeByScope ?? {} }
+}
+function readPresetState(filePath?: string): PromptPresetState { return normalizePromptPresetState(promptStorage().loadPresetState(filePath), filePath) }
+/** 桌面默认 IO：读取 prompts/custom/presets.json 的原始状态（归一化由 readPresetState 承担）。 */
 function fsLoadPresetState(filePath?: string): PromptPresetState {
   const target = presetPath(filePath)
-  if (!existsSync(target)) return { presets: [normalizePreset({ id: 'default', name: '默认预设', enabled: true }, 0, filePath)], activeByScope: {} }
+  if (!existsSync(target)) return { presets: [{ id: 'default', name: '默认预设', enabled: true }], activeByScope: {} }
   try {
     const data = JSON.parse(readFileSync(target, 'utf8')) as Partial<PromptPresetState> | PromptPreset[]
-    if (Array.isArray(data)) return { presets: data.map((item, index) => normalizePreset(item, index, filePath)), activeByScope: {} }
-    return { presets: Array.isArray(data.presets) ? data.presets.map((item, index) => normalizePreset(item, index, filePath)) : [normalizePreset({ id: 'default', name: '默认预设' }, 0, filePath)], activeByScope: data.activeByScope ?? {} }
-  } catch { return { presets: [normalizePreset({ id: 'default', name: '默认预设', enabled: true }, 0, filePath)], activeByScope: {} } }
+    if (Array.isArray(data)) return { presets: data, activeByScope: {} }
+    return { presets: Array.isArray(data.presets) && data.presets.length ? data.presets : [{ id: 'default', name: '默认预设' }], activeByScope: data.activeByScope ?? {} }
+  } catch { return { presets: [{ id: 'default', name: '默认预设', enabled: true }], activeByScope: {} } }
 }
 export function getPromptPresetState(filePath?: string): PromptPresetState { return readPresetState(filePath) }
 export function savePromptPresets(presets: PromptPreset[], filePath?: string, activeByScope: Partial<Record<PromptPresetScope, string>> = readPresetState(filePath).activeByScope): void {
-  promptStorage().savePresetState({ presets, activeByScope }, filePath)
+  promptStorage().savePresetState({ presets: presets.map((preset, index) => normalizePreset(preset, index, filePath)), activeByScope }, filePath)
 }
+/** 桌面默认 IO：把已归一化的预设状态写入 prompts/custom/presets.json（collect 落盘格式，与历史一致）。 */
 function fsSavePresetState(state: PromptPresetState, filePath?: string): void {
-  const stored = state.presets.map((preset, index) => normalizePreset(preset, index, filePath)).map(preset => ({ ...preset, scenarios: Object.fromEntries(Object.entries(preset.scenarios ?? {}).map(([scope, scenario]) => { const nodes = scenario.nodes ?? []; return [scope, { ...(scenario.forceThinkingOff === true ? { forceThinkingOff: true } : {}), order: nodes.map(node => node.runtimeBinding ?? node.id), privateNodes: nodes.filter(node => node.type === 'user' && node.removable !== false), regexRules: scenario.regexRules }] })), nodes: preset.nodes.filter(node => node.type === 'user' && node.removable !== false) }))
+  const stored = state.presets.map(preset => ({ ...preset, scenarios: Object.fromEntries(Object.entries(preset.scenarios ?? {}).map(([scope, scenario]) => { const nodes = scenario.nodes ?? []; return [scope, { ...(scenario.forceThinkingOff === true ? { forceThinkingOff: true } : {}), order: nodes.map(node => node.runtimeBinding ?? node.id), privateNodes: nodes.filter(node => node.type === 'user' && node.removable !== false), regexRules: scenario.regexRules }] })), nodes: preset.nodes.filter(node => node.type === 'user' && node.removable !== false) }))
   const dir = customDir(filePath); mkdirSync(dir, { recursive: true }); writeFileSync(presetPath(filePath), `${JSON.stringify({ presets: stored, activeByScope: state.activeByScope }, null, 2)}\n`, 'utf8')
 }
 export function updatePromptPreset(preset: PromptPreset, filePath?: string): PromptPreset[] {

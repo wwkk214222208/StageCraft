@@ -12,6 +12,8 @@ import { createOfflineWorkers, type OfflineModelPort, type OfflineProviderConfig
 import type { RoomSnapshot, RoomMode, WorldChangeRequest, ThinkingStrength, Role, LoreEntry, ConsultationMessage, Decision, Draft, PlayerCharacter } from '../types.ts'
 import type { StoryPackage } from '../story-packages.ts'
 import type { WorkerSet } from '../workers.ts'
+import { setPromptStorage } from '../prompts.ts'
+import { createAndroidPromptStorage } from './android-prompt-storage.ts'
 
 export const ANDROID_CORE_BUNDLE_VERSION = '1.1.0'
 export const ANDROID_CORE_BRIDGE_VERSION = '1'
@@ -46,6 +48,8 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
     }
     return parsed
   }
+  // 提示词 IO 注入：与桌面同一套运行时行为（渲染/预设/过滤），仅数据存取走 Android 侧实现。
+  setPromptStorage(createAndroidPromptStorage({ invokeSync: (operation, input = {}) => invokeSync(operation, input) }))
 
   // ── 异步桥（model.request / story.read）──
   let asyncSequence = 0

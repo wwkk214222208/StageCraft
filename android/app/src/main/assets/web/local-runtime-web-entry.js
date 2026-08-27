@@ -323,7 +323,12 @@
       '/api/providers/discover': () => respondJson(400, { error: '离线模式不支持自动发现模型；请直接在模型列表里填写模型名（如 deepseek-chat）。' }),
       '/api/prompts/presets': (body) => {
         try {
-          if (body.scope && body.activePresetId) { const data = nativeInvokeSync('preset.list', {}); return respondJson(200, { ok: true, presets: data.presets ?? [], activeByScope: { ...(data.activeByScope ?? {}), [String(body.scope)]: String(body.activePresetId) } }) }
+          if (body.scope && body.activePresetId) {
+            const data = nativeInvokeSync('preset.list', {})
+            const next = { ...(data.activeByScope ?? {}), [String(body.scope)]: String(body.activePresetId) }
+            nativeInvokeSync('preset.active-scope.set', { activeByScope: next })
+            return respondJson(200, { ok: true, presets: data.presets ?? [], activeByScope: next })
+          }
           const preset = body.preset && typeof body.preset === 'object' ? body.preset : body
           nativeInvokeSync('preset.save', { preset })
           const data = nativeInvokeSync('preset.list', {})

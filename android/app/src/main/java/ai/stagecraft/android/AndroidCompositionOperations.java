@@ -62,7 +62,8 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
             }
             return new JSONObject().put("stories", result);
         }
-        if ("preset.list".equals(operation)) { org.json.JSONArray presets = new org.json.JSONArray(); for (JSONObject preset : repository.listRecords("prompt-presets")) presets.put(preset); return new JSONObject().put("presets", presets).put("activeByScope", new JSONObject()); }
+        if ("preset.list".equals(operation)) { org.json.JSONArray presets = new org.json.JSONArray(); for (JSONObject preset : repository.listRecords("prompt-presets")) presets.put(preset); JSONObject meta = repository.getRecord("prompt-meta", "active-by-scope"); JSONObject activeByScope = meta == null ? null : meta.optJSONObject("value"); return new JSONObject().put("presets", presets).put("activeByScope", activeByScope == null ? new JSONObject() : activeByScope); }
+        if ("preset.active-scope.set".equals(operation)) { JSONObject activeByScope = JsonSafety.requiredObject(input, "activeByScope"); repository.putRecord("prompt-meta", "active-by-scope", new JSONObject().put("value", activeByScope)); return new JSONObject().put("ok", true); }
         if ("preset.save".equals(operation)) { JSONObject preset = JsonSafety.requiredObject(input, "preset"); String id = JsonSafety.requiredString(preset, "id", 256); repository.putRecord("prompt-presets", id, preset); return new JSONObject().put("ok", true).put("preset", preset); }
         if ("preset.delete".equals(operation)) { String id = JsonSafety.requiredString(input, "id", 256); if (!repository.deleteRecord("prompt-presets", id)) throw new IllegalArgumentException("预设不存在或已删除。"); return new JSONObject().put("ok", true).put("id", id); }
         if ("story.create".equals(operation)) {

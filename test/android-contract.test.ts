@@ -310,3 +310,18 @@ test('APK sync flow: confirm-driven pull/push over an authenticated native bridg
   assert.match(boot, /\/api\/remote\/sync/)
   assert.match(boot, /updatePromptPreset\(preset as any, promptsFilePath\)/)
 })
+
+test('Android local prompt IO: bundled gameplay data source plus SQLite preset persistence', () => {
+  const operations = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'AndroidCompositionOperations.java')
+  const buildScript = readFileSync(join(root, 'scripts', 'build-android-core.mjs'), 'utf8')
+  const bundled = readFileSync(join(root, 'src', 'portable', 'bundled-gameplay.ts'), 'utf8')
+  const offlineCore = readFileSync(join(root, 'src', 'portable', 'android-offline-core.ts'), 'utf8')
+  const runtime = readFileSync(join(root, 'android', 'app', 'src', 'main', 'assets', 'web', 'local-runtime-web-entry.js'), 'utf8')
+  assert.match(operations, /"preset\.active-scope\.set"/)
+  assert.match(operations, /"prompt-meta"/)
+  assert.match(buildScript, /android-node-builtin-stubs/)
+  assert.match(buildScript, /node:fs/)
+  assert.match(bundled, /with \{ type: 'json' \}/)
+  assert.match(offlineCore, /setPromptStorage\(createAndroidPromptStorage\(/)
+  assert.match(runtime, /preset\.active-scope\.set/)
+})
