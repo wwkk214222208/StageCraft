@@ -1,16 +1,15 @@
 /**
- * 离线模式 Web UI 适配层（StageCraft APK 内置）。
+ * StageCraft 本地运行时 Web 入口（Android APK 内置）。
  *
- * 把打包的完整 Web UI（public/）与页面内运行的离线核心连接起来：
- * - fetch / EventSource 补丁：/api/* 请求路由到 StageCraftOfflineCore；
- * - 与 PC 端 app-boot.ts 同一套 HTTP 契约与 Core 命令协议（{roomId, scope, action}）；
- * - /api/events、/api/thinking-events 由离线核心消息流驱动；
- * - 服务器专属能力（DSH 会话、账单、剧本编辑器持久化、存档、状态回滚等）降级为明确提示。
+ * 把打包的完整 Web UI（public/）与页面内运行的本地 Core 连接起来：
+ * - fetch / EventSource 桥接 /api/* 请求与 StageCraft 本地运行时；
+ * - 与 PC 端 app-boot.ts 复用同一套 HTTP 契约与 Core 命令协议（{roomId, scope, action}）；
+ * - /api/events、/api/thinking-events 由本地 Core 消息流驱动。
  */
 (function () {
   'use strict'
   const core = window.StageCraftOfflineCore
-  if (!core) throw new Error('离线核心未加载（offline-adapter.js 必须在 embedded-core.js 之后执行）。')
+  if (!core) throw new Error('本地 Core 未加载（local-runtime-web-entry.js 必须在 embedded-core.js 之后执行）。')
   const ROOM_ID = core.roomId || 'android-local-room'
 
   // ── 内部事件总线 ──
@@ -129,7 +128,13 @@
     return { providers: [], defaults: {} }
   }
   function saveProviderMeta(meta) {
-    window.StageCraftNative.invokeSync('secret.set', JSON.stringify({ key: 'offline.provider.meta', value: JSON.stringify(meta) }))
+    nativeInvokeSync('secret.set', { key: 'offline.provider.meta', value: JSON.stringify(meta) })
+  }
+  function nativeInvokeSync(operation, input) {
+    const raw = window.StageCraftNative.invokeSync(operation, JSON.stringify(input ?? {}))
+    const result = JSON.parse(String(raw ?? 'null'))
+    if (result && typeof result === 'object' && result.error) throw new Error(result.error.message || '本地操作失败。')
+    return result
   }
 
   // ── 路由表 ──
@@ -138,6 +143,8 @@
     get: {
       '/api/room': () => respondJson(200, publicRoomSnapshot(guardRoom())),
       '/api/stories': () => respondJson(200, core.stories()),
+      '/api/archive/export': () => respondJson(200, { version: 1, exportedAt: new Date().toISOString(), room: guardRoom() }),
+      '/api/archive/list': () => respondJson(200, nativeInvokeSync('archive.list', {})),
       '/api/story/get': (params) => core.story(String(params.get('id') ?? '')).then(story => respondJson(200, story)).catch(error => respondJson(400, { error: error.message })),
       '/api/providers': () => respondJson(200, providerMeta()),
       '/api/usage': () => {
@@ -163,6 +170,9 @@
         core.restart(story, { ...(body.mode === 'chat' || body.mode === 'director' ? { mode: body.mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}) })
         return respondJson(200, { ok: true, roomId: ROOM_ID })
       },
+      '/api/archive/save': (body) => respondJson(200, nativeInvokeSync('archive.save', { name: String(body.name ?? '').trim() || `存档-${Date.now()}`, archive: { version: 1, exportedAt: new Date().toISOString(), room: guardRoom() } })),
+      '/api/archive/load': (body) => { const archive = nativeInvokeSync('archive.load', { name: String(body.name ?? '') }); nativeInvokeSync('stagecraft.repository', { method: 'importRoom', args: [ROOM_ID, archive] }); core.refresh(); return respondJson(200, { ok: true, name: body.name }) },
+      '/api/archive/delete': (body) => respondJson(200, nativeInvokeSync('archive.delete', { name: String(body.name ?? '') })),
       '/api/room-config': (body) => {
         const room = guardRoom()
         // room-config 走管理通道（与 app-boot dispatchManagement('set-room-config') 一致）
@@ -310,14 +320,46 @@
       },
       '/api/providers/director-thinking': () => respondJson(200, { ok: true, defaults: providerMeta().defaults }),
       '/api/providers/discover': () => respondJson(400, { error: '离线模式不支持自动发现模型；请直接在模型列表里填写模型名（如 deepseek-chat）。' }),
+      '/api/story/save': (body) => {
+        const story = body.story && typeof body.story === 'object' ? body.story : null
+        if (!story?.id) return respondJson(400, { error: '剧本缺少 id。' })
+        try {
+          const result = nativeInvokeSync('story.save', { story })
+          return respondJson(200, result)
+        } catch (error) { return respondJson(400, { error: error.message }) }
+      },
+      '/api/story/save-as': (body) => {
+        const story = body.story && typeof body.story === 'object' ? { ...body.story } : null
+        if (!story) return respondJson(400, { error: '剧本缺少内容。' })
+        const title = String(body.title ?? story.title ?? '未命名剧本').trim() || '未命名剧本'
+        const id = String(body.id ?? '').trim() || `story-${Date.now().toString(36)}`
+        try {
+          const result = nativeInvokeSync('story.saveAs', { story, id, title })
+          return respondJson(200, result)
+        } catch (error) { return respondJson(400, { error: error.message }) }
+      },
+      '/api/stories': (body) => {
+        const title = String(body.title ?? '').trim() || '未命名剧本'
+        try {
+          const result = nativeInvokeSync('story.create', { title, opening: body.opening, sceneTime: body.sceneTime, sceneLocation: body.sceneLocation })
+          if (!result || typeof result !== 'object' || !result.id) throw new Error('本地剧本创建未返回有效 ID。')
+          return respondJson(200, result)
+        } catch (error) { console.error('[local-runtime] story.create failed', error); return respondJson(400, { error: error instanceof Error ? error.message : String(error) }) }
+      },
+    },
+    delete: {
+      '/api/stories': (params) => {
+        const id = String(params.get('id') ?? '')
+        if (!id) return respondJson(400, { error: '缺少剧本 id。' })
+        try {
+          const result = nativeInvokeSync('story.delete', { id })
+          return respondJson(200, result)
+        } catch (error) { return respondJson(400, { error: error.message }) }
+      },
     },
   }
   const DEGRADED = {
-    '/api/archive/export': '存档导出（可改用「导出存档」替代为开启 PC 远程模式）',
-    '/api/archive/save': '存档保存',
-    '/api/archive/list': '存档列表',
-    '/api/archive/load': '读档',
-    '/api/archive/delete': '删除存档',
+    '/api/archive/import': '导入存档',
     '/api/state/scene-revision': '正文字段回滚',
     '/api/state/rollback': '正文回滚',
     '/api/state/branch': '正文分支',
@@ -392,16 +434,20 @@
         let body = {}
         const raw = String(init.body ?? '')
         if (raw) { try { body = JSON.parse(raw) } catch { /* 非 JSON 忽略 */ } }
-        const result = handler(url.searchParams, body)
-        if (result && typeof result.then === 'function') result.then(resolve).catch(error => resolve(respondJson(200, { ok: false, error: error.message })))
-        else resolve(result)
+        try {
+          const result = (method === 'GET' || method === 'DELETE') ? handler(url.searchParams) : handler(body)
+          if (result && typeof result.then === 'function') result.then(resolve).catch(error => resolve(respondJson(400, { error: error instanceof Error ? error.message : String(error) })))
+          else resolve(result)
+        } catch (error) {
+          resolve(respondJson(400, { error: error instanceof Error ? error.message : String(error) }))
+        }
       })
     }
     if (pathname in DEGRADED) {
       const message = DEGRADED[pathname]
-      return Promise.resolve(method === 'GET' ? respondJson(503, { error: `离线模式暂不支持：${message}` }) : respondJson(200, { ok: false, error: `离线模式暂不支持：${message}` }))
+      return Promise.resolve(method === 'GET' ? respondJson(503, { error: `本地运行时暂不支持：${message}` }) : respondJson(503, { error: `本地运行时暂不支持：${message}` }))
     }
-    return Promise.resolve(method === 'GET' ? respondJson(404, { error: 'Not found' }) : respondJson(200, { ok: false, error: '未知的离线接口。' }))
+    return Promise.resolve(method === 'GET' ? respondJson(404, { error: 'Not found' }) : respondJson(404, { error: '未知的本地接口。' }))
   }
 
   // ── 连接徽标 ──

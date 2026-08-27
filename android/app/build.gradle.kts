@@ -15,13 +15,17 @@ val generatedWebUi = layout.buildDirectory.dir("generated/android-web")
 val packageRemoteRenderer by tasks.registering(Copy::class) {
     from(rendererSource)
     from(rootProject.projectDir.parentFile.resolve("prompts")) { into("prompts") }
-    from(rootProject.projectDir.parentFile.resolve("stories")) { into("stories") }
+    // The APK ships only curated built-in stories. User/private stories remain on their owner device.
+    from(rootProject.projectDir.parentFile.resolve("stories/default")) { into("stories/default") }
     into(generatedRendererSource)
-    include("index.html", "styles.css", "renderer.js", "web/offline-adapter.js")
+    doFirst {
+        delete(generatedRendererSource.get().asFile.resolve("stories"))
+    }
+    include("index.html", "styles.css", "renderer.js", "web/local-runtime-web-entry.js")
     include("prompts.json", "prompts/prompts.json")
-    include("*.json", "stories/*.json", "default/*.json", "custom/*.json", "stories/default/*.json", "stories/custom/*.json", "default/*.assets/**", "custom/*.assets/**", "stories/default/*.assets/**", "stories/custom/*.assets/**")
-    // 打包布局契约：prompts/prompts.json 与 stories/{default,custom}/*.json(+ .assets)
-    // 是 Android 侧 assets 的约定；default/ 含随包分发的默认剧本（Eldoria）。
+    include("*.json", "stories/*.json", "default/*.json", "stories/default/*.json", "*.assets/**", "default/*.assets/**", "stories/default/*.assets/**")
+    // 打包布局契约：prompts/prompts.json 与 stories/default/*.json(+ .assets)
+    // 是 Android 侧只读内置资源；玩家私有剧本存入应用私有数据库，不进入 APK。
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
 val buildEmbeddedCore by tasks.registering(Exec::class) {
@@ -33,7 +37,7 @@ val buildEmbeddedCore by tasks.registering(Exec::class) {
     outputs.file(generatedCore.map { it.file("embedded-core.js") })
     outputs.file(generatedCore.map { it.file("embedded-core.json") })
 }
-val packageEmbeddedCore by tasks.registering(Sync::class) {
+val packageEmbeddedCore by tasks.registering(Copy::class) {
     dependsOn(buildEmbeddedCore)
     from(generatedCore)
     into(generatedRendererSource)
@@ -58,7 +62,7 @@ val generateOfflineEntry by tasks.registering {
             .replace("__APP_HASH__", "")
             .replace("__STYLE_HASH__", "")
             .replace("__CORE_CSS_HASH__", "")
-        val injection = "<script src=\"/embedded-core.js\"></script>\n<script src=\"/web/offline-adapter.js\"></script>"
+        val injection = "<script src=\"/embedded-core.js\"></script>\n<script src=\"/web/local-runtime-web-entry.js\"></script>"
         val offline = if (html.contains("</head>", ignoreCase = true)) {
             html.replaceFirst("</head>", injection + "\n</head>", ignoreCase = true)
         } else {
@@ -72,7 +76,9 @@ val packageAndroidAssets by tasks.registering(Sync::class) {
     from(generatedRendererSource)
     from(generatedWebUi) { into("web"); include("**/*") }
     into(generatedRenderer)
-    include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json", "prompts/**", "stories/**", "web/offline-adapter.js")
+    // Keep the small native pairing renderer at the asset root, and package the
+    // complete public Web UI under web/ so offline mode can reuse its module graph.
+    include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json", "prompts/**", "stories/**", "web/**")
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
 val verifyEmbeddedCoreAssets by tasks.registering {
@@ -103,7 +109,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-        testInstrumentationRunner = "android.app.InstrumentationTestRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -126,4 +132,8 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.con
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("junit:junit:4.13.2")
 }

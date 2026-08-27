@@ -366,7 +366,7 @@ label.settings-row input[type=checkbox]{width:auto;margin:0}
 /* ── 剧本编辑器：剧本切换选择框 ── */
 .creator-workbench-story-pick{display:inline-flex;align-items:center;gap:6px;color:#a9b8dd;font-size:12px;white-space:nowrap;flex-shrink:0}
 .creator-workbench-story-pick select{max-width:320px;min-width:240px;padding:4px 6px;border:1px solid #3a4a6e;border-radius:3px;background:#16203a;color:#dce7ff}
-@media (max-width:680px){.creator-workbench-story-pick{display:none}}
+@media (max-width:680px){.creator-workbench-story-pick{display:flex;order:2;flex:1 1 100%;min-width:0}.creator-workbench-story-pick select{flex:1 1 auto;min-width:0;max-width:none}}
 /* Android / narrow screens: keep the story editor usable above the keyboard. */
 @media (max-width:680px){
   #story-edit-modal{inset:0;width:100%;height:100dvh;min-height:100svh;max-height:none;margin:0;border:0;border-radius:0}

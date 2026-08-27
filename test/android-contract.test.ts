@@ -92,14 +92,45 @@ test('Android credentials stay native, encrypted, and out of URLs or Javascript'
   assert.doesNotMatch(bridge, /(Log\.|System\.out|printStackTrace)/)
   assert.doesNotMatch(renderer, /(localStorage|document\.cookie|Bearer|token)/)
   assert.match(bridge, /JSONObject\.quote\(messageJson\)/)
+  assert.match(bridge, /result == null \? JSONObject\.NULL\.toString\(\) : result\.toString\(\)/)
+  const operations = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'AndroidCompositionOperations.java')
+  assert.match(operations, /roomFromStory\(roomId, new JSONObject\(readStoryText\("eldoria"\)\)\)/)
+  assert.match(operations, /repository\.putRecord\("story-packages", id, story\)/)
+  assert.match(operations, /repository\.getRecord\("story-packages", id\)/)
+  assert.match(operations, /"story\.create"\.equals\(operation\)/)
+  assert.match(operations, /"restartRoom"\.equals\(method\)/)
+  assert.match(operations, /options\.getString\("mode"\)/)
+  assert.match(operations, /isLegacyPlaceholder\(room\)/)
+  assert.doesNotMatch(operations, /Music drifts through the royal festival hall/)
+  assert.doesNotMatch(bridge, /asyncGeneration/)
+  assert.match(bridge, /if \(!closed\) deliverAsync\(callbackId, result\.toString\(\)\)/)
 })
 
-test('built Android APK contains the verified embedded Core assets', () => {
+test('Android APK defaults to the packaged full Web UI while retaining remote entry points', () => {
+  const activity = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'MainActivity.java')
+  assert.match(activity, /showLocalUi\(\);/)
+  assert.match(activity, /offlineServer\.urlFor\("\/web\/offline\.html"\)/)
+  assert.match(activity, /LOCAL_ORIGIN \+ "\/web\/offline\.html"/)
+  assert.match(activity, /void showRemoteUi\(String address\)/)
+  assert.match(activity, /void showPairingPage\(\)/)
+  const client = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'StageCraftWebViewClient.java')
+  assert.match(client, /contentType\.indexOf\(';'\)/)
+  assert.match(client, /contentType\.substring\(0, parameter\)\.trim\(\)/)
+  assert.match(client, /new WebResourceResponse\(mime, encoding, input\)/)
+  const onCreate = activity.slice(activity.indexOf('onCreate('), activity.indexOf('/** Open the packaged full Web UI'))
+  assert.doesNotMatch(onCreate, /index\.html\?mode=remote/)
+})
+
+test('built Android APK contains the verified embedded Core and full Web UI assets', () => {
   const apk = join(android, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')
   if (!existsSync(apk)) return
   const bytes = readFileSync(apk)
   const zipNames = bytes.toString('latin1')
-  for (const asset of ['assets/embedded-core.js', 'assets/embedded-core.json', 'assets/index.html', 'assets/renderer.js']) {
+  for (const asset of [
+    'assets/embedded-core.js', 'assets/embedded-core.json', 'assets/index.html', 'assets/renderer.js',
+    'assets/web/offline.html', 'assets/web/index.html', 'assets/web/app.js', 'assets/web/style.css',
+    'assets/web/core-client.js', 'assets/web/local-runtime-web-entry.js',
+  ]) {
     assert.ok(zipNames.includes(asset), `missing ${asset} from APK`)
   }
 })
@@ -168,6 +199,12 @@ test('Android media and PNG import remain native, bounded, authenticated, and pa
   const renderer = read('app', 'src', 'main', 'assets', 'renderer.js')
   assert.match(appGradle, /packageRemoteRenderer/)
   assert.match(appGradle, /include\("index\.html", "styles\.css", "renderer\.js",/)
+  assert.match(appGradle, /from\(rootProject\.projectDir\.parentFile\.resolve\("stories\/default"\)\) \{ into\("stories\/default"\) \}/)
+  assert.match(appGradle, /stories\/default\/\*\.json/)
+  assert.doesNotMatch(appGradle, /stories\/custom\/\*\.json/)
+  assert.match(appGradle, /include\("index\.html", "styles\.css", "renderer\.js", "embedded-core\.js", "embedded-core\.json", "prompts\/\*\*", "stories\/\*\*", "web\/\*\*"\)/)
+  assert.match(appGradle, /from\(generatedWebUi\) \{ into\("web"\); include\("\*\*\/\*"\) \}/)
+  assert.match(appGradle, /generateOfflineEntry/)
   assert.match(appGradle, /preBuild.*dependsOn\(verifyEmbeddedCoreAssets\)/s)
   assert.match(connection, /public void loadMedia/)
   assert.match(connection, /RemoteAssetPolicy\.requireAssetPath/)
@@ -183,6 +220,25 @@ test('Android media and PNG import remain native, bounded, authenticated, and pa
   assert.match(renderer, /bridge\.loadMedia/)
   assert.match(renderer, /bridge\.chooseCharacterCard\(\)/)
   assert.doesNotMatch(renderer, /FileReader|arrayBuffer/)
+  const localRuntimeEntry = readFileSync(join(root, 'android', 'app', 'src', 'main', 'assets', 'web', 'local-runtime-web-entry.js'), 'utf8')
+  assert.doesNotMatch(localRuntimeEntry, /offline-adapter/)
+  assert.match(localRuntimeEntry, /\(method === 'GET' \|\| method === 'DELETE'\) \? handler\(url\.searchParams\) : handler\(body\)/)
+  assert.doesNotMatch(localRuntimeEntry, /handler\(url\.searchParams, body\)/)
+  assert.match(localRuntimeEntry, /'\/api\/story\/save'/)
+  assert.match(localRuntimeEntry, /'\/api\/story\/save-as'/)
+  assert.match(localRuntimeEntry, /'\/api\/stories': \(body\)/)
+  assert.match(localRuntimeEntry, /nativeInvokeSync\('story\.create'/)
+  assert.match(localRuntimeEntry, /nativeInvokeSync\('story\.save'/)
+  const offlineCore = readFileSync(join(root, 'src', 'portable', 'android-offline-core.ts'), 'utf8')
+  assert.match(offlineCore, /'story\.read'/)
+  assert.match(offlineCore, /Promise\.resolve\(invokeSync\('story\.read'/)
+  assert.match(localRuntimeEntry, /nativeInvokeSync\('story\.saveAs'/)
+  assert.match(localRuntimeEntry, /nativeInvokeSync\('story\.delete'/)
+  assert.match(localRuntimeEntry, /story\.create/)
+  assert.match(localRuntimeEntry, /'\/api\/restart': async \(body\)/)
+  const style = readFileSync(join(root, 'public', 'style.css'), 'utf8')
+  assert.match(style, /\.creator-workbench-story-pick\{display:flex;order:2;flex:1 1 100%/)
+  assert.doesNotMatch(style, /@media \(max-width:680px\)\{\.creator-workbench-story-pick\{display:none\}\}/)
 })
 
 test('desktop pairing-code operator entry is loopback-only and visible in settings', () => {

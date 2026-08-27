@@ -15,6 +15,7 @@ function fakeNative(room: any) {
       if (operation === 'secret.set') { secrets.set(input.key, String(input.value)); return JSON.stringify({ ok: true }) }
       if (operation === 'secret.remove') { secrets.delete(input.key); return JSON.stringify({ ok: true }) }
       if (operation === 'stories.list') return JSON.stringify({ stories: [{ id: 'eldoria', title: 'Eldoria', mode: 'director', custom: false }] })
+      if (operation === 'story.read') return JSON.stringify({ value: JSON.stringify({ id: input.id, title: 'Eldoria', mode: 'director', roles: [], lore: [] }) })
       if (operation === 'model.cancel') return JSON.stringify({ ok: true })
       return JSON.stringify({})
     },

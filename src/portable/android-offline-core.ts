@@ -4,7 +4,7 @@
  *
  * - 同一组共享服务（chat/director/management）与 CoreRuntimeSkeleton 在页面内运行；
  * - 模型生成走真实 workers（self-contained 提示词）→ Android 原生传输（凭据在 Java）；
- * - 富 API 门面与 PC 端 RoomRuntime 同名同参，offline-adapter.js 直接调用。
+ * - 富 API 门面与 PC 端 RoomRuntime 同名同参，local-runtime-web-entry.js 直接调用。
  */
 import { CORE_PROTOCOL_VERSION, type CoreEvent, type CoreView, type HumanCommand, type ModelRequest, type ModelResult } from '../core/protocol.ts'
 import { createAndroidComposition, type AndroidComposition } from './android-composition.ts'
@@ -25,7 +25,7 @@ const SYNC_OPERATIONS = new Set([
   'asset.read', 'asset.write', 'asset.remove',
   'secret.get', 'secret.set', 'secret.remove',
   'core-state.commit', 'core-state.restore',
-  'stagecraft.room.get', 'stagecraft.repository', 'stories.list',
+  'stagecraft.room.get', 'stagecraft.repository', 'stories.list', 'story.read',
   'model.cancel',
 ])
 
@@ -195,7 +195,7 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
       writeProvider({ baseUrl: config.baseUrl.trim(), apiKey: config.apiKey.trim(), model: config.model.trim(), responseFormat: config.responseFormat === 'none' ? 'none' : 'json_object' })
       emit({ type: 'provider.changed' })
     },
-    story: (id: string): Promise<StoryPackage> => invokeAsync('story.read', { id }).then(value => JSON.parse(String((value as { value?: string }).value ?? '')) as StoryPackage),
+    story: (id: string): Promise<StoryPackage> => Promise.resolve(invokeSync('story.read', { id })).then(value => JSON.parse(String((value as { value?: string }).value ?? '')) as StoryPackage),
     stories: (): Array<{ id: string; title: string; mode: string; custom: boolean }> => {
       const result = invokeSync('stories.list', {}) as { stories?: Array<{ id: string; title: string; mode: string; custom: boolean }> }
       return Array.isArray(result?.stories) ? result.stories : []

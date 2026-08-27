@@ -25,7 +25,6 @@ public final class NativeBridge implements AutoCloseable {
     private final AtomicLong connectionGeneration = new AtomicLong();
     private final AtomicLong operationGeneration = new AtomicLong();
     private final AtomicLong fileGeneration = new AtomicLong();
-    private final AtomicLong asyncGeneration = new AtomicLong();
     private volatile RemoteCoreConnection connection;
     private volatile HttpURLConnection activePairRequest;
     private volatile boolean foreground;
@@ -58,7 +57,9 @@ public final class NativeBridge implements AutoCloseable {
         if (operation == null || operation.length() > 64 || inputJson == null || inputJson.length() > 4 * 1024 * 1024) return errorJson("Invalid native request.");
         try {
             JSONObject input = new JSONObject(inputJson);
-            return compositionOperations.invokeSync(operation, input).toString();
+            Object result = compositionOperations.invokeSync(operation, input);
+            // A missing persisted Core snapshot is a valid first-run state, not a bridge error.
+            return result == null ? JSONObject.NULL.toString() : result.toString();
         } catch (Exception error) { return errorJson(error.getMessage() == null ? "Native operation failed." : error.getMessage()); }
     }
 
@@ -72,21 +73,20 @@ public final class NativeBridge implements AutoCloseable {
             deliverAsync(callbackId, errorJson("Invalid native request."));
             return;
         }
-        final long generation = asyncGeneration.incrementAndGet();
         networkExecutor.execute(() -> {
             try {
                 JSONObject input = new JSONObject(inputJson);
                 compositionOperations.invoke(operation, input, new AndroidNativeOperations.Callback() {
                     @Override public void onResult(org.json.JSONObject result) {
-                        if (!closed && generation == asyncGeneration.get()) deliverAsync(callbackId, result.toString());
+                        if (!closed) deliverAsync(callbackId, result.toString());
                     }
 
                     @Override public void onError(String message) {
-                        if (!closed && generation == asyncGeneration.get()) deliverAsync(callbackId, errorMessageJson(message));
+                        if (!closed) deliverAsync(callbackId, errorMessageJson(message));
                     }
                 });
             } catch (Exception error) {
-                if (!closed && generation == asyncGeneration.get()) deliverAsync(callbackId, errorMessageJson(error.getMessage() == null ? "Native operation failed." : error.getMessage()));
+                if (!closed) deliverAsync(callbackId, errorMessageJson(error.getMessage() == null ? "Native operation failed." : error.getMessage()));
             }
         });
     }

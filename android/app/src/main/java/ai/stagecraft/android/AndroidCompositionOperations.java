@@ -41,7 +41,7 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         if ("stagecraft.room.get".equals(operation)) {
             String roomId = JsonSafety.requiredString(input, "roomId", 256);
             JSONObject room = repository.getRoom(roomId);
-            if (room == null) {
+            if (room == null || isLegacyPlaceholder(room)) {
                 room = defaultRoom(roomId);
                 repository.saveRoom(room);
             }
@@ -49,25 +49,44 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         }
         if ("stories.list".equals(operation)) {
             org.json.JSONArray result = new org.json.JSONArray();
-            for (String scope : new String[] {"default", "custom"}) {
-                String[] files = context.getAssets().list("stories/" + scope);
-                if (files == null) continue;
-                for (String file : files) {
-                    if (!file.endsWith(".json")) continue;
-                    String id = file.substring(0, file.length() - 5);
-                    try (InputStream stream = context.getAssets().open("stories/" + scope + "/" + file)) {
-                        byte[] data = StageCraftArchive.readLimited(stream, 4 * 1024 * 1024);
-                        JSONObject story = new JSONObject(new String(data, StandardCharsets.UTF_8));
-                        result.put(new JSONObject()
-                            .put("id", id)
-                            .put("title", story.optString("title", id))
-                            .put("mode", story.optString("mode", "director"))
-                            .put("custom", "custom".equals(scope)));
-                    } catch (Exception ignore) { /* 跳过损坏的剧本文件 */ }
-                }
+            java.util.HashSet<String> ids = new java.util.HashSet<>();
+            String[] files = context.getAssets().list("stories/default");
+            if (files != null) for (String file : files) {
+                if (!file.endsWith(".json")) continue;
+                String id = file.substring(0, file.length() - 5);
+                try { JSONObject story = new JSONObject(readAssetText("stories/default/" + file)); result.put(new JSONObject().put("id", id).put("title", story.optString("title", id)).put("mode", story.optString("mode", "director")).put("custom", false)); ids.add(id); } catch (Exception ignore) { }
+            }
+            for (JSONObject story : repository.listRecords("story-packages")) {
+                String id = story.optString("id", "");
+                if (!id.isEmpty() && !ids.contains(id)) result.put(new JSONObject().put("id", id).put("title", story.optString("title", id)).put("mode", story.optString("mode", "director")).put("custom", true));
             }
             return new JSONObject().put("stories", result);
         }
+        if ("story.create".equals(operation)) {
+            String title = input.optString("title", "未命名剧本").trim();
+            if (title.isEmpty()) title = "未命名剧本";
+            String id = input.optString("id", "story-" + System.currentTimeMillis()).trim();
+            validateStoryId(id);
+            JSONObject story = new JSONObject()
+                .put("id", id)
+                .put("title", title)
+                .put("opening", input.optString("opening", title + "：一个全新的故事即将展开。"))
+                .put("sceneTime", input.optString("sceneTime", "第一日黄昏"))
+                .put("sceneLocation", input.optString("sceneLocation", "未知地点"))
+                .put("playerCharacter", new JSONObject().put("name", "玩家").put("persona", "由玩家自由定义的参与者。").put("currentState", "刚刚进入当前场景。"))
+                .put("roles", new org.json.JSONArray().put(new JSONObject().put("id", "guide").put("name", "向导").put("portraitRef", "/assets/default.svg").put("currentState", "刚刚进入当前场景。等待玩家行动。 ").put("presence", "present").put("selfModel", "一位介绍当前世界与背景的向导。")))
+                .put("lore", new org.json.JSONArray());
+            repository.putRecord("story-packages", id, story);
+            return new JSONObject().put("ok", true).put("id", id).put("title", title);
+        }
+        if ("story.save".equals(operation)) { JSONObject story = JsonSafety.requiredObject(input, "story"); validateStoryId(story.optString("id")); repository.putRecord("story-packages", story.getString("id"), story); return new JSONObject().put("ok", true).put("id", story.getString("id")); }
+        if ("story.saveAs".equals(operation)) { JSONObject story = JsonSafety.requiredObject(input, "story"); String id = JsonSafety.requiredString(input, "id", 128); validateStoryId(id); story.put("id", id); if (input.has("title")) story.put("title", JsonSafety.requiredString(input, "title", 512)); repository.putRecord("story-packages", id, story); return new JSONObject().put("ok", true).put("id", id).put("title", story.optString("title", id)); }
+        if ("story.read".equals(operation)) { String id = JsonSafety.requiredString(input, "id", 128); validateStoryId(id); return new JSONObject().put("value", readStoryText(id)); }
+        if ("story.delete".equals(operation)) { String id = JsonSafety.requiredString(input, "id", 128); validateStoryId(id); if ("eldoria".equals(id)) throw new IllegalArgumentException("默认剧本不可删除。"); if (!repository.deleteRecord("story-packages", id)) throw new IllegalArgumentException("剧本不存在或已删除。"); return new JSONObject().put("ok", true).put("id", id); }
+        if ("archive.save".equals(operation)) { String name = JsonSafety.requiredString(input, "name", 256); validateArchiveName(name); JSONObject archive = new JSONObject(JsonSafety.requiredObject(input, "archive").toString()).put("name", name); repository.putRecord("archives", name, archive); return new JSONObject().put("ok", true).put("name", name); }
+        if ("archive.list".equals(operation)) { org.json.JSONArray names = new org.json.JSONArray(); for (JSONObject archive : repository.listRecords("archives")) names.put(archive.optString("name", "")); return new JSONObject().put("files", names); }
+        if ("archive.load".equals(operation)) { String name = JsonSafety.requiredString(input, "name", 256); validateArchiveName(name); JSONObject archive = repository.getRecord("archives", name); if (archive == null) throw new IllegalArgumentException("存档不存在。"); return archive; }
+        if ("archive.delete".equals(operation)) { String name = JsonSafety.requiredString(input, "name", 256); validateArchiveName(name); if (!repository.deleteRecord("archives", name)) throw new IllegalArgumentException("存档不存在或已删除。"); return new JSONObject().put("ok", true).put("name", name); }
         if ("stagecraft.repository".equals(operation)) return dispatchRepository(input);
         if ("asset.read".equals(operation)) {
             String path = JsonSafety.requiredString(input, "path", 512); JsonSafety.path(path);
@@ -99,7 +118,7 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
                 }
                 if ("story.read".equals(operation)) {
                     String id = JsonSafety.requiredString(input, "id", 128);
-                    if (!id.matches("[A-Za-z0-9._-]+")) throw new IllegalArgumentException("Invalid story id.");
+                    validateStoryId(id);
                     callback.onResult(new JSONObject().put("value", readStoryText(id)));
                     return;
                 }
@@ -177,7 +196,22 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         if ("approveWorldChange".equals(method)) { String id = room.optString("pendingWorldChangeId", ""); room.remove("pendingWorldChange"); room.remove("pendingWorldChangeId"); room.put("phase", "awaiting-player-input"); bump(room); return id.isEmpty() ? JSONObject.NULL : id; }
         if ("rejectWorldChange".equals(method)) { room.remove("pendingWorldChange"); room.remove("pendingWorldChangeId"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
         if ("publish".equals(method)) { JSONObject draft = room.optJSONObject("draft"); if (draft == null) throw new IllegalArgumentException("Draft is no longer available."); addScene(room, JsonSafety.stringArg(args, 2, 1024 * 1024), null, draft.optString("turnId", "turn")); room.remove("draft"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
-        if ("restartRoom".equals(method)) { JSONObject story = JsonSafety.objectArg(args, 1); room.put("title", story.optString("title", room.optString("title"))); room.put("roles", story.optJSONArray("roles") == null ? new org.json.JSONArray() : story.getJSONArray("roles")); room.put("lore", story.optJSONArray("lore") == null ? new org.json.JSONArray() : story.getJSONArray("lore")); room.put("phase", "awaiting-player-input"); room.remove("draft"); room.remove("speech"); bump(room); return JSONObject.NULL; }
+        if ("restartRoom".equals(method)) {
+            JSONObject story = JsonSafety.objectArg(args, 1);
+            JSONObject initialized = roomFromStory(room.optString("id"), story);
+            if (args.length() > 2 && !args.isNull(2)) {
+                JSONObject options = JsonSafety.objectArg(args, 2);
+                if ("chat".equals(options.optString("mode")) || "director".equals(options.optString("mode"))) initialized.put("mode", options.getString("mode"));
+                if (options.has("autoPublish")) initialized.put("autoPublish", options.getBoolean("autoPublish"));
+            }
+            java.util.Iterator<String> keys = room.keys();
+            java.util.ArrayList<String> existingKeys = new java.util.ArrayList<>();
+            while (keys.hasNext()) existingKeys.add(keys.next());
+            for (String key : existingKeys) room.remove(key);
+            java.util.Iterator<String> initializedKeys = initialized.keys();
+            while (initializedKeys.hasNext()) { String key = initializedKeys.next(); room.put(key, initialized.get(key)); }
+            return JSONObject.NULL;
+        }
         if ("failRoom".equals(method)) { room.put("lastError", JsonSafety.stringArg(args, 1, 1024 * 1024)); bump(room); return JSONObject.NULL; }
         if ("cancelTurn".equals(method)) { room.put("phase", "awaiting-player-input"); room.remove("speech"); room.remove("draft"); bump(room); return JSONObject.NULL; }
         if ("setPlayerAvatar".equals(method)) { JSONObject player = room.optJSONObject("playerCharacter"); if (player == null) throw new IllegalArgumentException("Player unavailable."); player.put("portraitRef", JsonSafety.stringArg(args, 1, 1024)); bump(room); return JSONObject.NULL; }
@@ -205,28 +239,37 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
     private static void bump(JSONObject room) throws Exception { room.put("revision", room.optLong("revision") + 1); }
     private static String now() { return new java.util.Date().toInstant().toString(); }
 
+    private static boolean isLegacyPlaceholder(JSONObject room) {
+        return "Royal Festival".equals(room.optString("title")) || ("eldoria".equals(room.optString("storyId")) && room.optJSONArray("roles") != null && find(room.optJSONArray("roles"), "id", "aria") != null);
+    }
+
     private JSONObject defaultRoom(String roomId) {
-        try {
-            return new JSONObject()
-                .put("id", roomId)
-                .put("title", "Royal Festival")
-                .put("storyId", "eldoria")
-                .put("mode", "director")
-                .put("speechMode", "manual")
-                .put("hidePlayerSpeech", false)
-                .put("autoPublish", false)
-                .put("phase", "awaiting-player-input")
-                .put("revision", 0)
-                .put("playerCharacter", new JSONObject().put("name", "Player").put("persona", "A careful observer.").put("currentState", "Just entered the scene."))
-                .put("roles", new org.json.JSONArray().put(new JSONObject().put("id", "aria").put("name", "Aria").put("portraitRef", "/assets/default.svg").put("currentState", "At the royal festival, watching the crowd.").put("presence", "present").put("memoryTimeline", new JSONObject().put("Past", new org.json.JSONArray().put("The festival has begun."))).put("selfModel", "Reserved and observant.")))
-                .put("lore", new org.json.JSONArray().put(new JSONObject().put("name", "Royal Festival").put("content", "A public festival where old alliances are tested.")))
-                .put("scenes", new org.json.JSONArray().put(new JSONObject().put("id", "opening-" + roomId).put("turnId", "opening").put("text", "Music drifts through the royal festival hall as evening falls.").put("kind", "narration").put("createdAt", now())))
-                .put("consultations", new org.json.JSONArray())
-                .put("reactions", new org.json.JSONArray())
-                .put("decisions", new org.json.JSONArray());
-        } catch (Exception error) {
-            throw new IllegalStateException("Unable to create the default local room.", error);
-        }
+        try { return roomFromStory(roomId, new JSONObject(readStoryText("eldoria"))); }
+        catch (Exception error) { throw new IllegalStateException("Unable to create the default local room.", error); }
+    }
+
+    private JSONObject roomFromStory(String roomId, JSONObject story) throws Exception {
+        String storyId = story.optString("id", "eldoria");
+        validateStoryId(storyId);
+        return new JSONObject()
+            .put("id", roomId)
+            .put("title", story.optString("title", storyId))
+            .put("storyId", storyId)
+            .put("mode", "director")
+            .put("speechMode", "manual")
+            .put("hidePlayerSpeech", false)
+            .put("autoPublish", false)
+            .put("phase", "awaiting-player-input")
+            .put("revision", 0)
+            .put("playerCharacter", story.optJSONObject("playerCharacter") == null ? new JSONObject().put("name", "玩家").put("persona", "由玩家自由定义的参与者。").put("currentState", "刚刚进入当前场景。") : new JSONObject(story.getJSONObject("playerCharacter").toString()))
+            .put("roles", story.optJSONArray("roles") == null ? new org.json.JSONArray() : new org.json.JSONArray(story.getJSONArray("roles").toString()))
+            .put("lore", story.optJSONArray("lore") == null ? new org.json.JSONArray() : new org.json.JSONArray(story.getJSONArray("lore").toString()))
+            .put("sceneTime", story.optString("sceneTime", "第一日黄昏"))
+            .put("sceneLocation", story.optString("sceneLocation", "未知地点"))
+            .put("scenes", new org.json.JSONArray().put(new JSONObject().put("id", "opening-" + roomId).put("turnId", "opening").put("text", story.optString("opening", "")).put("kind", "narration").put("createdAt", now())))
+            .put("consultations", new org.json.JSONArray())
+            .put("reactions", new org.json.JSONArray())
+            .put("decisions", new org.json.JSONArray());
     }
 
     @Override public void close() { modelTransport.close(); }
@@ -238,9 +281,20 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         }
     }
 
-    /** 剧本文件打包布局：stories/default/<id>.json 与 stories/custom/<id>.json。 */
+    private static void validateArchiveName(String name) {
+        if (name == null || name.isEmpty() || name.length() > 256 || name.contains("..") || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0) throw new IllegalArgumentException("Invalid archive name.");
+    }
+
+    private static void validateStoryId(String id) {
+        if (id == null || id.isEmpty() || id.length() > 128 || id.contains("..") || id.indexOf('/') >= 0 || id.indexOf('\\') >= 0) throw new IllegalArgumentException("Invalid story id.");
+        for (int index = 0; index < id.length(); index++) if (Character.isISOControl(id.charAt(index))) throw new IllegalArgumentException("Invalid story id.");
+    }
+
+    /** Built-in stories are read-only assets; user stories live in the app-private database. */
     private String readStoryText(String id) throws Exception {
-        try { return readAssetText("stories/default/" + id + ".json"); }
-        catch (Exception defaultMissing) { return readAssetText("stories/custom/" + id + ".json"); }
+        validateStoryId(id);
+        JSONObject custom = repository.getRecord("story-packages", id);
+        if (custom != null) return custom.toString();
+        return readAssetText("stories/default/" + id + ".json");
     }
 }

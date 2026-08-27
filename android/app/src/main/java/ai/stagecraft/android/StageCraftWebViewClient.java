@@ -107,8 +107,10 @@ public final class StageCraftWebViewClient extends WebViewClient {
         try {
             InputStream input = assetResolver.open(resolved.assetPath);
             if (input == null) return forbidden();
-            String mime = resolved.mime;
-            String encoding = mime != null && mime.startsWith("text/") || mime != null && mime.startsWith("application/") ? "UTF-8" : null;
+            String contentType = resolved.mime;
+            int parameter = contentType == null ? -1 : contentType.indexOf(';');
+            String mime = parameter < 0 ? contentType : contentType.substring(0, parameter).trim();
+            String encoding = mime != null && (mime.startsWith("text/") || mime.startsWith("application/")) ? "UTF-8" : null;
             return new WebResourceResponse(mime, encoding, input);
         } catch (IOException error) {
             return forbidden();

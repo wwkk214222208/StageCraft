@@ -38,9 +38,9 @@ The WebView loads only `https://appassets.androidplatform.net/` resources interc
 
 架构：
 
-- `offline.html` = `public/index.html`（`__MODE_FLAG__=true` 关闭 DSH 依赖组件）+ 注入 `embedded-core.js`（离线组合根）与 `offline-adapter.js`（HTTP 适配层），均早于 `app.js` 执行。
+- `offline.html` = `public/index.html`（`__MODE_FLAG__=true` 关闭 DSH 依赖组件）+ 注入 `embedded-core.js`（离线组合根）与 `local-runtime-web-entry.js`（本地运行时 Web 入口），均早于 `app.js` 执行。
 - `src/portable/android-offline-core.ts`（esbuild 打包为 `embedded-core.js`）：在页面内运行共享 `CoreRuntimeSkeleton` + chat/director/management 服务（`android-composition.ts`），并以 **真实 workers**（`offline-workers.ts`，自包含提示词 + JSON 契约）驱动生成；凭据只存 `AndroidSecretStore`，网络由 `AndroidModelTransport`（OpenAI 兼容 SSE 解析，含 `reasoning_content` 思考增量）在 Java 侧发起。
-- `offline-adapter.js`：补丁 `fetch`/`EventSource`，把 `/api/*` 路由到离线核心；与 PC 端 `app-boot.ts` 同一套 HTTP 契约与 **Core 命令协议**（`{roomId, scope, action}` 载荷：`submit-text`/`select-role`/`approve`/`reject`/`retry`/`cancel`/`restart`/`role-management`），房间快照经 `/api/events` SSE 推送，思维链经 `/api/thinking-events` 推送；桌面专属能力（DSH 助手、账单、剧本编辑器持久化、存档/读档、状态回滚、头像上传、ST 卡导入、模型自动发现等）返回明确的「离线暂不支持」提示。
+- `local-runtime-web-entry.js`：本地运行时的人机入口。它桥接 `fetch`/`EventSource` 与本地 Core，并复用 PC 端 HTTP 契约及 **Core 命令协议**（`{roomId, scope, action}`）；它不拥有剧本、存档、设置、角色或回合业务规则。房间快照经 `/api/events` 推送，思考增量经 `/api/thinking-events` 推送。仅 DSH 助手与远程配对等真正依赖外部服务的能力允许不在本地运行时提供。
 - 原生异步桥：`NativeBridge.invokeAsync`（operation + callbackId）承载 `model.request` / `prompts.read` / `story.read`。
 - 模型供应商：应用内「连接 → 管理供应商」新建（接口地址、API Key、模型名），写入 `offline.provider.default`（Keystore 加密 secret）；模型名单离线不可自动发现，需手动填写（如 `deepseek-chat`）。
 - 离线边界：`StageCraftWebViewClient` 仅放行 `appassets://` 本地资源（`/web`、`/assets`、`/story-assets`），文件/内容/Cookie/混合内容仍全禁。
@@ -54,3 +54,16 @@ android/gradlew -p android testDebugUnitTest assembleDebug lintDebug --offline -
 ```
 
 The repository-local JDK is under `.toolchains/jdk-extract/`. With the repository-local toolchain and cached AGP available, `testDebugUnitTest`, `assembleDebug`, and `lintDebug` pass. Android build outputs, `local.properties`, APKs, and private assets remain ignored and are not committed.
+
+### Real WebView UI test
+
+`src/androidTest/java/ai/stagecraft/android/MainActivityWebViewTest.java` starts the real `MainActivity` and verifies the real WebView has a `WebChromeClient` and loads `web/offline.html`. This is separate from Node/VM route tests and requires an Android emulator or physical device. The first build needs network access to download `androidx.test:runner:1.6.2`, `androidx.test:rules:1.6.1`, and `androidx.test.ext:junit:1.2.1`; after they are cached, use:
+
+```text
+android/gradlew -p android assembleDebug assembleDebugAndroidTest
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb shell am instrument -w -e class ai.stagecraft.android.MainActivityWebViewTest ai.stagecraft.android.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The test requires no root access and does not require WebView remote debugging. It validates the Activity/WebView setup, not the full native SQLite CRUD workflow; add user-flow assertions here when a test device is available.

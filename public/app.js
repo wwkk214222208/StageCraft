@@ -505,10 +505,21 @@ function blankPromptPreset() { return { id: `preset-${Date.now()}`, name: '新�
 async function openPromptPreset(id) { $('#prompt-preset-nodes').innerHTML = '<p class="hint">加载预设中…</p>'; editingPromptPreset = null; await loadPromptPresets(); editingPromptPreset = id === 'default' ? structuredClone(promptPresets.find(item => item.id === 'default') ?? DEFAULT_PROMPT_PRESET()) : structuredClone(promptPresets.find(item => item.id === id) ?? blankPromptPreset()); $('#prompt-preset-modal').showModal(); renderPromptPresetEditor(); await openPromptAssistantSession() }
 function collectPromptPreset() { const preset = editingPromptPreset; const supportedModes = new Set(promptModes.map(mode => mode.id)); const checkedModes = [...document.querySelectorAll('[data-prompt-mode]:checked')].map(input => input.dataset.promptMode); preset.modes = [...new Set([...(preset.modes ?? []).filter(mode => !supportedModes.has(mode)), ...checkedModes])]; if (!preset.modes.length) { alert('至少选择一个已安装模式。'); throw new Error('Preset must declare at least one mode.') } preset.name = $('#prompt-preset-name').value.trim() || '未命名预设'; preset.enabled = false; preset.compatibility = { ...(preset.compatibility ?? {}), source: 'sillytavern', regexEnabled: $('#prompt-regex-compatibility')?.checked === true }; const scenario = ensurePromptScenario(preset); scenario.forceThinkingOff = $('#prompt-scenario-thinking-off')?.checked === true && !promptGameplayScenarioForceThinkingOff; scenario.order = [...document.querySelectorAll('.prompt-node')].map(card => scenario.nodes[Number(card.dataset.nodeIndex)]?.runtimeBinding ?? scenario.nodes[Number(card.dataset.nodeIndex)]?.id); scenario.nodes = [...document.querySelectorAll('.prompt-node')].map(card => { const old = scenario.nodes[Number(card.dataset.nodeIndex)]; const role = card.dataset.nodeRole === 'system' ? 'system' : 'user'; return { ...old, type: old.removable === false ? old.type : role, name: old.type === 'system' ? old.name : card.querySelector('[data-node-field="name"]').value.trim() || '未命名节点', content: old.type === 'system' ? old.content : card.querySelector('[data-node-field="content"]').value, enabled: old.type === 'system' ? true : card.querySelector('[data-node-field="enabled"]').checked } }); scenario.regexRules = [...document.querySelectorAll('.prompt-regex')].map(card => { const old = scenario.regexRules[Number(card.dataset.regexIndex)]; return { ...old, name: card.querySelector('[data-regex-field="name"]').value.trim() || '未命名规则', pattern: card.querySelector('[data-regex-field="pattern"]').value, replacement: card.querySelector('[data-regex-field="replacement"]').value, enabled: card.querySelector('[data-regex-field="enabled"]').checked } }); preset.scenarios = { ...(preset.scenarios ?? {}), [promptPresetScope]: scenario }; return preset }
 async function refreshRoom() { const response = await fetch('/api/room'); render(await response.json()) }
-async function api(path, body) { const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!response.ok) { alert((await response.json()).error || '请求失败'); return false }; const data = await response.json(); await refreshRoom(); return data }
+function operationErrorMessage(operation, error) {
+  const detail = error instanceof Error ? error.message : typeof error === 'string' ? error : error?.message || JSON.stringify(error ?? {})
+  return `${operation}失败\n\n${detail || '未知错误'}${window.__STAGECRAFT_OFFLINE__ ? '\n\n运行环境：Android 本地运行时' : ''}`
+}
+function showOperationError(operation, error) { console.error(`[StageCraft] ${operation} failed`, error); alert(operationErrorMessage(operation, error)) }
+if (window.__STAGECRAFT_OFFLINE__) {
+  window.addEventListener('unhandledrejection', event => { event.preventDefault(); showOperationError('本地操作', event.reason) })
+  window.addEventListener('error', event => { if (event.error) showOperationError('页面脚本', event.error) })
+}
+async function api(path, body) { const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); const data = await response.json().catch(() => ({})); if (!response.ok || data?.ok === false) { const error = data?.error; alert(typeof error === 'string' ? error : error?.message || '请求失败'); return false }; await refreshRoom(); return data }
 async function loadStories() {
   const response = await fetch('/api/stories')
-  const stories = await response.json()
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : payload.error?.message || '读取剧本列表失败。')
+  const stories = Array.isArray(payload) ? payload : Array.isArray(payload.stories) ? payload.stories : []
   storyCatalog = stories
   const options = stories.map(story => `<option value="${escape(story.id)}">${escape(story.title)}${story.custom ? '' : '（默认）'}</option>`).join('')
   $('#story-select').innerHTML = options
@@ -939,10 +950,12 @@ $('#story-new').onclick = async event => {
     const response = await fetch('/api/stories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.error || '新建剧本失败。')
+    if (!data.id) throw new Error('新建接口未返回剧本 ID。')
     await loadStories()
+    if (!storyCatalog.some(item => item.id === data.id)) throw new Error('剧本已创建，但未能从本地数据目录重新读取。')
     await openStoryEditor(data.id)
   } catch (error) {
-    alert(`新建剧本失败：${error instanceof Error ? error.message : String(error)}`)
+    showOperationError('新建剧本', error)
   } finally {
     button.disabled = false
   }
@@ -965,7 +978,7 @@ async function refreshArchiveList() {
   }
 }
 async function loadArchive(name) { const ok = await api('/api/archive/load', { name }); if (ok) refreshArchiveList() }
-async function deleteArchive(name) { if (!confirm(`删除存档「${name}」？`)) return; const response = await fetch('/api/archive/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) }); if (!response.ok) { alert((await response.json()).error || '删除失败'); return } refreshArchiveList() }
+async function deleteArchive(name) { if (!confirm(`删除存档「${name}」？`)) return; const response = await fetch('/api/archive/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) }); const data = await response.json().catch(() => ({})); if (!response.ok || data?.ok === false) { const error = data?.error; alert(typeof error === 'string' ? error : error?.message || '删除失败'); return } await refreshArchiveList() }
 
 // ── 世界书条目编辑（任务 B）──
 function openLoreEditor(index) {
@@ -1215,9 +1228,11 @@ $('#creator-session-refresh').onclick = async () => {
 async function openStoryEditor(storyId) {
   storyId ??= $('#story-select').value
   if (!storyId) { alert('请先选择剧本。'); return }
-  const response = await fetch(`/api/story/get?id=${encodeURIComponent(storyId)}`)
-  if (!response.ok) { alert((await response.json()).error || '读取剧本失败。'); return }
-  const story = await response.json()
+  try {
+    const response = await fetch(`/api/story/get?id=${encodeURIComponent(storyId)}`)
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : payload.error?.message || '读取剧本失败。')
+    const story = payload
   updateStoryEditorFromPackage(story)
   $('#story-edit-id').textContent = storyId
   $('#story-select').value = [...$('#story-select').options].some(option => option.value === storyId) ? storyId : ''
@@ -1230,6 +1245,10 @@ async function openStoryEditor(storyId) {
   document.querySelectorAll('#creator-story-tree .tree-item').forEach(item => item.classList.toggle('active', item.dataset.workbenchTarget === 'story-package'))
   document.querySelectorAll('.creator-section').forEach(section => { section.hidden = false })
   if (!$('#story-edit-modal').open) $('#story-edit-modal').showModal()
+  } catch (error) {
+    showOperationError('读取剧本', error)
+    return false
+  }
 }
 $('#story-edit-select').onchange = () => { void openStoryEditor($('#story-edit-select').value) }
 function renderCreatorRoleSummary() {
@@ -1355,17 +1374,26 @@ function renderStoryLore() {
   })
 }
 $('#story-lore-add').onclick = () => { storyEditLore.push({ name: '新条目', content: '内容。' }); renderStoryLore() }
-$('#story-edit-save').onclick = event => {
+$('#story-edit-save').onclick = async event => {
   event.preventDefault()
   const storyId = $('#story-edit-id').textContent
   if (!storyCatalog.find(item => item.id === storyId)?.custom) { alert('默认剧本只读：修改请用「另存为」保存为新剧本。'); return }
-  const story = collectStoryEditorPackage(storyId)
-  fetch('/api/story/save', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ story }) }).then(async response => {
-    if (!response.ok) { alert((await response.json()).error || '保存失败。'); return }
-    $('#story-edit-modal').close()
+  const button = event.currentTarget
+  button.disabled = true
+  try {
+    const story = collectStoryEditorPackage(storyId)
+    const response = await fetch('/api/story/save', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ story }) })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || data?.ok === false) { const error = data?.error; throw new Error(typeof error === 'string' ? error : error?.message || '保存失败。') }
     const selected = $('#story-select').value
-    loadStories().then(() => { $('#story-select').value = selected })
-  })
+    await loadStories()
+    $('#story-select').value = selected
+    $('#creator-save-state').textContent = '已保存'
+  } catch (error) {
+    showOperationError('保存剧本', error)
+  } finally {
+    button.disabled = false
+  }
 }
 function collectStoryEditorPackage(storyId) {
   storyEditLore = [...document.querySelectorAll('#story-lore-list .story-lore-item')].map(item => {
@@ -1405,7 +1433,7 @@ $('#story-save-as').onclick = async event => {
     if (!response.ok) throw new Error(data.error || '另存为失败。')
     await loadStories()
     await openStoryEditor(data.id)
-  } catch (error) { alert(`另存为失败：${error instanceof Error ? error.message : String(error)}`) } finally { button.disabled = false }
+  } catch (error) { showOperationError('另存为剧本', error) } finally { button.disabled = false }
 }
 $('#story-delete').onclick = async event => {
   event.preventDefault()

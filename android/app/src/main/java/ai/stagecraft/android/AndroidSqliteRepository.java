@@ -54,7 +54,7 @@ public final class AndroidSqliteRepository extends SQLiteOpenHelper {
     }
     public synchronized JSONObject getRecord(String collection, String id) throws Exception { try (Cursor cursor = getReadableDatabase().query("records", new String[]{"value"}, "collection=? AND id=?", new String[]{collection, id}, null, null, null)) { return cursor.moveToFirst() ? new JSONObject(cursor.getString(0)) : null; } }
     public synchronized List<JSONObject> listRecords(String collection) throws Exception { List<JSONObject> values = new ArrayList<>(); try (Cursor cursor = getReadableDatabase().query("records", new String[]{"value"}, "collection=?", new String[]{collection}, null, null, "id ASC")) { while (cursor.moveToNext()) values.add(new JSONObject(cursor.getString(0))); } return values; }
-    public synchronized void deleteRecord(String collection, String id) { getWritableDatabase().delete("records", "collection=? AND id=?", new String[]{collection, id}); }
+    public synchronized boolean deleteRecord(String collection, String id) { return getWritableDatabase().delete("records", "collection=? AND id=?", new String[]{collection, id}) > 0; }
     public interface RoomMutation { Object apply(JSONObject room) throws Exception; }
     public synchronized void saveRoom(JSONObject room) {
         if (room == null || room.optString("id", "").isEmpty()) throw new IllegalArgumentException("Invalid room snapshot.");

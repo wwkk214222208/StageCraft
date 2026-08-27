@@ -7,12 +7,14 @@ import android.os.Bundle;
 import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.WebChromeClient;
 
 public final class MainActivity extends Activity {
     private static final int PICK_CHARACTER_CARD = 7001;
     private WebView webView;
     private NativeBridge bridge;
     private OfflineLoopbackServer offlineServer;
+    private WebChromeClient webChromeClient;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -37,6 +39,9 @@ public final class MainActivity extends Activity {
         EmbeddedCoreArtifact.Verification embeddedCore = EmbeddedCoreArtifact.verify(this);
         bridge = new NativeBridge(this, webView, new RemoteSessionStore(this), embeddedCore);
         webView.addJavascriptInterface(bridge, "StageCraftNative");
+        // Enable browser dialogs used by the Web UI (prompt/confirm/alert).
+        webChromeClient = new WebChromeClient();
+        webView.setWebChromeClient(webChromeClient);
         // 离线完整 Web UI 走 127.0.0.1 环回服务器（http://localhost 常规 Web 语义，见 OfflineLoopbackServer）
         OfflineLoopbackServer loopback = null;
         try {
@@ -48,8 +53,21 @@ public final class MainActivity extends Activity {
         final OfflineLoopbackServer server = loopback;
         webView.setWebViewClient(new StageCraftWebViewClient(this, () -> bridge.currentCredential(), server == null ? null : path -> server.urlFor(path)));
         setContentView(webView);
-        // 默认进入远程配对页（?mode=remote）；本地嵌入模式经配对页按钮进入 ?mode=local（离线 Web UI）。
-        webView.loadUrl(StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html?mode=remote");
+        // APK defaults to the packaged full Web UI. Remote pairing remains available
+        // through the existing native bridge and can be exposed by a redesigned UI later.
+        showLocalUi();
+    }
+
+    /** Package-visible test hook; does not expose the WebView outside the app package. */
+    WebView testingWebView() { return webView; }
+    WebChromeClient testingWebChromeClient() { return webChromeClient; }
+
+    /** Open the packaged full Web UI directly, without passing through the pairing renderer. */
+    void showLocalUi() {
+        String localUrl = offlineServer == null
+            ? StageCraftWebViewClient.LOCAL_ORIGIN + "/web/offline.html"
+            : offlineServer.urlFor("/web/offline.html");
+        webView.loadUrl(localUrl);
     }
 
     /** 配对成功 / 会话恢复后：切换到 PC 完整 Web UI（令牌由 StageCraftWebViewClient 注入）。 */
