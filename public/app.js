@@ -721,8 +721,9 @@ $('#sync-remote-push').onclick = async () => {
 if (window.__STAGECRAFT_OFFLINE__ && window.StageCraftNative && typeof window.StageCraftNative.syncStatus === 'function') {
   const row = $('#sync-remote-row')
   if (row) row.hidden = false
-  // 本地模式下隐藏桌面操作员专属入口（手机生成配对码/清除已配对无意义，且本地运行时没有这些服务端路由）
-  for (const id of ['remote-pairing-code', 'remote-pairing-revoke']) { const el = $(id); if (el) el.hidden = true }
+  // 本地模式下整栏隐藏桌面操作员专属「手机远程配对」（手机上生成配对码/清除配对无意义，本地运行时也没有对应服务端路由）
+  const pairing = $('#remote-pairing-section')
+  if (pairing) pairing.hidden = true
   $('#app-settings').addEventListener('click', refreshSyncRemoteStatus)
   void refreshSyncRemoteStatus()
 }
