@@ -90,16 +90,12 @@ public final class StageCraftWebViewClient extends WebViewClient {
         }
     }
 
-    /** 本地 asset 路径映射：配对页/配色/渲染器/核心在根目录，Web UI 在 web/（public 打包），
+    /** 本地 asset 路径映射：配对页/核心文件在根目录；Web UI（public 打包）在 web/，
+     *  其中的资源公约为根路径引用（/app.js、/style.css、/core-client.js 等），映射到 web/；
      *  头像资源 /assets/** 取自打包的 public/assets，剧本自包含资源 /story-assets/<id>/<file>
      *  取自 stories/{default,custom}/<id>.assets/。拒绝路径穿越。 */
     private static String localAssetPath(String path) {
         if (path.contains("..")) return null;
-        if ("/index.html".equals(path) || "/styles.css".equals(path) || "/renderer.js".equals(path)
-            || "/embedded-core.js".equals(path) || "/embedded-core.json".equals(path)) return path.substring(1);
-        if (path.startsWith("/web/")) return path.substring(1);
-        if (path.startsWith("/assets/")) return "web" + path;
-        if (path.startsWith("/custom/")) return "web" + path;
         if (path.startsWith("/story-assets/")) {
             String remaining = path.substring("/story-assets/".length());
             int slash = remaining.indexOf('/');
@@ -108,7 +104,10 @@ public final class StageCraftWebViewClient extends WebViewClient {
             String file = remaining.substring(slash + 1);
             return id + ".assets/" + file; // resolved against stories/{default,custom}/
         }
-        return null;
+        if (path.startsWith("/assets/") || path.startsWith("/custom/")) return "web" + path;
+        if (path.startsWith("/web/")) return path.substring(1);
+        // 根级引用：优先根资产（配对页 index.html/styles.css + 核心），否则回退 web/（Web UI 资源）。
+        return path.substring(1);
     }
 
     private static String mimeFor(String path) {
@@ -128,13 +127,15 @@ public final class StageCraftWebViewClient extends WebViewClient {
     }
 
     private InputStream openLocalAsset(String assetPath) throws IOException {
-        if (assetPath.endsWith(".assets/")) return null;
         if (assetPath.contains(".assets/")) {
             // /story-assets/<id>/<file>：先查 default，再查 custom
             try { return context.getAssets().open("stories/default/" + assetPath); }
             catch (IOException ignored) { return context.getAssets().open("stories/custom/" + assetPath); }
         }
-        return context.getAssets().open(assetPath);
+        if (assetPath.startsWith("web/")) return context.getAssets().open(assetPath);
+        // 根级引用：先试根资产（配对页/核心），再回退 web/（Web UI 根引用资源，如 /app.js）
+        try { return context.getAssets().open(assetPath); }
+        catch (IOException ignored) { return context.getAssets().open("web/" + assetPath); }
     }
 
     private WebResourceResponse fetchWithToken(Uri url, String credential, boolean mainFrame) {

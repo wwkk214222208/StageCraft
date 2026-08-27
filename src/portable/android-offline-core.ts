@@ -124,7 +124,18 @@ export function installOfflineCore(global: Record<string, unknown> = globalThis 
   const modelRequest = (request: ModelRequest, hooks?: { onThinking?: (text: string) => void }): Promise<ModelResult> => {
     const config = readProvider()
     if (!config) return Promise.reject(new Error('未配置模型供应商：点击「连接」→ 管理供应商，新建供应商并填写接口地址、API Key 与模型名。'))
-    return invokeAsync('model.request', { requestId: request.requestId, endpoint: endpointFor(config.baseUrl), apiKey: config.apiKey, ...toOpenAiBody(request, config) }, hooks) as Promise<ModelResult>
+    return invokeAsync('model.request', { requestId: request.requestId, endpoint: endpointFor(config.baseUrl), apiKey: config.apiKey, ...toOpenAiBody(request, config) }, hooks).then(normalizeModelResult) as Promise<ModelResult>
+  }
+
+  /** Java 原生传输把模型正文以字符串返回；按契约解析为对象（json_object 响应）。 */
+  const normalizeModelResult = (value: unknown): ModelResult => {
+    const result = (value ?? {}) as ModelResult
+    if (typeof result.output === 'string') {
+      const text = result.output
+      try { result.output = JSON.parse(text) } catch { throw new Error('模型返回不是有效的 JSON，请改用支持 json_object 的模型或检查接口地址/模型名。') }
+      if (result.output === null || typeof result.output !== 'object') throw new Error(`模型返回内容不是 JSON 对象：${text.slice(0, 80)}`)
+    }
+    return result
   }
 
   const operations = {

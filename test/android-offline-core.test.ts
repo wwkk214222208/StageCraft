@@ -36,7 +36,8 @@ function fakeNative(room: any) {
         if (thinking) {
           globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, thinkingDelta: thinking.slice(0, 1) }))
         }
-        globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, output: output.startsWith('{') ? JSON.parse(output) : output, thinking, usage: { promptTokens: 10, completionTokens: 5 } }))
+        // 与 Java 原生传输一致：output 以 JSON 字符串返回，由离线核心归一化解析
+        globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, output, thinking, usage: { promptTokens: 10, completionTokens: 5 } }))
         return
       }
       globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ error: { message: `unsupported async op: ${operation}` } }))
