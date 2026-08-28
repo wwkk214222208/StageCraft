@@ -637,9 +637,11 @@ window.StageCraftUpdateProgress = result => {
 async function runUpdateFlow(data) {
   const status = $('#update-status')
   if (window.__STAGECRAFT_LOCAL__) {
-    status.textContent = '正在下载并安装…'
     try {
-      window.StageCraftNative && window.StageCraftNative.updateDownloadAndInstall && window.StageCraftNative.updateDownloadAndInstall(data.apkUrl || '')
+      if (!data.apkUrl) throw new Error('该版本没有可用的 Android 安装包。')
+      if (!window.StageCraftNative || typeof window.StageCraftNative.updateDownloadAndInstall !== 'function') throw new Error('当前 APK 不支持应用内更新。')
+      status.textContent = '正在下载并安装…'
+      window.StageCraftNative.updateDownloadAndInstall(data.apkUrl)
     } catch (error) { status.textContent = `更新失败：${error instanceof Error ? error.message : String(error)}` }
   } else {
     status.textContent = '正在下载并准备更新…'

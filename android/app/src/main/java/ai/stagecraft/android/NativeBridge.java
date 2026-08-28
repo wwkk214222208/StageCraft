@@ -38,6 +38,7 @@ public final class NativeBridge implements AutoCloseable {
     private volatile boolean ready;
     private volatile boolean closed;
     private volatile boolean userDisconnected;
+    private volatile boolean installReceiverRegistered;
     private volatile String activeCredential;
     private final EmbeddedCoreArtifact.Verification embeddedCore;
     private final AndroidCompositionOperations compositionOperations;
@@ -361,6 +362,15 @@ public final class NativeBridge implements AutoCloseable {
     /** APK 自更新：下载最新 release APK（带进度回调）并经 PackageInstaller 触发系统安装（无需 FileProvider）。 */
     @JavascriptInterface public void updateDownloadAndInstall(String apkUrl) {
         if (closed || apkUrl == null || apkUrl.isEmpty() || apkUrl.length() > 2048) return;
+        // Android 8+ 需要「允许安装未知应用」授权；提前到下载前检查，避免白下载
+        if (android.os.Build.VERSION.SDK_INT >= 26 && !activity.getPackageManager().canRequestPackageInstalls()) {
+            deliverUpdateProgress(100, "请授权「安装未知应用」后重新点击更新。");
+            try {
+                Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + activity.getPackageName()));
+                activity.startActivity(settings);
+            } catch (Exception ignored) { /* 无法打开设置页则仅提示 */ }
+            return;
+        }
         networkExecutor.execute(() -> {
             HttpURLConnection connection = null;
             try {
@@ -434,16 +444,25 @@ public final class NativeBridge implements AutoCloseable {
                 try (OutputStream output = session.openWrite("stagecraft-update.apk", 0, bytes.length)) { output.write(bytes); }
                 // 覆盖安装完成后：旧进程/旧 AssetManager 仍存活（version.json 会从旧资源读出旧值），
                 // 因此收到 STATUS_SUCCESS 后强制结束当前进程，用户重新打开即新版本（新资源实例）。
-                try { activity.unregisterReceiver(installResultReceiver); } catch (Exception ignored) { /* 未注册 */ }
-                activity.registerReceiver(installResultReceiver, new IntentFilter(INSTALL_RESULT_ACTION));
+                unregisterInstallResultReceiver();
+                IntentFilter filter = new IntentFilter(INSTALL_RESULT_ACTION);
+                if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    activity.registerReceiver(installResultReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    activity.registerReceiver(installResultReceiver, filter);
+                }
+                installReceiverRegistered = true;
                 Intent intent = new Intent(INSTALL_RESULT_ACTION).setPackage(activity.getPackageName());
-                PendingIntent pending = PendingIntent.getBroadcast(activity, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                // PackageInstaller writes the result status and confirmation Intent into this PendingIntent.
+                // FLAG_IMMUTABLE prevents that on current Android versions and the install UI never opens.
+                PendingIntent pending = PendingIntent.getBroadcast(activity, sessionId, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
                 session.commit(pending.getIntentSender());
-                deliverUpdateProgress(100, "已启动安装，请在系统安装界面确认。");
+                deliverUpdateProgress(100, "安装包已提交，正在打开系统安装界面…");
             } finally {
                 session.close();
             }
         } catch (Exception error) {
+            unregisterInstallResultReceiver();
             deliverUpdateProgress(-1, "安装启动失败：" + (error.getMessage() == null ? String.valueOf(error) : error.getMessage()));
         }
     }
@@ -452,7 +471,28 @@ public final class NativeBridge implements AutoCloseable {
         @Override public void onReceive(Context context, Intent intent) {
             if (!INSTALL_RESULT_ACTION.equals(intent.getAction())) return;
             int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
-            if (status == PackageInstaller.STATUS_SUCCESS) {
+            if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                Intent confirmation;
+                if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    confirmation = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class);
+                } else {
+                    confirmation = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+                }
+                if (confirmation == null) {
+                    unregisterInstallResultReceiver();
+                    deliverUpdateProgress(-1, "系统未返回安装确认界面，请重新尝试更新。");
+                    return;
+                }
+                confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                try {
+                    context.startActivity(confirmation);
+                    deliverUpdateProgress(100, "请在系统安装界面确认更新。");
+                } catch (Exception error) {
+                    unregisterInstallResultReceiver();
+                    deliverUpdateProgress(-1, "无法打开系统安装界面：" + (error.getMessage() == null ? String.valueOf(error) : error.getMessage()));
+                }
+            } else if (status == PackageInstaller.STATUS_SUCCESS) {
+                unregisterInstallResultReceiver();
                 deliverUpdateProgress(100, "更新完成，正在重启应用…");
                 // 自动重新打开应用（新进程/新 AssetManager）：AlarmManager 跨进程调度，避免与杀进程竞争
                 try {
@@ -469,10 +509,21 @@ public final class NativeBridge implements AutoCloseable {
                     System.exit(0);
                 } catch (Exception ignored) { /* 尽力结束 */ }
             } else {
-                deliverUpdateProgress(-1, "安装未完成（可能被取消或失败），可重新尝试。");
+                unregisterInstallResultReceiver();
+                String detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+                deliverUpdateProgress(-1, detail == null || detail.isEmpty()
+                    ? "安装未完成（可能被取消或失败），可重新尝试。"
+                    : "安装未完成：" + detail);
             }
         }
     };
+
+    private void unregisterInstallResultReceiver() {
+        if (!installReceiverRegistered) return;
+        try { activity.unregisterReceiver(installResultReceiver); }
+        catch (Exception ignored) { /* 已由系统移除 */ }
+        installReceiverRegistered = false;
+    }
     void importCharacterCard(Uri uri) {
         if (closed || uri == null) return;
         long fileOperation = fileGeneration.incrementAndGet();
@@ -690,6 +741,7 @@ public final class NativeBridge implements AutoCloseable {
         cancelPairRequest();
         connectionGeneration.incrementAndGet();
         closeConnection();
+        unregisterInstallResultReceiver();
         compositionOperations.close();
         networkExecutor.shutdownNow();
     }
