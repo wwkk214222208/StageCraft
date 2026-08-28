@@ -651,9 +651,10 @@ $('#check-update').onclick = async () => {  const status = $('#update-status')
       try {
         const result = await (await fetch('/api/update/download', { method: 'POST' })).json()
         if (!result.ok) throw new Error(result.error || '下载失败。')
-        status.textContent = '下载完成，正在应用更新…'
-        await new Promise(resolve => setTimeout(resolve, 500))
-        window.location.reload()
+        status.textContent = '下载完成，正在自动重启并打开新版本…'
+        // 关闭当前页面，由更新脚本解压后自动打开新版本页面（形成自动关闭/自动打开）
+        await new Promise(resolve => setTimeout(resolve, 800))
+        try { window.close() } catch { /* 非脚本打开的标签页无法关闭，忽略 */ }
       } catch (error) { status.textContent = `更新失败：${error instanceof Error ? error.message : String(error)}` }
     }
   } catch (error) { status.textContent = error instanceof Error ? error.message : '检查更新失败。' }

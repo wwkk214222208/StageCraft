@@ -429,6 +429,8 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
             `powershell -NoProfile -Command "Expand-Archive -Path '${target}' -DestinationPath '${versionDir}' -Force" >nul 2>nul`,
             `cd /d "${versionDir}"`,
             'start "" node --experimental-strip-types src/server.ts',
+            'timeout /t 3 /nobreak >nul',
+            'start "" http://127.0.0.1:8787',
             'exit',
           ].join('\r\n')
           writeFileSync(batPath, bat, 'utf8')

@@ -33,11 +33,14 @@ export function getVersionInfo(): VersionInfo {
   return { version: tag.replace(/^v/, '') || 'dev', commit, tag, buildTime: new Date().toISOString() }
 }
 
-/** 当前提交是否落后于指定 tag 指向的提交（用于更新判断）。 */
-export function isCommitBehind(compareTag: string, cwd = repoRoot): boolean | undefined {
+/** 当前提交是否严格落后于指定提交（用于更新判断；相等视为已最新）。 */
+export function isCommitBehind(compareRef: string, cwd = repoRoot): boolean | undefined {
   try {
-    // git merge-base --is-ancestor <tag> HEAD：tag 是 HEAD 的祖先 → HEAD 落后 → true
-    execFileSync('git', ['merge-base', '--is-ancestor', compareTag, 'HEAD'], { cwd, stdio: 'ignore' })
+    const compareSha = execFileSync('git', ['rev-parse', `${compareRef}^{commit}`], { cwd, encoding: 'utf8' }).trim()
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim()
+    if (!compareSha || compareSha === headSha) return false
+    // git merge-base --is-ancestor <ref> HEAD：ref 是 HEAD 的祖先（且不等）→ HEAD 落后 → true
+    execFileSync('git', ['merge-base', '--is-ancestor', compareSha, 'HEAD'], { cwd, stdio: 'ignore' })
     return true
   } catch (error) {
     const code = (error as { status?: number }).status
