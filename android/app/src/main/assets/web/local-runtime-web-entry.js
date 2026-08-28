@@ -150,6 +150,18 @@
       defaults: meta.defaults ?? {},
     }
   }
+  /** 按 defaults 选当前激活供应商（角色默认优先，其次导演默认，最后第一个），写入模型传输快照。 */
+  function refreshActiveProvider(meta) {
+    const providers = Array.isArray(meta.providers) ? meta.providers : []
+    const defaults = meta.defaults ?? {}
+    const preferred = (defaults.role && providers.find(item => item.id === defaults.role.providerId))
+      || (defaults.director && providers.find(item => item.id === defaults.director.providerId))
+      || providers[0]
+    if (preferred) {
+      const { baseUrl, apiKey, model, responseFormat } = preferred
+      core.setProvider({ baseUrl, apiKey, model, responseFormat: preferred.responseFormat })
+    }
+  }
   function nativeInvokeSync(operation, input) {
     const raw = window.StageCraftNative.invokeSync(operation, JSON.stringify(input ?? {}))
     const result = JSON.parse(String(raw ?? 'null'))
@@ -312,42 +324,59 @@
       '/api/roles/memories/supersede': (body) => management('supersede-memory', { memoryId: String(body.memoryId ?? ''), entry: body.entry ?? {} }).then(() => respondJson(200, { ok: true })).catch(error => respondJson(200, { ok: false, error: `本地暂不支持：${error.message}` })),
       '/api/providers/save': (body) => {
         const meta = providerMeta()
+        const id = String(body.id ?? '').trim() || `provider-${Date.now().toString(36)}`
         const baseUrl = String(body.baseUrl ?? '').replace(/\/$/, '')
         const apiKey = String(body.apiKey ?? '')
-        const existing = meta.providers.find(provider => provider.id === 'local-default')
+        const existing = meta.providers.find(provider => provider.id === id)
         const models = Array.isArray(body.models) ? body.models.map(String) : typeof body.models === 'string' && body.models.trim() ? body.models.split(/[,，]/).map(item => item.trim()).filter(Boolean) : (existing?.models ?? [])
         const selectedModel = String(body.selectedModel ?? '') || models[0] || existing?.selectedModel || ''
         if (!baseUrl || !apiKey || !selectedModel) return respondJson(400, { error: '本地模式需要接口地址、API Key 与至少一个模型名。' })
-        const provider = { id: 'local-default', name: String(body.name ?? '本地供应商'), baseUrl, apiKey, models, selectedModel, responseFormat: body.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: body.toolCalling !== false }
-        meta.providers = [provider]
-        saveProviderMeta(meta)
-        core.setProvider({ baseUrl, apiKey, model: selectedModel, responseFormat: provider.responseFormat })
+        const provider = { id, name: String(body.name ?? id), baseUrl, apiKey, models, selectedModel, responseFormat: body.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: body.toolCalling !== false }
+        const providers = meta.providers.filter(item => item.id !== id)
+        providers.push(provider)
+        // 首次保存的供应商自动成为角色默认
+        meta.defaults = meta.defaults ?? {}
+        if (!meta.defaults.role) meta.defaults.role = { providerId: id, model: selectedModel }
+        saveProviderMeta({ providers, defaults: meta.defaults })
+        refreshActiveProvider({ providers, defaults: meta.defaults })
         return respondJson(200, { providers: providerMetaView().providers, defaults: meta.defaults, active: { route: '本地', model: selectedModel } })
       },
-      '/api/providers/delete': () => {
-        saveProviderMeta({ providers: [], defaults: {} })
-        window.StageCraftNative.invokeSync('secret.remove', JSON.stringify({ key: 'local.provider.default' }))
-        return respondJson(200, { providers: [], defaults: {}, active: { route: '模拟', model: '模拟' } })
+      '/api/providers/delete': (body) => {
+        const id = String(body.id ?? '').trim()
+        const meta = providerMeta()
+        const providers = meta.providers.filter(provider => provider.id !== id)
+        const defaults = meta.defaults ?? {}
+        for (const key of ['role', 'director']) {
+          const entry = defaults[key]
+          if (entry && entry.providerId === id) {
+            const next = providers[0]
+            if (next) defaults[key] = { providerId: next.id, model: next.selectedModel }
+            else delete defaults[key]
+          }
+        }
+        saveProviderMeta({ providers, defaults })
+        refreshActiveProvider({ providers, defaults })
+        return respondJson(200, { providers: providerMetaView().providers, defaults, active: { route: providers.length ? '本地' : '模拟', model: providers[0]?.selectedModel ?? '模拟' } })
       },
       '/api/providers/default-role': (body) => {
         const meta = providerMeta()
-        const provider = meta.providers.find(item => item.id === 'local-default')
+        const provider = meta.providers.find(item => item.id === String(body.id ?? ''))
         if (provider) {
           if (body.model) provider.selectedModel = String(body.model)
-          meta.defaults = { ...(meta.defaults ?? {}), role: { providerId: 'local-default', model: String(body.model ?? provider.selectedModel) } }
+          meta.defaults = { ...(meta.defaults ?? {}), role: { providerId: provider.id, model: String(body.model ?? provider.selectedModel) } }
           saveProviderMeta(meta)
-          core.setProvider({ baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: String(body.model ?? provider.selectedModel), responseFormat: provider.responseFormat })
+          refreshActiveProvider(meta)
         }
         return respondJson(200, { providers: providerMetaView().providers, defaults: meta.defaults })
       },
       '/api/providers/director': (body) => {
         const meta = providerMeta()
-        const provider = meta.providers.find(item => item.id === 'local-default')
+        const provider = meta.providers.find(item => item.id === String(body.id ?? ''))
         if (provider) {
           if (body.model) provider.selectedModel = String(body.model)
-          meta.defaults = { ...(meta.defaults ?? {}), director: { providerId: 'local-default', model: String(body.model ?? provider.selectedModel) } }
+          meta.defaults = { ...(meta.defaults ?? {}), director: { providerId: provider.id, model: String(body.model ?? provider.selectedModel) } }
           saveProviderMeta(meta)
-          core.setProvider({ baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: String(body.model ?? provider.selectedModel), responseFormat: provider.responseFormat })
+          refreshActiveProvider(meta)
         }
         return respondJson(200, { providers: providerMetaView().providers, defaults: meta.defaults })
       },
@@ -544,14 +573,18 @@
       const result = { room: false, providers: false, saves: 0, stories: 0, presets: 0 }
       const providerList = payload.providers && Array.isArray(payload.providers.providers) ? payload.providers.providers : []
       if (providerList.length) {
-        const preferred = providerList.find(item => item && item.selectedModel) || providerList[0]
-        const baseUrl = String(preferred?.baseUrl ?? '').replace(/\/$/, '')
-        const models = Array.isArray(preferred?.models) ? preferred.models.map(String) : []
-        const selectedModel = String(preferred?.selectedModel ?? models[0] ?? '')
-        if (baseUrl && String(preferred?.apiKey ?? '') && selectedModel) {
-          const provider = { id: 'local-default', name: String(preferred?.name ?? '同步供应商'), baseUrl, apiKey: String(preferred.apiKey ?? ''), models, selectedModel, responseFormat: preferred?.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: preferred?.toolCalling !== false }
-          saveProviderMeta({ providers: [provider], defaults: {} })
-          core.setProvider({ baseUrl, apiKey: String(preferred.apiKey ?? ''), model: selectedModel, responseFormat: provider.responseFormat })
+        // 全表同步：保留每个供应商（含 id），并同步 defaults（激活关系）
+        const providers = providerList
+          .filter(item => item && typeof item === 'object' && String(item.id ?? '').trim() && String(item.baseUrl ?? '').trim() && String(item.apiKey ?? '') && String(item.selectedModel ?? (Array.isArray(item.models) ? item.models[0] : '') ?? ''))
+          .map(item => {
+            const models = Array.isArray(item.models) ? item.models.map(String) : []
+            const selectedModel = String(item.selectedModel ?? models[0] ?? '')
+            return { id: String(item.id), name: String(item.name ?? item.id), baseUrl: String(item.baseUrl).replace(/\/$/, ''), apiKey: String(item.apiKey), models, selectedModel, responseFormat: item.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: item.toolCalling !== false }
+          })
+        if (providers.length) {
+          const defaults = payload.providers.defaults && typeof payload.providers.defaults === 'object' ? payload.providers.defaults : {}
+          saveProviderMeta({ providers, defaults })
+          refreshActiveProvider({ providers, defaults })
           result.providers = true
         }
       }

@@ -5,7 +5,8 @@ import { installLocalCore, ANDROID_CORE_BUNDLE_VERSION, PROVIDER_SECRET_KEY } fr
 /** 带异步桥的假原生：同步操作 + 模型/源异步回调。 */
 function fakeNative(room: any) {
   const secrets = new Map<string, string>()
-  const transport = {
+  const transport: any = {
+    requests: [],
     invokeSync(operation: string, inputJson: string): string {
       const input = JSON.parse(inputJson)
       if (operation === 'core-state.restore') return JSON.stringify({ revision: 0, state: {}, events: [], workflows: [] })
@@ -26,6 +27,7 @@ function fakeNative(room: any) {
         return
       }
       if (operation === 'model.request') {
+        transport.requests.push({ requestId: input.requestId, endpoint: input.endpoint, apiKey: input.apiKey })
         const thinking = input.requestId.startsWith('local:role-decision')
           ? '先掂量局势…'
           : ''
@@ -46,6 +48,37 @@ function fakeNative(room: any) {
   }
   return { transport, secrets }
 }
+
+test('local core routes model requests by provider table and defaults', async () => {
+  const room = makeRoom([{ id: 'aria', name: 'Aria', portraitRef: '/assets/default.svg', currentState: 'At the festival.', presence: 'present', selfModel: 'Reserved.' }])
+  const { transport, secrets } = fakeNative(room)
+  // 预置多供应商表：A 为角色默认，B 为导演默认
+  const meta = {
+    providers: [
+      { id: 'A', name: 'Role Provider', baseUrl: 'https://role.example.com/v1', apiKey: 'role-key', models: ['role-model'], selectedModel: 'role-model', responseFormat: 'json_object' },
+      { id: 'B', name: 'Director Provider', baseUrl: 'https://director.example.com/v1', apiKey: 'director-key', models: ['director-model'], selectedModel: 'director-model', responseFormat: 'json_object' },
+    ],
+    defaults: { role: { providerId: 'A', model: 'role-model' }, director: { providerId: 'B', model: 'director-model' } },
+  }
+  secrets.set('local.provider.meta', JSON.stringify(meta))
+  const globalObject: Record<string, unknown> = { StageCraftNative: transport }
+  installLocalCore(globalObject)
+  const local = globalObject.StageCraftLocalCore as any
+  const messages: any[] = []
+  local.start((message: string) => messages.push(JSON.parse(message)))
+  await local.submitTurn({ text: '玩家向 Aria 搭话。' })
+  // 角色决策按 defaults.role（A）路由；导演用途（director.draft/consult 等）由同一代码路径走 defaults.director
+  const roleRequest = transport.requests.find((request: any) => request.requestId.includes('role-decision'))
+  assert.ok(roleRequest, 'must issue a role-decision model request')
+  assert.equal(roleRequest.endpoint, 'https://role.example.com/v1/chat/completions')
+  assert.equal(roleRequest.apiKey, 'role-key')
+  // 表读取：无请求上下文时 getProvider 按 defaults.role 解析到 A
+  const provider = local.getProvider()
+  assert.equal(provider.configured, true)
+  assert.equal(provider.baseUrl, 'https://role.example.com/v1')
+  assert.equal(provider.model, 'role-model')
+  local.dispose()
+})
 
 test('local Core installs with async bridge and exposes the rich API facade', async () => {
   const room = makeRoom()

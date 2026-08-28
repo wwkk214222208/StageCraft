@@ -98,25 +98,51 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   globalThis.StageCraftNativeResult = resultHandler
 
   // ── 供应商配置（凭据只存 Java Keystore 加密的 secret，不落在页面存储）──
-  const readProvider = (): LocalProviderConfig | undefined => {
-    let raw = invokeSync('secret.get', { key: PROVIDER_SECRET_KEY }) as { found?: boolean; value?: string } | undefined
-    if (!raw?.found) {
-      // 兼容旧命名 offline.provider.default：读到后迁移到新 key
-      const legacy = invokeSync('secret.get', { key: 'offline.provider.default' }) as { found?: boolean; value?: string } | undefined
-      if (legacy?.found && typeof legacy.value === 'string') {
-        raw = legacy
-        invokeSync('secret.set', { key: PROVIDER_SECRET_KEY, value: legacy.value })
-        invokeSync('secret.remove', { key: 'offline.provider.default' })
+  /** 供应商表读取：{providers, defaults}（多供应商）。 */
+  const readProviderMeta = (): { providers: Array<Record<string, unknown>>; defaults: Record<string, unknown> } => {
+    const raw = invokeSync('secret.get', { key: 'local.provider.meta' }) as { found?: boolean; value?: string } | undefined
+    if (raw?.found && typeof raw.value === 'string') {
+      try {
+        const meta = JSON.parse(raw.value) as { providers?: unknown; defaults?: unknown }
+        if (meta && typeof meta === 'object') {
+          return { providers: Array.isArray(meta.providers) ? meta.providers : [], defaults: meta.defaults && typeof meta.defaults === 'object' ? meta.defaults as Record<string, unknown> : {} }
+        }
+      } catch { /* 损坏按空表处理 */ }
+    }
+    return { providers: [], defaults: {} }
+  }
+  /** 模型供应商解析：优先按请求的 providerId 查表，其次按用途对应的 defaults 激活，再回退第一个/旧快照。 */
+  const readProvider = (request?: ModelRequest): LocalProviderConfig | undefined => {
+    const meta = readProviderMeta()
+    let selected: Record<string, unknown> | undefined
+    const route = request?.route as { providerId?: unknown; purpose?: unknown } | undefined
+    const providerId = typeof route?.providerId === 'string' && route.providerId ? route.providerId : undefined
+    if (providerId) selected = meta.providers.find(item => String(item.id ?? '') === providerId)
+    if (!selected) {
+      const defaults = meta.defaults
+      const purpose = typeof route?.purpose === 'string' ? route.purpose : ''
+      const defaultKey = purpose.startsWith('chat.') || purpose === 'director.draft' || purpose === 'director.consult' || purpose === 'director.memory-digest' ? 'director' : 'role'
+      const entry = defaults[defaultKey] as { providerId?: unknown; model?: unknown } | undefined
+      if (entry && typeof entry.providerId === 'string') selected = meta.providers.find(item => String(item.id ?? '') === entry.providerId)
+    }
+    if (!selected) selected = meta.providers[0]
+    if (selected && typeof selected.baseUrl === 'string' && typeof selected.apiKey === 'string') {
+      const model = typeof selected.selectedModel === 'string' ? selected.selectedModel : typeof selected.model === 'string' ? selected.model : ''
+      if (selected.baseUrl.trim() && selected.apiKey.trim() && model.trim()) {
+        return { baseUrl: (selected.baseUrl as string).trim(), apiKey: (selected.apiKey as string).trim(), model: model.trim(), responseFormat: selected.responseFormat === 'none' ? 'none' : 'json_object' }
       }
     }
-    if (!raw?.found || typeof raw.value !== 'string' || !raw.value) return undefined
-    try {
-      const parsed = JSON.parse(raw.value) as Partial<LocalProviderConfig>
-      if (parsed && typeof parsed.baseUrl === 'string' && typeof parsed.apiKey === 'string' && typeof parsed.model === 'string'
-        && parsed.baseUrl.trim() && parsed.apiKey.trim() && parsed.model.trim()) {
-        return { baseUrl: parsed.baseUrl.trim(), apiKey: parsed.apiKey.trim(), model: parsed.model.trim(), responseFormat: parsed.responseFormat === 'none' ? 'none' : 'json_object' }
-      }
-    } catch { /* 非法配置按未配置处理 */ }
+    // 旧命名快照回退（offline.provider.default → local.provider.default），迁移到表
+    const raw = invokeSync('secret.get', { key: PROVIDER_SECRET_KEY }) as { found?: boolean; value?: string } | undefined
+    if (raw?.found && typeof raw.value === 'string') {
+      try {
+        const parsed = JSON.parse(raw.value) as Partial<LocalProviderConfig>
+        if (parsed && typeof parsed.baseUrl === 'string' && typeof parsed.apiKey === 'string' && typeof parsed.model === 'string'
+          && parsed.baseUrl.trim() && parsed.apiKey.trim() && parsed.model.trim()) {
+          return { baseUrl: parsed.baseUrl.trim(), apiKey: parsed.apiKey.trim(), model: parsed.model.trim(), responseFormat: parsed.responseFormat === 'none' ? 'none' : 'json_object' }
+        }
+      } catch { /* 非法配置按未配置处理 */ }
+    }
     return undefined
   }
   const writeProvider = (config: LocalProviderConfig): void => {
@@ -143,7 +169,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   }
 
   const modelRequest = (request: ModelRequest, hooks?: { onThinking?: (text: string) => void }): Promise<ModelResult> => {
-    const config = readProvider()
+    const config = readProvider(request)
     if (!config) return Promise.reject(new Error('未配置模型供应商：点击「连接」→ 管理供应商，新建供应商并填写接口地址、API Key 与模型名。'))
     return invokeAsync('model.request', { requestId: request.requestId, endpoint: endpointFor(config.baseUrl), apiKey: config.apiKey, ...toOpenAiBody(request, config) }, hooks).then(normalizeModelResult) as Promise<ModelResult>
   }
