@@ -224,6 +224,12 @@
         } catch { /* 无价格配置 */ }
         return respondJson(200, { prices, stats: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
       },
+      '/api/billing/prices': (body) => {
+        if (!body || typeof body !== 'object') return respondJson(400, { error: '价格数据无效。' })
+        const prices = { version: 1, rates: Array.isArray(body.rates) ? body.rates : [] }
+        nativeInvokeSync('secret.set', { key: 'local.billing.prices', value: JSON.stringify(prices) })
+        return respondJson(200, { prices, stats: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
+      },
       '/api/prompts/presets': async () => {
         const data = nativeInvokeSync('preset.list', {})
         // 与桌面同一份 gameplay 文件（APK 打包于 web/gameplay/），仅下发 userEditable 的场景
