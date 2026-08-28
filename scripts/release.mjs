@@ -67,8 +67,9 @@ function resolveNpmCli() {
 }
 
 function ensureStartScripts() {  // 打包一个通用的独立启动脚本（Windows/Linux 都可用，避免引用仓库里的 WSL 专用脚本）
-  const bat = `@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\nset "PORT=8787"\r\necho StageCraft starting on http://127.0.0.1:%PORT% ...\r\nnode --experimental-strip-types src/server.ts\r\npause\r\n`
-  const sh = `#!/usr/bin/env bash\ncd "$(dirname "$0")"\nexport PORT="\${PORT:-8787}"\necho "StageCraft starting on http://127.0.0.1:$PORT ..."\nexec node --experimental-strip-types src/server.ts\n`
+  // 启动后自动弹出页面（等 server 就绪再开浏览器），更新/日常启动都直接看到 Web UI
+  const bat = `@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\nset "PORT=8787"\r\necho StageCraft starting on http://127.0.0.1:%PORT% ...\r\nstart "" node --experimental-strip-types src/server.ts\r\ntimeout /t 3 /nobreak >nul\r\nstart "" "http://127.0.0.1:%PORT%"\r\npause\r\n`
+  const sh = `#!/usr/bin/env bash\ncd "$(dirname "$0")"\nexport PORT="\${PORT:-8787}"\necho "StageCraft starting on http://127.0.0.1:$PORT ..."\nnode --experimental-strip-types src/server.ts &\nSERVER_PID=$!\nsleep 3\nxdg-open "http://127.0.0.1:$PORT" >/dev/null 2>&1 || open "http://127.0.0.1:$PORT" >/dev/null 2>&1 || true\nwait $SERVER_PID\n`
   writeFileSync(join(stageDir, 'start.bat'), bat, 'utf8')
   writeFileSync(join(stageDir, 'start.sh'), sh, 'utf8')
 }

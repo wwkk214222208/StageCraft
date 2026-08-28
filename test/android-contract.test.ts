@@ -357,6 +357,8 @@ test('Android local prompt IO: bundled gameplay data source plus SQLite preset p
   assert.match(manifest, /REQUEST_INSTALL_PACKAGES/)
   assert.match(bridge, /updateDownloadAndInstall/)
   assert.match(bridge, /PackageInstaller/)
+  assert.match(bridge, /deliverUpdateProgress/)
+  assert.match(bridge, /StageCraftUpdateProgress/)
   assert.match(runtime, /'\/api\/version'/)
   assert.match(runtime, /'\/api\/update\/check'/)
   assert.match(appBoot, /'\/api\/update\/check'/)

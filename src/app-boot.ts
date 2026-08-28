@@ -408,18 +408,37 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : '检查更新失败。' }) }
       }
       if (url.pathname === '/api/update/download' && request.method === 'POST') {
+        response.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store' })
+        const send = (value: unknown): void => { try { response.write(`${JSON.stringify(value)}\n`) } catch { /* 连接已断开 */ } }
         try {
           const check = await checkForUpdate()
           if (!check.updateAvailable || !check.zipUrl) throw new Error('没有可用的更新。')
           const remote = await fetch(check.zipUrl, { signal: AbortSignal.timeout(300_000) })
           if (!remote.ok) throw new Error(`下载失败（HTTP ${remote.status}）。`)
-          const bytes = Buffer.from(await remote.arrayBuffer())
+          const total = Number(remote.headers.get('content-length') ?? 0)
+          const chunks: Buffer[] = []
+          let received = 0
+          if (remote.body) {
+            const reader = remote.body.getReader()
+            for (;;) {
+              const { done, value } = await reader.read()
+              if (done) break
+              chunks.push(Buffer.from(value))
+              received += value.byteLength
+              if (total > 0) {
+                const percent = Math.min(99, Math.round(received * 100 / total))
+                send({ percent, text: `正在下载 ${percent}%…` })
+              }
+            }
+          }
+          const bytes = Buffer.concat(chunks)
           if (bytes.length < 1024) throw new Error('下载内容异常。')
           const downloadDir = join(userDataRoot ?? root, 'downloads')
           mkdirSync(downloadDir, { recursive: true })
           const target = join(downloadDir, `stagecraft-${check.version}.zip`)
           writeFileSync(target, bytes)
-          // 自更新：脚本先结束当前进程，解压新包到旁目录，再启动新版本
+          send({ percent: 100, text: '下载完成，正在准备重启…' })
+          // 自更新：脚本先结束当前进程，解压新包到旁目录，再启动新版本并自动弹出页面
           const versionDir = join(dirname(root), `stagecraft-${check.version}`)
           const batPath = join(downloadDir, 'self-update.bat')
           const bat = [
@@ -430,7 +449,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
             `cd /d "${versionDir}"`,
             'start "" node --experimental-strip-types src/server.ts',
             'timeout /t 3 /nobreak >nul',
-            'start "" http://127.0.0.1:8787',
+            'start "" "http://127.0.0.1:8787"',
             'exit',
           ].join('\r\n')
           writeFileSync(batPath, bat, 'utf8')
@@ -438,9 +457,15 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
             const { spawn } = await import('node:child_process')
             spawn('cmd', ['/c', 'start', '', batPath], { detached: true, stdio: 'ignore' }).unref()
           } catch { /* 启动脚本失败则仅提示手动应用 */ }
+          send({ ok: true, path: target, tag: check.tag, version: check.version })
+          response.end()
           setTimeout(() => process.exit(0), 1500)
-          return json(response, 200, { ok: true, path: target, tag: check.tag, version: check.version })
-        } catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : '下载失败。' }) }
+          return
+        } catch (error) {
+          send({ ok: false, error: error instanceof Error ? error.message : '下载失败。' })
+          response.end()
+          return
+        }
       }
       
       // 新架构：Core Runtime 协议端点由 HumanCoreInteractionPlugin 处理。

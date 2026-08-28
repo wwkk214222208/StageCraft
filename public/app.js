@@ -627,6 +627,45 @@ async function loadVersionInfo() {
     el.textContent = `版本 ${data.version || 'dev'}${commitShort ? ` · 提交 ${commitShort}` : ''}${data.platform ? ` · ${data.platform === 'android' ? 'APK' : '桌面'}` : ''}`
   } catch { el.textContent = '版本信息不可用。' }
 }
+// ── 更新流程：按钮与自动检查共用；APK 走原生下载安装（带进度回调），桌面走流式下载+自更新 ──
+window.StageCraftUpdateProgress = result => {
+  const status = $('#update-status')
+  if (!status || !result) return
+  if (result.percent < 0) status.textContent = result.text || '更新失败。'
+  else status.textContent = result.text || (result.percent != null ? `下载中 ${result.percent}%…` : '')
+}
+async function runUpdateFlow(data) {
+  const status = $('#update-status')
+  if (window.__STAGECRAFT_LOCAL__) {
+    status.textContent = '正在下载并安装…'
+    try {
+      window.StageCraftNative && window.StageCraftNative.updateDownloadAndInstall && window.StageCraftNative.updateDownloadAndInstall(data.apkUrl || '')
+    } catch (error) { status.textContent = `更新失败：${error instanceof Error ? error.message : String(error)}` }
+  } else {
+    status.textContent = '正在下载并准备更新…'
+    try {
+      const response = await fetch('/api/update/download', { method: 'POST' })
+      if (!response.ok || !response.body) { const err = await response.json().catch(() => ({})); throw new Error(err.error || `下载失败（HTTP ${response.status}）。`) }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let failed = null
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        for (const line of decoder.decode(value, { stream: true }).split('\n')) {
+          if (!line.trim()) continue
+          let item
+          try { item = JSON.parse(line) } catch { continue }
+          if (item.ok === false) { failed = new Error(item.error || '下载失败。'); break }
+          if (item.percent != null) status.textContent = item.text || `下载中 ${item.percent}%…`
+          if (item.ok) { status.textContent = '下载完成，正在自动重启并打开新版本…'; await new Promise(resolve => setTimeout(resolve, 800)); try { window.close() } catch { /* 忽略 */ } }
+        }
+        if (failed) break
+      }
+      if (failed) throw failed
+    } catch (error) { status.textContent = `更新失败：${error instanceof Error ? error.message : String(error)}` }
+  }
+}
 $('#check-update').onclick = async () => {  const status = $('#update-status')
   if (!status) return
   status.textContent = '正在检查更新…'
@@ -636,27 +675,8 @@ $('#check-update').onclick = async () => {  const status = $('#update-status')
     if (!response.ok) throw new Error(data.error || '检查更新失败。')
     if (!data.updateAvailable) { status.textContent = '当前已是最新版本。'; return }
     status.textContent = `发现新版本 ${data.tag}（${data.version}）。`
-    // 下载并安装由各端实现：桌面走 /api/update/download + 自更新脚本；APK 走原生安装流程
-    if (window.__STAGECRAFT_LOCAL__) {
-      if (!confirm(`发现新版本 ${data.tag}，是否下载并安装？`)) return
-      status.textContent = '正在下载并安装…'
-      try {
-        // APK 端通过原生桥下载并触发系统安装器
-        window.StageCraftNative && window.StageCraftNative.updateDownloadAndInstall && window.StageCraftNative.updateDownloadAndInstall(data.apkUrl || '')
-        status.textContent = '已开始下载，完成后系统会提示安装。'
-      } catch (error) { status.textContent = `更新失败：${error instanceof Error ? error.message : String(error)}` }
-    } else {
-      if (!confirm(`发现新版本 ${data.tag}，是否下载并更新？更新过程中程序会短暂退出。`)) return
-      status.textContent = '正在下载并准备更新…'
-      try {
-        const result = await (await fetch('/api/update/download', { method: 'POST' })).json()
-        if (!result.ok) throw new Error(result.error || '下载失败。')
-        status.textContent = '下载完成，正在自动重启并打开新版本…'
-        // 关闭当前页面，由更新脚本解压后自动打开新版本页面（形成自动关闭/自动打开）
-        await new Promise(resolve => setTimeout(resolve, 800))
-        try { window.close() } catch { /* 非脚本打开的标签页无法关闭，忽略 */ }
-      } catch (error) { status.textContent = `更新失败：${error instanceof Error ? error.message : String(error)}` }
-    }
+    if (!confirm(`发现新版本 ${data.tag}，是否下载并更新？${window.__STAGECRAFT_LOCAL__ ? '' : '更新过程中程序会短暂退出。'}`)) return
+    await runUpdateFlow(data)
   } catch (error) { status.textContent = error instanceof Error ? error.message : '检查更新失败。' }
 }
 // ── 启动时自动检查更新（默认关闭；桌面 localStorage，APK 走原生 secret 桥）──
@@ -683,8 +703,12 @@ async function checkForUpdatesSilent() {
     const response = await fetch('/api/update/check')
     const data = await response.json()
     if (!response.ok || !data.updateAvailable) return
-    $('#update-status').textContent = `发现新版本 ${data.tag}（${data.version}），可在「设置 → 关于」中更新。`
-    if (window.__STAGECRAFT_LOCAL__) { /* 静默检查仅提示，不自动安装 */ }
+    if (window.__STAGECRAFT_LOCAL__) {
+      // 启动自动检测到更新：直接弹窗询问（默认关闭该功能时不会走到这里）
+      if (confirm(`发现新版本 ${data.tag}（${data.version}），是否立即更新？`)) await runUpdateFlow(data)
+    } else {
+      $('#update-status').textContent = `发现新版本 ${data.tag}（${data.version}），可在「设置 → 关于」中更新。`
+    }
   } catch { /* 静默失败不打扰 */ }
 }
 $('#story-settings').onclick = () => { refreshArchiveList(); const storySelect = $('#story-select'); if (room?.storyId && [...storySelect.options].some(option => option.value === room.storyId)) storySelect.value = room.storyId; const modeLabel = room?.mode === 'chat' ? '群聊' : '导演'; $('#archive-name').value = room?.title?.trim() ? `${room.title.trim()}-${modeLabel}` : (room?.storyId ?? ''); $('#room-mode-select').value = room?.mode ?? 'chat'; $('#story-modal').showModal() }

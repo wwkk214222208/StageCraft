@@ -354,7 +354,7 @@ public final class NativeBridge implements AutoCloseable {
         activity.runOnUiThread(() -> ((MainActivity) activity).openCharacterCardPicker());
     }
 
-    /** APK 自更新：下载最新 release APK 并经 PackageInstaller 触发系统安装（无需 FileProvider）。 */
+    /** APK 自更新：下载最新 release APK（带进度回调）并经 PackageInstaller 触发系统安装（无需 FileProvider）。 */
     @JavascriptInterface public void updateDownloadAndInstall(String apkUrl) {
         if (closed || apkUrl == null || apkUrl.isEmpty() || apkUrl.length() > 2048) return;
         networkExecutor.execute(() -> {
@@ -367,24 +367,43 @@ public final class NativeBridge implements AutoCloseable {
                 connection.setUseCaches(false);
                 int status = connection.getResponseCode();
                 if (status < 200 || status >= 300) throw new IllegalStateException("下载失败（HTTP " + status + "）。");
+                long total = connection.getContentLengthLong();
                 ByteArrayOutputStream buffer = new ByteArrayOutputStream();
                 byte[] chunk = new byte[64 * 1024];
+                long received = 0;
                 try (InputStream input = connection.getInputStream()) {
                     int count;
                     while ((count = input.read(chunk)) >= 0) {
                         buffer.write(chunk, 0, count);
+                        received += count;
                         if (buffer.size() > 100 * 1024 * 1024) throw new IllegalStateException("APK 过大。");
+                        if (total > 0) {
+                            int percent = (int) Math.min(99, received * 100 / total);
+                            deliverUpdateProgress(percent, "正在下载 " + percent + "%…");
+                        }
                     }
                 }
                 byte[] bytes = buffer.toByteArray();
                 if (bytes.length < 1024 || bytes[0] != 'P' || bytes[1] != 'K') throw new IllegalStateException("下载内容不是有效的 APK。");
                 if (closed) return;
+                deliverUpdateProgress(100, "下载完成，正在启动安装…");
                 activity.runOnUiThread(() -> installApkBytes(bytes));
             } catch (Exception error) {
-                if (!closed) emit(errorMessage(error.getMessage() == null ? "下载失败。" : "下载失败：" + error.getMessage()));
+                deliverUpdateProgress(-1, error.getMessage() == null ? "下载失败。" : "下载失败：" + error.getMessage());
             } finally {
                 if (connection != null) connection.disconnect();
             }
+        });
+    }
+
+    /** 下载/安装进度与结果回调：percent<0 表示失败，100 表示下载完成。 */
+    private void deliverUpdateProgress(int percent, String text) {
+        activity.runOnUiThread(() -> {
+            if (closed) return;
+            try {
+                JSONObject result = new JSONObject().put("percent", percent).put("text", text == null ? "" : text);
+                webView.evaluateJavascript("window.StageCraftUpdateProgress && window.StageCraftUpdateProgress(" + result.toString() + ")", null);
+            } catch (Exception ignored) { }
         });
     }
 
