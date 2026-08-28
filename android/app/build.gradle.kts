@@ -17,6 +17,8 @@ val releaseVersion = providers.gradleProperty("version").orNull?.takeIf { it.isN
 val gitCount = gitOutput("rev-list", "--count", "HEAD")
 val generatedVersion = layout.buildDirectory.dir("generated/local-version")
 val generateVersionInfo by tasks.registering {
+    inputs.property("version", releaseVersion)
+    inputs.property("commit", gitCommit)
     outputs.file(generatedVersion.map { it.file("version.json") })
     doLast {
         val file = generatedVersion.get().asFile.resolve("version.json")
