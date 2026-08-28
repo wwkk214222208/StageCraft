@@ -1,4 +1,5 @@
 import java.security.MessageDigest
+import java.time.Instant
 
 plugins {
     id("com.android.application")
@@ -20,7 +21,7 @@ val generateVersionInfo by tasks.registering {
     doLast {
         val file = generatedVersion.get().asFile.resolve("version.json")
         file.parentFile.mkdirs()
-        val json = """{"version":"${releaseVersion.replace("\"", "\\\"")}","commit":"${gitCommit.replace("\"", "\\\"")}","tag":"${gitDescribe.replace("\"", "\\\"")}","buildTime":"${java.time.Instant.now()}","platform":"android"}"""
+        val json = """{"version":"${releaseVersion.replace("\"", "\\\"")}","commit":"${gitCommit.replace("\"", "\\\"")}","tag":"${gitDescribe.replace("\"", "\\\"")}","buildTime":"${Instant.now()}","platform":"android"}"""
         file.writeText(json + "\n")
     }
 }
