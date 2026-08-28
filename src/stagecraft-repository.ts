@@ -10,7 +10,7 @@ export const STAGECRAFT_REPOSITORY_METHODS = [
   'restartRoom', 'retractNpcMemory', 'saveDecision', 'saveDraft', 'saveLore',
   'saveReactionPreview', 'saveSpeech', 'saveWorldChange', 'setContribution',
   'setPlayerAvatar', 'setRoleAvatar', 'setRoleCurrentState', 'setRolePresence',
-  'setRoleThinking', 'setRoomConfig', 'startConsultation', 'supersedeNpcMemory',
+  'setRoleThinking', 'setRoomConfig', 'setRoomPhase', 'startConsultation', 'supersedeNpcMemory',
   'transitionToDrafting', 'updateNpcMemory', 'updatePlayerCharacter',
   'updateRolePrivateState', 'updateScene',
 ] as const
@@ -27,7 +27,7 @@ export type StageCraftRepository = Pick<Store,
   | 'restartRoom' | 'retractNpcMemory' | 'saveDecision' | 'saveDraft' | 'saveLore'
   | 'saveReactionPreview' | 'saveSpeech' | 'saveWorldChange' | 'setContribution'
   | 'setPlayerAvatar' | 'setRoleAvatar' | 'setRoleCurrentState' | 'setRolePresence'
-  | 'setRoleThinking' | 'setRoomConfig' | 'startConsultation' | 'supersedeNpcMemory'
+  | 'setRoleThinking' | 'setRoomConfig' | 'setRoomPhase' | 'startConsultation' | 'supersedeNpcMemory'
   | 'transitionToDrafting' | 'updateNpcMemory' | 'updatePlayerCharacter'
   | 'updateRolePrivateState' | 'updateScene'
 >

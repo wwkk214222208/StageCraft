@@ -387,3 +387,11 @@ test('Android local prompt IO: bundled gameplay data source plus SQLite preset p
   assert.match(indexHtml, /id="check-update"/)
   assert.match(indexHtml, /id="about-version"/)
 })
+
+// 防分叉：TS 权威清单 STAGECRAFT_REPOSITORY_METHODS 的每个方法都必须在 Android 原生实现里存在
+test('Android repository mirrors every STAGECRAFT_REPOSITORY_METHODS method (no IO fork)', async () => {
+  const { STAGECRAFT_REPOSITORY_METHODS } = await import('../src/stagecraft-repository.ts')
+  const java = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'AndroidCompositionOperations.java')
+  const missing = STAGECRAFT_REPOSITORY_METHODS.filter(method => !java.includes(`"${method}".equals(method)`))
+  assert.deepEqual(missing, [], `Android 原生缺这些 repository 方法（会导致「不支持安卓xxx」）：${missing.join(', ')}`)
+})
