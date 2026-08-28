@@ -206,8 +206,10 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   }
 
   const operations = {
-    invoke<T = unknown>(operation: string, input: Json = {}): T | Promise<T> {
-      if (operation === 'model.request') return modelRequest(input as unknown as ModelRequest) as Promise<T>
+    invoke<T = unknown>(operation: string, input: Json = {}, callbacks?: { onThinking?: (text: string) => void }): T | Promise<T> {
+      // 思维链增量必须透传给 modelRequest：否则累加器的 onThinking 为空，
+      // 流式 reasoning 无处可去，只能等最终结果一次性出现（安卓端"无法即时显示"的根因）。
+      if (operation === 'model.request') return modelRequest(input as unknown as ModelRequest, callbacks) as Promise<T>
       if (SYNC_OPERATIONS.has(operation)) return Promise.resolve(invokeSync(operation, input) as T)
       return invokeAsync(operation, input) as Promise<T>
     },
@@ -219,11 +221,13 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   // 双端同一套生成内核：与桌面 createRealWorkers 完全同源（gameplay 提示词渲染 + 预设管线），
   // 仅模型 IO 不同——requestModel 走 Android 原生传输（Java 持有凭据与网络）。
   const workers: WorkerSet = createRealWorkers(undefined as unknown as ModelGateway, () => undefined as unknown as ModelGateway, {
-    requestModel: request => modelRequest(request),
-    cancelModel: (requestId?: string): Promise<void> => {
-      try { invokeSync('model.cancel', { requestId: requestId ?? '' }) } catch { /* 忽略取消失败 */ }
-      return Promise.resolve()
-    },
+    // 与桌面端同构：模型请求经 Core LLM 路由（NativeCoreLlmRouter）下发，由它发布
+    // model.started / model.thinking.delta，服务层据此把思维链逐段推给 UI。
+    // 此前这里直接调 modelRequest，等于绕过 Core 事件总线——思维链只能随最终结果
+    // 一次性出现，正是"安卓端无法即时显示流式思维链"的根因。
+    // （requireComposition 在下方定义；模型请求只发生在 start() 之后，此处惰性引用安全。）
+    requestModel: request => requireComposition().core.requestModel(request),
+    cancelModel: (requestId?: string): Promise<void> => requireComposition().core.cancel(requestId ?? ''),
   })
 
   // ── 组合与消息流 ──

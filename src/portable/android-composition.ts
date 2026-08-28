@@ -32,10 +32,24 @@ class NativeCoreLlmRouter implements CoreLlmRouterPlugin {
     this.host = host
     return { dispose: () => { this.host = undefined } }
   }
+  /**
+   * 对齐桌面端 ModelGatewayRouterAdapter 的事件契约：
+   * - `model.started`：服务层靠它建立 requestId → {roomId, turnId, actor, roleId} 上下文；
+   * - `model.thinking.delta`：逐段上报思维链。
+   * 两者缺一不可——没有 started，delta 会因查不到上下文而不被转发给 UI，
+   * 表现正是安卓端"无法即时显示流式思维链"。
+   */
   async request(request: import('../core/protocol.ts').ModelRequest): Promise<void> {
     if (!this.host) throw new Error('Android model router is disposed.')
-    const result = await this.transport.request(request)
-    await this.host.submitModelResult(result)
+    const publish = (event: import('../core/protocol.ts').CoreEvent): void => this.host?.publishModelEvent(event)
+    publish({ type: 'model.started', revision: 0, request })
+    let thinking = ''
+    const result = await this.transport.request(request, {
+      onThinking: (text: string) => { thinking += text; publish({ type: 'model.thinking.delta', revision: 0, requestId: request.requestId, text }) },
+    })
+    // 传输层通常已在最终结果里带上 reasoning；仅在缺失时用累计值兜底，语义与桌面端一致。
+    const includeTelemetry = request.metadata?.includeTelemetry === true
+    await this.host.submitModelResult(includeTelemetry && thinking && !result.thinking ? { ...result, thinking } : result)
   }
   async cancel(requestId: string): Promise<void> { await this.transport.cancel?.(requestId) }
 }

@@ -1,5 +1,5 @@
 import type { ModelGateway } from '../model-gateway.ts'
-import type { ModelTransport, ModelTransportRequest, ModelTransportResult } from '../core/platform.ts'
+import type { ModelTransport, ModelTransportCallbacks, ModelTransportRequest, ModelTransportResult } from '../core/platform.ts'
 
 /** Existing ModelGateway exposed through the portable transport contract. */
 export class ModelGatewayTransport implements ModelTransport {
@@ -7,12 +7,13 @@ export class ModelGatewayTransport implements ModelTransport {
 
   constructor(gateway: ModelGateway) { this.gateway = gateway }
 
-  async request(request: ModelTransportRequest): Promise<ModelTransportResult> {
+  async request(request: ModelTransportRequest, transportCallbacks?: ModelTransportCallbacks): Promise<ModelTransportResult> {
     let thinking = ''
     let usage: unknown
     try {
       const callbacks = {
-        onThinking: (text: string) => { thinking += text },
+        // 既累计到最终结果，也逐段上抛，让路由插件能实时发布 model.thinking.delta。
+        onThinking: (text: string) => { thinking += text; transportCallbacks?.onThinking?.(text) },
         onUsage: (value: unknown) => { usage = value },
       }
       const output = request.stream === false
