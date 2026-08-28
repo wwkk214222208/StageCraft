@@ -150,18 +150,26 @@
       defaults: meta.defaults ?? {},
     }
   }
-  /** 按 defaults 选当前激活供应商（角色默认优先，其次导演默认，最后第一个），写入模型传输快照。 */
+  /** 按共享路由语义选当前激活供应商：角色默认优先，其次导演默认，最后第一个；写入模型传输快照。 */
   function refreshActiveProvider(meta) {
     const providers = Array.isArray(meta.providers) ? meta.providers : []
     const defaults = meta.defaults ?? {}
-    const preferred = (defaults.role && providers.find(item => item.id === defaults.role.providerId))
-      || (defaults.director && providers.find(item => item.id === defaults.director.providerId))
+    // 兼容两种 defaults 格式（桌面扁平 / Android 嵌套），与 provider-routing 归一化一致
+    const role = (defaults.role && typeof defaults.role === 'object')
+      ? { providerId: defaults.role.providerId, model: defaults.role.model }
+      : { providerId: defaults.defaultRoleProviderId, model: defaults.defaultRoleModel }
+    const director = (defaults.director && typeof defaults.director === 'object')
+      ? { providerId: defaults.director.providerId, model: defaults.director.model }
+      : { providerId: defaults.directorProviderId, model: defaults.directorModel }
+    const preferred = (role.providerId && providers.find(item => item.id === role.providerId))
+      || (director.providerId && providers.find(item => item.id === director.providerId))
       || providers[0]
     if (preferred) {
-      // 表项用 selectedModel（兼容 model 字段），baseUrl/apiKey 必须存在
+      // 默认键指定模型优先，其次表项 selectedModel（兼容 model 字段）
+      const defaultModel = (preferred.id === role.providerId ? role.model : director.model)
       const baseUrl = String(preferred.baseUrl ?? '').trim()
       const apiKey = String(preferred.apiKey ?? '')
-      const model = String(preferred.selectedModel ?? preferred.model ?? '').trim()
+      const model = String(defaultModel || preferred.selectedModel || preferred.model || '').trim()
       if (baseUrl && apiKey && model) {
         core.setProvider({ baseUrl, apiKey, model, responseFormat: preferred.responseFormat === 'none' ? 'none' : 'json_object' })
       }
@@ -629,8 +637,13 @@
           })
         if (providers.length) {
           const defaults = payload.providers.defaults && typeof payload.providers.defaults === 'object' ? payload.providers.defaults : {}
-          saveProviderMeta({ providers, defaults })
-          refreshActiveProvider({ providers, defaults })
+          // 桌面扁平格式（defaultRoleProviderId/directorProviderId…）归一化为 Android 嵌套格式，
+          // 保持与 provider-routing 兼容；已带嵌套键（role/director）时原样保留
+          const normalized = { ...defaults }
+          if (typeof defaults.defaultRoleProviderId === 'string' && !normalized.role) normalized.role = { providerId: defaults.defaultRoleProviderId, model: defaults.defaultRoleModel || undefined }
+          if (typeof defaults.directorProviderId === 'string' && !normalized.director) normalized.director = { providerId: defaults.directorProviderId, model: defaults.directorModel || undefined }
+          saveProviderMeta({ providers, defaults: normalized })
+          refreshActiveProvider({ providers, defaults: normalized })
           result.providers = true
         }
       }

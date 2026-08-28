@@ -12,6 +12,7 @@ import type { RoomSnapshot, RoomMode, WorldChangeRequest, ThinkingStrength, Role
 import type { StoryPackage } from '../story-packages.ts'
 import type { WorkerSet } from '../workers.ts'
 import { createRealWorkers, type ModelGateway } from '../model-gateway.ts'
+import { resolveProviderForRequest, type ProviderRoutingEntry } from '../provider-routing.ts'
 import { setPromptStorage } from '../prompts.ts'
 import { createAndroidPromptStorage } from './android-prompt-storage.ts'
 
@@ -111,25 +112,15 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     }
     return { providers: [], defaults: {} }
   }
-  /** 模型供应商解析：优先按请求的 providerId 查表，其次按用途对应的 defaults 激活，再回退第一个/旧快照。 */
+  /** 模型供应商解析：共享桌面路由语义（角色请求 → route.providerId → 角色默认；导演请求 → route.providerId → 导演默认 → 角色默认兜底）。 */
   const readProvider = (request?: ModelRequest): LocalProviderConfig | undefined => {
     const meta = readProviderMeta()
-    let selected: Record<string, unknown> | undefined
-    const route = request?.route as { providerId?: unknown; purpose?: unknown } | undefined
-    const providerId = typeof route?.providerId === 'string' && route.providerId ? route.providerId : undefined
-    if (providerId) selected = meta.providers.find(item => String(item.id ?? '') === providerId)
-    if (!selected) {
-      const defaults = meta.defaults
-      const purpose = typeof route?.purpose === 'string' ? route.purpose : ''
-      const defaultKey = purpose.startsWith('chat.') || purpose === 'director.draft' || purpose === 'director.consult' || purpose === 'director.memory-digest' ? 'director' : 'role'
-      const entry = defaults[defaultKey] as { providerId?: unknown; model?: unknown } | undefined
-      if (entry && typeof entry.providerId === 'string') selected = meta.providers.find(item => String(item.id ?? '') === entry.providerId)
-    }
-    if (!selected) selected = meta.providers[0]
-    if (selected && typeof selected.baseUrl === 'string' && typeof selected.apiKey === 'string') {
-      const model = typeof selected.selectedModel === 'string' ? selected.selectedModel : typeof selected.model === 'string' ? selected.model : ''
-      if (selected.baseUrl.trim() && selected.apiKey.trim() && model.trim()) {
-        return { baseUrl: (selected.baseUrl as string).trim(), apiKey: (selected.apiKey as string).trim(), model: model.trim(), responseFormat: selected.responseFormat === 'none' ? 'none' : 'json_object' }
+    const resolved = resolveProviderForRequest(meta.providers as ProviderRoutingEntry[], meta.defaults, request)
+    const selected = resolved.provider
+    if (selected) {
+      const model = typeof selected.selectedModel === 'string' ? selected.selectedModel : ''
+      if (model.trim()) {
+        return { baseUrl: selected.baseUrl, apiKey: selected.apiKey, model: model.trim(), responseFormat: selected.responseFormat === 'none' ? 'none' : 'json_object' }
       }
     }
     // 旧命名快照回退（offline.provider.default → local.provider.default），迁移到表
@@ -233,7 +224,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     cancel: (requestId?: string): Promise<void> => requireComposition().cancel(requestId),
     refresh: (): void => requireComposition().refresh(),
     getProvider: (): { configured: boolean } & Partial<LocalProviderConfig> => {
-      const config = readProvider()
+      // 无请求上下文时按角色默认语义解析（与既有 UI 展示一致）
+      const config = readProvider({ route: { role: 'default' } })
       return config ? { configured: true, baseUrl: config.baseUrl, model: config.model } : { configured: false }
     },
     setProvider: (config: LocalProviderConfig): void => {

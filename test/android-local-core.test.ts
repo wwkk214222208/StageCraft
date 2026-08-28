@@ -72,11 +72,69 @@ test('local core routes model requests by provider table and defaults', async ()
   assert.ok(roleRequest, 'must issue a role-decision model request')
   assert.equal(roleRequest.endpoint, 'https://role.example.com/v1/chat/completions')
   assert.equal(roleRequest.apiKey, 'role-key')
-  // 表读取：无请求上下文时 getProvider 按 defaults.role 解析到 A
+  // 表读取：无请求上下文时 getProvider 按角色默认解析到 A
   const provider = local.getProvider()
   assert.equal(provider.configured, true)
   assert.equal(provider.baseUrl, 'https://role.example.com/v1')
   assert.equal(provider.model, 'role-model')
+  local.dispose()
+})
+
+test('local core routes chat role speech to role default and director flows to director default', async () => {
+  const room = makeRoom([{ id: 'aria', name: 'Aria', portraitRef: '/assets/default.svg', currentState: 'At the festival.', presence: 'present', selfModel: 'Reserved.' }])
+  room.mode = 'chat'
+  room.speechMode = 'director'
+  const { transport, secrets } = fakeNative(room)
+  const meta = {
+    providers: [
+      { id: 'A', name: 'Role Provider', baseUrl: 'https://role.example.com/v1', apiKey: 'role-key', models: ['role-model'], selectedModel: 'role-model', responseFormat: 'json_object' },
+      { id: 'B', name: 'Director Provider', baseUrl: 'https://director.example.com/v1', apiKey: 'director-key', models: ['director-model'], selectedModel: 'director-model', responseFormat: 'json_object' },
+    ],
+    defaults: { role: { providerId: 'A', model: 'role-model' }, director: { providerId: 'B', model: 'director-model' } },
+  }
+  secrets.set('local.provider.meta', JSON.stringify(meta))
+  const globalObject: Record<string, unknown> = { StageCraftNative: transport }
+  installLocalCore(globalObject)
+  const local = globalObject.StageCraftLocalCore as any
+  const messages: any[] = []
+  local.start((message: string) => messages.push(JSON.parse(message)))
+  await local.directorDecide()
+  await local.speakAll()
+  const selectionRequest = transport.requests.find((request: any) => request.requestId.includes('chat-role-selection'))
+  assert.ok(selectionRequest, 'must issue a chat-role-selection model request')
+  assert.equal(selectionRequest.endpoint, 'https://director.example.com/v1/chat/completions', '导演选角走导演默认')
+  const speechRequest = transport.requests.find((request: any) => request.requestId.includes('chat-speech'))
+  assert.ok(speechRequest, 'must issue a chat-speech model request')
+  assert.equal(speechRequest.endpoint, 'https://role.example.com/v1/chat/completions', '角色发言走角色默认（不再错路由到导演）')
+  assert.equal(speechRequest.apiKey, 'role-key')
+  local.dispose()
+})
+
+test('local core routes desktop-synced flat defaults (defaultRoleProviderId/directorProviderId)', async () => {
+  const room = makeRoom([{ id: 'aria', name: 'Aria', portraitRef: '/assets/default.svg', currentState: 'At the festival.', presence: 'present', selfModel: 'Reserved.' }])
+  room.mode = 'chat'
+  room.speechMode = 'director'
+  const { transport, secrets } = fakeNative(room)
+  // 桌面 ProviderConfigStore.defaults() 扁平格式：同步后应仍按角色/导演分工路由
+  const meta = {
+    providers: [
+      { id: 'A', name: 'Role Provider', baseUrl: 'https://role.example.com/v1', apiKey: 'role-key', models: ['role-model'], selectedModel: 'role-model', responseFormat: 'json_object' },
+      { id: 'B', name: 'Director Provider', baseUrl: 'https://director.example.com/v1', apiKey: 'director-key', models: ['director-model'], selectedModel: 'director-model', responseFormat: 'json_object' },
+    ],
+    defaults: { defaultRoleProviderId: 'A', defaultRoleModel: 'role-model', directorProviderId: 'B', directorModel: 'director-model' },
+  }
+  secrets.set('local.provider.meta', JSON.stringify(meta))
+  const globalObject: Record<string, unknown> = { StageCraftNative: transport }
+  installLocalCore(globalObject)
+  const local = globalObject.StageCraftLocalCore as any
+  const messages: any[] = []
+  local.start((message: string) => messages.push(JSON.parse(message)))
+  await local.directorDecide()
+  await local.speakAll()
+  const selectionRequest = transport.requests.find((request: any) => request.requestId.includes('chat-role-selection'))
+  assert.equal(selectionRequest.endpoint, 'https://director.example.com/v1/chat/completions', '桌面同步后导演选角仍走导演默认')
+  const speechRequest = transport.requests.find((request: any) => request.requestId.includes('chat-speech'))
+  assert.equal(speechRequest.endpoint, 'https://role.example.com/v1/chat/completions', '桌面同步后角色发言仍走角色默认')
   local.dispose()
 })
 

@@ -374,7 +374,7 @@ test('Android local prompt IO: bundled gameplay data source plus SQLite preset p
   assert.match(runtime, /'\/api\/update\/check'/)
   assert.match(runtime, /local\.billing\.prices/)
   assert.match(runtime, /billing: billingPrices \? \{ prices: billingPrices \} : null/)
-  assert.match(runtime, /preferred\.selectedModel \?\? preferred\.model/)
+  assert.match(runtime, /defaultModel \|\| preferred\.selectedModel \|\| preferred\.model/)
   assert.match(appBoot, /billing: \{ prices: billing\.getPrices\(\) \}/)
   assert.match(appBoot, /billing\.savePrices\(body\.billing\.prices/)
   assert.match(appBoot, /'\/api\/stream'/)

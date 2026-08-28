@@ -63,19 +63,14 @@ function convertSillyTavernPreset(source: string, message: string): { reply: str
 }
 
 
+import { resolveRouteModel, resolveRouteProviderId } from './provider-routing.ts'
+export { resolveRouteModel, resolveRouteProviderId } from './provider-routing.ts'
+
 /** Provider replacement transaction: preflight must run before tearing down the old route. */
 export async function switchProviderSafely<T>(assertReady: () => void, disposeOld: () => Promise<void> | void, installNew: () => T): Promise<T> {
   assertReady()
   await disposeOld()
   return installNew()
-}
-/** 生产 LLM 路由的无秘密选择规则：请求显式 route 优先于角色覆盖。 */
-export function resolveRouteProviderId(request: { route?: { providerId?: string } }, roleProviderId?: string, defaultProviderId?: string): string | undefined {
-  return request.route?.providerId ?? roleProviderId ?? defaultProviderId
-}
-
-export function resolveRouteModel(request: { route?: { model?: string } }, roleModelOverride?: string, fallbackModel?: string): string | undefined {
-  return request.route?.model ?? roleModelOverride ?? fallbackModel
 }
 
 export interface TavernOptions {
