@@ -1,6 +1,7 @@
 package ai.stagecraft.android;
 
 import android.app.Activity;
+import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -453,6 +454,13 @@ public final class NativeBridge implements AutoCloseable {
             int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
             if (status == PackageInstaller.STATUS_SUCCESS) {
                 deliverUpdateProgress(100, "更新完成，正在重启应用…");
+                // 自动重新打开应用（新进程/新 AssetManager）：AlarmManager 跨进程调度，避免与杀进程竞争
+                try {
+                    Intent launch = new Intent(activity, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    PendingIntent pi = PendingIntent.getActivity(activity, 0, launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                    AlarmManager am = (AlarmManager) activity.getSystemService(Context.ALARM_SERVICE);
+                    if (am != null) am.set(AlarmManager.RTC, System.currentTimeMillis() + 800, pi);
+                } catch (Exception ignored) { /* 自动重启失败则用户手动打开 */ }
                 try {
                     activity.finishAndRemoveTask();
                 } catch (Exception ignored) { /* 任务不存在则忽略 */ }

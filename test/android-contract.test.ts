@@ -362,6 +362,8 @@ test('Android local prompt IO: bundled gameplay data source plus SQLite preset p
   assert.match(bridge, /installResultReceiver/)
   assert.match(bridge, /killProcess\(android\.os\.Process\.myPid\(\)\)/)
   assert.match(bridge, /STATUS_SUCCESS/)
+  assert.match(bridge, /AlarmManager/)
+  assert.match(bridge, /am\.set\(AlarmManager\.RTC/)
   assert.match(runtime, /'\/api\/version'/)
   assert.match(runtime, /'\/api\/update\/check'/)
   assert.match(appBoot, /'\/api\/update\/check'/)
