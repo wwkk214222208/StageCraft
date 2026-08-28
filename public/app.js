@@ -1857,7 +1857,11 @@ $('#create-role-save').onclick = event => {
   api('/api/roles/create', payload).then(ok => { if (ok) $('#create-role-modal').close() })
 }
 $('#sync-roles').onclick = event => { event.preventDefault(); api('/api/story/sync-roles', { storyId: $('#story-select').value }).then(ok => { if (ok) alert('已同步到初始剧本') }) }
-const debugEvents = new EventSource('/api/debug-events'); debugEvents.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); const detail = item.text.startsWith('模型完整返回') || item.text.startsWith('模型提交提示词'); if (!detail || debugDetailsEnabled) stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
+// ── 合并 SSE 单通道（room/thinking/summary 一个连接，避免 HTTP/1.1 每源 6 连接限制导致多窗口拿不到数据）──
+const eventStream = new EventSource('/api/stream')
+eventStream.addEventListener('room', event => { try { render(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] room event render failed', error) } })
+eventStream.addEventListener('thinking', event => { try { applyThinkingEvent(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] thinking event failed', error) } })
+eventStream.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); const detail = item.text.startsWith('模型完整返回') || item.text.startsWith('模型提交提示词'); if (!detail || debugDetailsEnabled) stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
 async function bootApp() {
   try {
     const roomResponse = await fetch('/api/room')
@@ -1874,8 +1878,7 @@ async function bootApp() {
   if (readAutoUpdatePref()) void checkForUpdatesSilent()
 }
 bootApp()
-const events = new EventSource('/api/events'); events.addEventListener('room', event => { try { render(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] room event render failed', error) } })
-// Core Event 通道先只更新客户端缓存；旧 RoomSnapshot SSE 继续驱动现有页面，保证兼容。
+// Core Event 通道先只更新客户端缓存；RoomSnapshot SSE 由上方合并的 /api/stream 驱动。
 coreClient.subscribe(event => {
   if (event.revision == null || !coreClient.view) return
   if (event.type === 'state.changed' || event.type === 'workflow.changed' || event.type === 'interaction.created') {
@@ -1883,9 +1886,7 @@ coreClient.subscribe(event => {
   }
 })
 
-// ── 思维链 SSE 订阅与设置 ──
-const thinkingEvents = new EventSource('/api/thinking-events')
-thinkingEvents.addEventListener('thinking', event => { try { applyThinkingEvent(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] thinking event failed', error) } })
+// ── 思维链订阅与设置（thinking 事件已并入 /api/stream）──
 $('#show-thinking').checked = thinkingPrefs.show
 $('#auto-expand-thinking').checked = thinkingPrefs.autoExpand
 $('#show-thinking').addEventListener('change', event => { thinkingPrefs.show = event.target.checked; localStorage.setItem(THINKING_PREFS_KEY, JSON.stringify(thinkingPrefs)); renderThinkingPanel(); if (room) render(room) })

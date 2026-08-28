@@ -751,6 +751,8 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       if (url.pathname === '/api/events') return events(request, response, url.searchParams.get('id') ?? roomId)
       if (url.pathname === '/api/thinking-events') return thinkingEvents(request, response, url.searchParams.get('id') ?? roomId)
       if (url.pathname === '/api/debug-events') return debugEvents(request, response)
+      // 合并 SSE：room/thinking/summary 三类事件单通道（每窗口 1 个长连接，避免 HTTP/1.1 每源 6 连接限制）
+      if (url.pathname === '/api/stream') return streamEvents(request, response, url.searchParams.get('id') ?? roomId)
       if (url.pathname === '/api/restart' && request.method === 'POST') {
         const body = await readJson(request)
         const story = loadStoryPackage(storiesRoot, String(body.storyId ?? ''), bundleStoriesDirs)
@@ -1059,6 +1061,20 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     const unsubscribe = runtime.subscribeThinking(id, send)
     const ping = setInterval(() => response.write(': ping\n\n'), 20_000)
     request.on('close', () => { clearInterval(ping); unsubscribe() })
+  }
+
+  /** 合并 SSE 单通道：room / thinking / summary 三类事件走同一连接（大幅降低每源长连接数）。 */
+  function streamEvents(request: IncomingMessage, response: ServerResponse, id: string): void {
+    response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
+    const send = (type: string, value: unknown) => response.write(`event: ${type}\ndata: ${JSON.stringify(value)}\n\n`)
+    send('room', publicRoomSnapshot(runtime.get(id)))
+    const unsubRoom = runtime.subscribe(id, value => send('room', publicRoomSnapshot(value)))
+    const unsubThinking = runtime.subscribeThinking(id, value => send('thinking', value))
+    const debugSend = (text: string) => send('summary', { text, at: new Date().toISOString() })
+    debugListeners.add(debugSend)
+    send('summary', { text: '调试摘要通道已连接。', at: new Date().toISOString() })
+    const ping = setInterval(() => response.write(': ping\n\n'), 20_000)
+    request.on('close', () => { clearInterval(ping); unsubRoom(); unsubThinking(); debugListeners.delete(debugSend) })
   }
 
   function asset(response: ServerResponse, path: string): void {
