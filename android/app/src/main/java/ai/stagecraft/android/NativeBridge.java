@@ -2,7 +2,10 @@ package ai.stagecraft.android;
 
 import android.app.Activity;
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageInstaller;
 import android.net.Uri;
 import android.webkit.JavascriptInterface;
@@ -407,6 +410,8 @@ public final class NativeBridge implements AutoCloseable {
         });
     }
 
+    private static final String INSTALL_RESULT_ACTION = "ai.stagecraft.android.INSTALL_RESULT";
+
     private void installApkBytes(byte[] bytes) {
         try {
             PackageInstaller installer = activity.getPackageManager().getPackageInstaller();
@@ -416,17 +421,40 @@ public final class NativeBridge implements AutoCloseable {
             PackageInstaller.Session session = installer.openSession(sessionId);
             try {
                 try (OutputStream output = session.openWrite("stagecraft-update.apk", 0, bytes.length)) { output.write(bytes); }
-                Intent intent = new Intent(activity, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                PendingIntent pending = PendingIntent.getActivity(activity, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                // 覆盖安装完成后：旧进程/旧 AssetManager 仍存活（version.json 会从旧资源读出旧值），
+                // 因此收到 STATUS_SUCCESS 后强制结束当前进程，用户重新打开即新版本（新资源实例）。
+                try { activity.unregisterReceiver(installResultReceiver); } catch (Exception ignored) { /* 未注册 */ }
+                activity.registerReceiver(installResultReceiver, new IntentFilter(INSTALL_RESULT_ACTION));
+                Intent intent = new Intent(INSTALL_RESULT_ACTION).setPackage(activity.getPackageName());
+                PendingIntent pending = PendingIntent.getBroadcast(activity, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
                 session.commit(pending.getIntentSender());
-                emit(stateMessage("已启动安装，请在系统安装界面确认。"));
+                deliverUpdateProgress(100, "已启动安装，请在系统安装界面确认。");
             } finally {
                 session.close();
             }
         } catch (Exception error) {
-            emit(errorMessage("安装启动失败：" + (error.getMessage() == null ? String.valueOf(error) : error.getMessage())));
+            deliverUpdateProgress(-1, "安装启动失败：" + (error.getMessage() == null ? String.valueOf(error) : error.getMessage()));
         }
     }
+
+    private final BroadcastReceiver installResultReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (!INSTALL_RESULT_ACTION.equals(intent.getAction())) return;
+            int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+            if (status == PackageInstaller.STATUS_SUCCESS) {
+                deliverUpdateProgress(100, "更新完成，正在重启应用…");
+                try {
+                    activity.finishAndRemoveTask();
+                } catch (Exception ignored) { /* 任务不存在则忽略 */ }
+                try {
+                    android.os.Process.killProcess(android.os.Process.myPid());
+                    System.exit(0);
+                } catch (Exception ignored) { /* 尽力结束 */ }
+            } else {
+                deliverUpdateProgress(-1, "安装未完成（可能被取消或失败），可重新尝试。");
+            }
+        }
+    };
     void importCharacterCard(Uri uri) {
         if (closed || uri == null) return;
         long fileOperation = fileGeneration.incrementAndGet();
