@@ -32,19 +32,3 @@ export function getVersionInfo(): VersionInfo {
   try { tag = execFileSync('git', ['describe', '--tags', '--always'], { cwd: repoRoot, encoding: 'utf8' }).trim() } catch { /* 无 git 环境 */ }
   return { version: tag.replace(/^v/, '') || 'dev', commit, tag, buildTime: new Date().toISOString() }
 }
-
-/** 当前提交是否严格落后于指定提交（用于更新判断；相等视为已最新）。 */
-export function isCommitBehind(compareRef: string, cwd = repoRoot): boolean | undefined {
-  try {
-    const compareSha = execFileSync('git', ['rev-parse', `${compareRef}^{commit}`], { cwd, encoding: 'utf8' }).trim()
-    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim()
-    if (!compareSha || compareSha === headSha) return false
-    // git merge-base --is-ancestor <ref> HEAD：ref 是 HEAD 的祖先（且不等）→ HEAD 落后 → true
-    execFileSync('git', ['merge-base', '--is-ancestor', compareSha, 'HEAD'], { cwd, stdio: 'ignore' })
-    return true
-  } catch (error) {
-    const code = (error as { status?: number }).status
-    if (code === 1) return false // 不是祖先 → 不落后（领先或分叉）
-    return undefined // git 不可用
-  }
-}
