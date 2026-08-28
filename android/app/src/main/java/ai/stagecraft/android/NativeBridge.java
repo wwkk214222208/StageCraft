@@ -414,6 +414,16 @@ public final class NativeBridge implements AutoCloseable {
 
     private void installApkBytes(byte[] bytes) {
         try {
+            // Android 8+ 需要「允许安装未知应用」授权；未授权时 commit 会直接 SecurityException 且不弹系统界面
+            if (android.os.Build.VERSION.SDK_INT >= 26 && !activity.getPackageManager().canRequestPackageInstalls()) {
+                deliverUpdateProgress(100, "需要授权安装应用：请在系统设置中允许「安装未知应用」后重新尝试更新。");
+                try {
+                    Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + activity.getPackageName()));
+                    activity.startActivity(settings);
+                } catch (Exception ignored) { /* 无法打开设置页则仅提示 */ }
+                return;
+            }
+            deliverUpdateProgress(100, "正在准备安装…");
             PackageInstaller installer = activity.getPackageManager().getPackageInstaller();
             PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
             params.setAppPackageName(activity.getPackageName());
