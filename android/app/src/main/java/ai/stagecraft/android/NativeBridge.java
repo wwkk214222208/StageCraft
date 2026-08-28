@@ -69,7 +69,10 @@ public final class NativeBridge implements AutoCloseable {
             JSONObject input = new JSONObject(inputJson);
             Object result = compositionOperations.invokeSync(operation, input);
             // A missing persisted Core snapshot is a valid first-run state, not a bridge error.
-            return result == null ? JSONObject.NULL.toString() : result.toString();
+            // The WebView JSON.parse()s this text, so scalars must be encoded, not raw-stringified:
+            // a repository String result such as getLatestTurnId's "turn-42" would otherwise arrive
+            // unquoted and fail parsing as "Android bridge response is not valid JSON for ...".
+            return JsonSafety.toJsonText(result);
         } catch (Exception error) { return errorJson(error.getMessage() == null ? "Native operation failed." : error.getMessage()); }
     }
 

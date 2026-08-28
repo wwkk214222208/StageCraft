@@ -51,7 +51,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     const raw = method.call(native, operation, JSON.stringify(input))
     if (typeof raw !== 'string' || raw.length > 16 * 1024 * 1024) throw new Error('Android bridge response is invalid or too large.')
     let parsed: unknown
-    try { parsed = JSON.parse(raw) } catch { throw new Error(`Android bridge response is not valid JSON for ${operation}.`) }
+    // 桥契约：原生侧必须始终返回 JSON 文本。裸标量（如未加引号的 turn id）在这里无处遁形，报出片段便于定位。
+    try { parsed = JSON.parse(raw) } catch { throw new Error(`Android bridge response is not valid JSON for ${operation}. Response starts with: ${JSON.stringify(raw.slice(0, 120))}`) }
     if (parsed && typeof parsed === 'object' && 'error' in parsed && (parsed as { error?: unknown }).error !== null) {
       const message = (parsed as { error?: { message?: string } }).error?.message ?? 'Native operation failed.'
       throw new Error(message)

@@ -94,7 +94,14 @@ test('Android credentials stay native, encrypted, and out of URLs or Javascript'
   assert.doesNotMatch(bridge, /(Log\.|System\.out|printStackTrace)/)
   assert.doesNotMatch(renderer, /(localStorage|document\.cookie|Bearer|token)/)
   assert.match(bridge, /JSONObject\.quote\(messageJson\)/)
-  assert.match(bridge, /result == null \? JSONObject\.NULL\.toString\(\) : result\.toString\(\)/)
+  // 桥契约：invokeSync 的返回值必须是完整 JSON 文本（WebView 一律 JSON.parse）。
+  // 裸标量 toString()（如未加引号的 turn id）会让解析失败 → "not valid JSON for stagecraft.repository"
+  assert.match(bridge, /JsonSafety\.toJsonText\(result\)/)
+  assert.doesNotMatch(bridge, /result == null \? JSONObject\.NULL\.toString\(\) : result\.toString\(\)/)
+  const safety = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'JsonSafety.java')
+  assert.match(safety, /public static String toJsonText\(Object value\)/)
+  assert.match(safety, /value == null \|\| value == JSONObject\.NULL/)
+  assert.match(safety, /JSONObject\.quote\(String\.valueOf\(value\)\)/)
   const operations = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'AndroidCompositionOperations.java')
   assert.match(operations, /roomFromStory\(roomId, new JSONObject\(readStoryText\("eldoria"\)\)\)/)
   assert.match(operations, /repository\.putRecord\("story-packages", id, story\)/)
