@@ -1,4 +1,4 @@
-import { getVersionInfo, isCommitBehind } from './version.ts'
+import { getVersionInfo } from './version.ts'
 
 export interface UpdateCheckResult {
   updateAvailable: boolean
@@ -36,12 +36,13 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   } catch { /* tag 取 commit 失败则无法比对，保守按无更新处理 */ }
 
   const current = getVersionInfo()
+  // 用 GitHub compare API 比对（发布包无 .git，不能依赖本地 git）：仅当最新 tag 领先当前提交（behind）才更新。
   let updateAvailable = false
   if (latestCommit && current.commit) {
-    const behind = isCommitBehind(latestCommit)
-    updateAvailable = behind === true
-  } else if (latestCommit && !current.commit) {
-    updateAvailable = false
+    try {
+      const compare = await githubJson<{ status: string }>(`/compare/${encodeURIComponent(tag)}...${encodeURIComponent(current.commit)}`)
+      updateAvailable = compare.status === 'behind'
+    } catch { /* 比对失败按无更新处理 */ }
   }
 
   return {
