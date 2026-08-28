@@ -811,6 +811,7 @@ $('#sync-remote-pull').onclick = async () => {
     await refreshRoom()
     await loadStories()
     await loadPromptPresets()
+    if (result.providers) await loadProviders()
   } catch (error) { $('#sync-remote-error').textContent = `拉取失败：${error instanceof Error ? error.message : String(error)}` }
 }
 $('#sync-remote-push').onclick = async () => {
