@@ -11,7 +11,7 @@ import { createAndroidComposition, type AndroidComposition } from './android-com
 import type { RoomSnapshot, RoomMode, WorldChangeRequest, ThinkingStrength, Role, LoreEntry, ConsultationMessage, Decision, Draft, PlayerCharacter } from '../types.ts'
 import type { StoryPackage } from '../story-packages.ts'
 import type { WorkerSet } from '../workers.ts'
-import { createRealWorkers, parseModelJson, type ModelGateway } from '../model-gateway.ts'
+import { createModelStreamAccumulator, createRealWorkers, parseModelCompleteResponse, parseModelJson, type ModelGateway } from '../model-gateway.ts'
 import { resolveProviderForRequest, type ProviderRoutingEntry } from '../provider-routing.ts'
 import { setPromptStorage } from '../prompts.ts'
 import { createAndroidPromptStorage } from './android-prompt-storage.ts'
@@ -63,11 +63,11 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
 
   // ── 异步桥（model.request / story.read）──
   let asyncSequence = 0
-  const pendingAsync = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; onThinking?: (text: string) => void }>()
-  const invokeAsync = (operation: string, input: Json, hooks?: { onThinking?: (text: string) => void }): Promise<unknown> => {
+  const pendingAsync = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; onStreamPayload?: (payload: string) => void }>()
+  const invokeAsync = (operation: string, input: Json, hooks?: { onStreamPayload?: (payload: string) => void }): Promise<unknown> => {
     return new Promise((resolve, reject) => {
       const callbackId = `local-${Date.now().toString(36)}-${++asyncSequence}`
-      pendingAsync.set(callbackId, { resolve, reject, onThinking: hooks?.onThinking })
+      pendingAsync.set(callbackId, { resolve, reject, onStreamPayload: hooks?.onStreamPayload })
       const method = native.invokeAsync as (name: string, value: string, callbackId: string) => void
       method.call(native, operation, JSON.stringify(input), callbackId)
     })
@@ -87,8 +87,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
           entry.reject(new Error(typeof result.error === 'object' && result.error !== null && typeof (result.error as { message?: unknown }).message === 'string' ? (result.error as { message: string }).message : 'Native operation failed.'))
           return
         }
-        if (typeof result.thinkingDelta === 'string') {
-          entry.onThinking?.(result.thinkingDelta)
+        if (typeof result.streamPayload === 'string') {
+          entry.onStreamPayload?.(result.streamPayload)
           return
         }
       }
@@ -163,7 +163,34 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   const modelRequest = (request: ModelRequest, hooks?: { onThinking?: (text: string) => void }): Promise<ModelResult> => {
     const config = readProvider(request)
     if (!config) return Promise.reject(new Error('未配置模型供应商：点击「连接」→ 管理供应商，新建供应商并填写接口地址、API Key 与模型名。'))
-    return invokeAsync('model.request', { requestId: request.requestId, endpoint: endpointFor(config.baseUrl), apiKey: config.apiKey, ...toOpenAiBody(request, config) }, hooks).then(normalizeModelResult) as Promise<ModelResult>
+    const stream = createModelStreamAccumulator({ onThinking: hooks?.onThinking })
+    return invokeAsync('model.request', { requestId: request.requestId, endpoint: endpointFor(config.baseUrl), apiKey: config.apiKey, ...toOpenAiBody(request, config) }, { onStreamPayload: payload => stream.push(payload) }).then(value => {
+      if (value && typeof value === 'object' && (value as ResultValue).streamComplete === true) {
+        const complete = stream.result()
+        const output = complete.toolArguments || complete.content
+        return normalizeModelResult({
+          requestId: request.requestId,
+          ...(output ? { output } : {}),
+          ...(complete.reasoning ? { thinking: complete.reasoning } : {}),
+          ...(complete.usage ? { usage: { promptTokens: complete.usage.prompt_tokens ?? 0, completionTokens: complete.usage.completion_tokens ?? 0 } } : {}),
+        })
+      }
+      if (value && typeof value === 'object' && typeof (value as ResultValue).responseBody === 'string') {
+        let responseBody: unknown
+        try { responseBody = JSON.parse((value as ResultValue).responseBody as string) }
+        catch { throw new Error('模型接口返回的完整响应不是有效 JSON，请检查接口地址、代理或模型兼容性。') }
+        const complete = parseModelCompleteResponse(responseBody)
+        if (complete.reasoning) hooks?.onThinking?.(complete.reasoning)
+        const output = complete.toolArguments || complete.content
+        return normalizeModelResult({
+          requestId: request.requestId,
+          ...(output ? { output } : {}),
+          ...(complete.reasoning ? { thinking: complete.reasoning } : {}),
+          ...(complete.usage ? { usage: { promptTokens: complete.usage.prompt_tokens ?? 0, completionTokens: complete.usage.completion_tokens ?? 0 } } : {}),
+        })
+      }
+      return normalizeModelResult(value)
+    }) as Promise<ModelResult>
   }
 
   /** 模型返回解析：与桌面 ModelGateway 同一套容错（剥围栏/截取片段），避免裸 JSON.parse 抛原生错误。 */

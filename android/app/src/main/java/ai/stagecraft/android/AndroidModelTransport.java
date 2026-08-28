@@ -1,6 +1,5 @@
 package ai.stagecraft.android;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -26,7 +25,7 @@ import java.util.concurrent.Executors;
  * ({@code /v1/chat/completions}: model/messages/stream/response_format/tools).
  */
 public final class AndroidModelTransport implements AutoCloseable {
-    public interface Listener { void onDelta(String requestId, String text); void onComplete(JSONObject result); void onError(String requestId, String message); }
+    public interface Listener { void onStreamEvent(String requestId, String payload); void onComplete(JSONObject result); void onError(String requestId, String message); }
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final Set<HttpURLConnection> active = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String, HttpURLConnection> requests = new ConcurrentHashMap<>();
@@ -55,7 +54,7 @@ public final class AndroidModelTransport implements AutoCloseable {
             if (status < 200 || status >= 300) throw new IllegalStateException("Model request failed: " + status);
             String type = connection.getContentType() == null ? "" : connection.getContentType().toLowerCase();
             if (type.startsWith("text/event-stream")) consumeSse(connection.getInputStream(), requestId, listener);
-            else listener.onComplete(parseCompleteBody(read(connection.getInputStream(), 16 * 1024 * 1024), requestId));
+            else listener.onComplete(new JSONObject().put("requestId", requestId).put("responseBody", read(connection.getInputStream(), 16 * 1024 * 1024)));
         } catch (Exception error) {
             if (!closed) listener.onError(requestId, error.getMessage() == null ? "Model request failed." : error.getMessage());
         } finally {
@@ -63,12 +62,8 @@ public final class AndroidModelTransport implements AutoCloseable {
         }
     }
 
-    /** 解析 OpenAI 兼容 SSE：支持标准 choices[].delta 与旧的最小 {delta,done} 两种格式。 */
+    /** Only frame SSE here. Model/provider semantics are shared with desktop in TypeScript. */
     private void consumeSse(InputStream input, String requestId, Listener listener) throws Exception {
-        StringBuilder content = new StringBuilder();
-        StringBuilder thinking = new StringBuilder();
-        JSONObject usage = null;
-        boolean finished = false;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
             String line;
             StringBuilder data = new StringBuilder();
@@ -77,76 +72,17 @@ public final class AndroidModelTransport implements AutoCloseable {
                     if (data.length() == 0) continue;
                     String payload = data.toString();
                     data.setLength(0);
-                    if (payload.equals("[DONE]")) { finished = true; break; }
-                    JSONObject value = new JSONObject(payload);
-                    if (value.has("done") || value.has("delta") || value.has("text")) {
-                        // 旧最小格式：data: {"delta":"...","done":true}
-                        String delta = value.optString("delta", value.optString("text", ""));
-                        if (!delta.isEmpty()) content.append(delta);
-                        if (value.optBoolean("done", false)) { finished = true; if (value.has("usage")) usage = value.optJSONObject("usage"); break; }
-                        continue;
-                    }
-                    // OpenAI 格式
-                    JSONArray choices = value.optJSONArray("choices");
-                    if (choices != null && choices.length() > 0) {
-                        JSONObject choice = choices.optJSONObject(0);
-                        JSONObject delta = choice == null ? null : choice.optJSONObject("delta");
-                        if (delta != null) {
-                            String reasoning = delta.optString("reasoning_content", "");
-                            if (reasoning.isEmpty()) reasoning = delta.optString("reasoning", "");
-                            if (!reasoning.isEmpty()) {
-                                thinking.append(reasoning);
-                                listener.onDelta(requestId, reasoning);
-                            }
-                            String text = delta.optString("content", "");
-                            if (!text.isEmpty()) content.append(text);
-                        }
-                        if (choice != null && !choice.isNull("finish_reason")) { finished = true; }
-                    }
-                    if (value.has("usage")) usage = value.optJSONObject("usage");
+                    listener.onStreamEvent(requestId, payload);
+                    if (payload.equals("[DONE]")) break;
                 } else if (line.startsWith("data:")) {
-                    data.append(line.substring(5).trim());
+                    if (data.length() > 0) data.append('\n');
+                    String value = line.substring(5);
+                    data.append(value.startsWith(" ") ? value.substring(1) : value);
                 }
             }
+            if (data.length() > 0) listener.onStreamEvent(requestId, data.toString());
         }
-        listener.onComplete(buildResult(requestId, content.toString(), thinking.toString(), usage));
-    }
-
-    /** 非流式 JSON：OpenAI 格式 {choices:[{message:{content,reasoning_content}}], usage:{...}}。 */
-    private JSONObject parseCompleteBody(String json, String requestId) throws Exception {
-        try {
-            JSONObject value = new JSONObject(json);
-            if (value.has("choices") && !value.has("output")) {
-                JSONArray choices = value.optJSONArray("choices");
-                JSONObject choice = choices == null || choices.length() == 0 ? null : choices.optJSONObject(0);
-                JSONObject message = choice == null ? null : choice.optJSONObject("message");
-                String content = message == null ? "" : message.optString("content", "");
-                String reasoning = message == null ? "" : message.optString("reasoning_content", message.optString("reasoning", ""));
-                return buildResult(requestId, content, reasoning, value.optJSONObject("usage"));
-            }
-            JSONObject output = new JSONObject();
-            output.put("requestId", requestId);
-            if (value.has("output")) output.put("output", value.opt("output"));
-            if (value.has("thinking")) output.put("thinking", value.opt("thinking"));
-            if (value.has("usage")) output.put("usage", value.opt("usage"));
-            if (value.has("error")) output.put("error", value.opt("error"));
-            return output;
-        } catch (Exception error) {
-            return new JSONObject().put("requestId", requestId).put("error", "Model response is not valid JSON.");
-        }
-    }
-
-    private JSONObject buildResult(String requestId, String content, String thinking, JSONObject usage) throws Exception {
-        JSONObject result = new JSONObject().put("requestId", requestId);
-        if (content != null && !content.isEmpty()) result.put("output", content);
-        if (thinking != null && !thinking.isEmpty()) result.put("thinking", thinking);
-        if (usage != null) {
-            JSONObject normalized = new JSONObject();
-            normalized.put("promptTokens", usage.optInt("prompt_tokens", usage.optInt("promptTokens", 0)));
-            normalized.put("completionTokens", usage.optInt("completion_tokens", usage.optInt("completionTokens", 0)));
-            result.put("usage", normalized);
-        }
-        return result;
+        listener.onComplete(new JSONObject().put("requestId", requestId).put("streamComplete", true));
     }
 
     private String read(InputStream input, int maximum) throws Exception {

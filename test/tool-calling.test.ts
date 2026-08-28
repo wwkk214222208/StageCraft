@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ModelGateway } from '../src/model-gateway.ts'
+import { ModelGateway, parseModelCompleteResponse } from '../src/model-gateway.ts'
 
 const route = { baseUrl: 'https://model.test/v1', apiKey: 'key', model: 'm', timeoutMs: 1000, responseFormat: 'json_object' as const }
 const tool = { name: 'submit_result', description: 'Submit structured result.', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } }
@@ -34,4 +34,15 @@ test('gateway falls back to JSON content only when provider rejects tools', asyn
   const result = await gateway.complete<{ text: string }>('system', 'user', 'result', tool.parameters, tool)
   assert.equal(result.text, 'fallback')
   assert.equal(calls, 2)
+})
+
+test('desktop and Android share completed response parsing with tool arguments preferred', () => {
+  const parsed = parseModelCompleteResponse({
+    choices: [{ message: { content: '{\"ignored\":true}', reasoning_content: 'thought', tool_calls: [{ function: { arguments: '{\"text\":\"tool output\"}' } }] } }],
+    usage: { prompt_tokens: 7, completion_tokens: 3 },
+  })
+  assert.equal(parsed.toolArguments, '{"text":"tool output"}')
+  assert.equal(parsed.content, '{"ignored":true}')
+  assert.equal(parsed.reasoning, 'thought')
+  assert.deepEqual(parsed.usage, { prompt_tokens: 7, completion_tokens: 3 })
 })

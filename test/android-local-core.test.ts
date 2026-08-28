@@ -49,6 +49,27 @@ function fakeNative(room: any) {
   return { transport, secrets }
 }
 
+function streamNative(room: any) {
+  const native = fakeNative(room)
+  native.transport.invokeAsync = (operation: string, inputJson: string, callbackId: string): void => {
+    const input = JSON.parse(inputJson)
+    if (operation !== 'model.request') throw new Error(`unexpected async operation: ${operation}`)
+    native.transport.requests.push({ requestId: input.requestId, endpoint: input.endpoint, apiKey: input.apiKey })
+    const output = input.requestId.includes('role-decision')
+      ? { brief: `完成-${input.requestId}`, privateReaction: '独立响应' }
+      : { text: '导演正文', stateUpdates: {} }
+    const argumentsJson = JSON.stringify(output)
+    const middle = Math.floor(argumentsJson.length / 2)
+    for (const fragment of [argumentsJson.slice(0, middle), argumentsJson.slice(middle)]) {
+      const event = { choices: [{ delta: { content: '{\"ignored\":true}', tool_calls: [{ function: { arguments: fragment } }] } }] }
+      globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, streamPayload: JSON.stringify(event) }))
+    }
+    globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, streamPayload: '[DONE]' }))
+    globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, streamComplete: true }))
+  }
+  return native
+}
+
 test('local core routes model requests by provider table and defaults', async () => {
   const room = makeRoom([{ id: 'aria', name: 'Aria', portraitRef: '/assets/default.svg', currentState: 'At the festival.', presence: 'present', selfModel: 'Reserved.' }])
   const { transport, secrets } = fakeNative(room)
@@ -181,6 +202,24 @@ test('local workers drive real model requests through the async bridge', async (
   await local.submitTurn({ text: '玩家向 Aria 搭话。' })
   assert.ok(room.revision > 0 || messages.some(message => message.type === 'room.changed'), 'turn must progress the room')
   assert.ok(messages.some(message => message.type === 'thinking'), 'turn must emit thinking events')
+  local.dispose()
+})
+
+test('local core isolates shared stream parsing for an arbitrary concurrent role roster', async () => {
+  const roles = Array.from({ length: 5 }, (_, index) => ({
+    id: `role-${index + 1}`, name: `Role ${index + 1}`, portraitRef: '/assets/default.svg',
+    currentState: 'Here.', presence: 'present', selfModel: `Persona ${index + 1}.`,
+  }))
+  const room = makeRoom(roles)
+  const { transport } = streamNative(room)
+  const globalObject: Record<string, unknown> = { StageCraftNative: transport }
+  installLocalCore(globalObject)
+  const local = globalObject.StageCraftLocalCore as any
+  local.setProvider({ baseUrl: 'https://api.example.com/v1', apiKey: 'key', model: 'tool-model' })
+  local.start(() => {})
+  await local.submitTurn({ text: '同时观察多名角色。', requiredRoleIds: roles.map(role => role.id) })
+  const roleRequests = transport.requests.filter((request: any) => request.requestId.includes('role-decision'))
+  assert.equal(roleRequests.length, roles.length, 'every concurrent role must complete its own structured stream')
   local.dispose()
 })
 

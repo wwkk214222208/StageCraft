@@ -123,20 +123,18 @@ export class ModelGateway {
         throw new Error(`Model HTTP ${response.status}${detail ? `: ${detail}` : ''}`)
       }
       this.onSummary?.(`模型已返回：${schemaName}`)
-      const body = await response.json() as { usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }; choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> } }> }
-      const cached = body.usage?.prompt_tokens_details?.cached_tokens
+      const body = await response.json()
+      const parsedResponse = parseModelCompleteResponse(body)
+      const cached = parsedResponse.usage?.prompt_tokens_details?.cached_tokens
       this.cachedTokens += cached ?? 0
-      const callUsage: import('./types.ts').TokenUsage | undefined = body.usage?.prompt_tokens !== undefined || body.usage?.completion_tokens !== undefined
-        ? { promptTokens: body.usage?.prompt_tokens ?? 0, completionTokens: body.usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}) }
+      const callUsage: import('./types.ts').TokenUsage | undefined = parsedResponse.usage?.prompt_tokens !== undefined || parsedResponse.usage?.completion_tokens !== undefined
+        ? { promptTokens: parsedResponse.usage?.prompt_tokens ?? 0, completionTokens: parsedResponse.usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}) }
         : undefined
-      this.promptTokens += body.usage?.prompt_tokens ?? 0
-      this.completionTokens += body.usage?.completion_tokens ?? 0
+      this.promptTokens += parsedResponse.usage?.prompt_tokens ?? 0
+      this.completionTokens += parsedResponse.usage?.completion_tokens ?? 0
       if (callUsage) { const measured = { ...callUsage, durationMs: Date.now() - startedAt }; callbacks.onUsage?.(this.onUsage?.(measured, this.route) ?? measured) }
-      const message = body.choices?.[0]?.message
-      const toolCall = message?.tool_calls?.[0]
-      const toolArguments = toolCall?.function?.arguments
-      const content = toolArguments ?? message?.content
-      const reasoning = extractReasoningFromMessage(message)
+      const { toolArguments, reasoning } = parsedResponse
+      const content = toolArguments || parsedResponse.content
       if (reasoning) callbacks.onThinking?.(reasoning)
       this.onSummary?.(toolArguments ? `模型返回工具参数：${schemaName}` : `模型返回文本内容：${schemaName}`)
       if (!content) throw new Error('Model response did not contain tool arguments or message content.')
@@ -221,19 +219,17 @@ export class ModelGateway {
       const contentType = response.headers.get('content-type') ?? ''
       if (!contentType.includes('text/event-stream')) {
         // 兼容非流式响应（部分网关忽略 stream 或测试环境）：按完整 JSON 处理
-        const body = await response.json() as { usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }; choices?: Array<{ message?: { content?: string; reasoning_content?: string; reasoning?: string; thinking?: string; tool_calls?: Array<{ function?: { arguments?: string } }> } }> }
-        const cached = body.usage?.prompt_tokens_details?.cached_tokens
+        const body = await response.json()
+        const parsedResponse = parseModelCompleteResponse(body)
+        const cached = parsedResponse.usage?.prompt_tokens_details?.cached_tokens
         this.cachedTokens += cached ?? 0
-        this.promptTokens += body.usage?.prompt_tokens ?? 0
-        this.completionTokens += body.usage?.completion_tokens ?? 0
-        if (body.usage?.prompt_tokens !== undefined || body.usage?.completion_tokens !== undefined) {
-          { const measured = { promptTokens: body.usage?.prompt_tokens ?? 0, completionTokens: body.usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}), durationMs: Date.now() - startedAt }; callbacks.onUsage?.(this.onUsage?.(measured, this.route) ?? measured) }
+        this.promptTokens += parsedResponse.usage?.prompt_tokens ?? 0
+        this.completionTokens += parsedResponse.usage?.completion_tokens ?? 0
+        if (parsedResponse.usage?.prompt_tokens !== undefined || parsedResponse.usage?.completion_tokens !== undefined) {
+          { const measured = { promptTokens: parsedResponse.usage?.prompt_tokens ?? 0, completionTokens: parsedResponse.usage?.completion_tokens ?? 0, ...(cached ? { cachedTokens: cached } : {}), durationMs: Date.now() - startedAt }; callbacks.onUsage?.(this.onUsage?.(measured, this.route) ?? measured) }
         }
-        const message = body.choices?.[0]?.message
-        const toolCall = message?.tool_calls?.[0]
-        const toolArguments = toolCall?.function?.arguments
-        const content = toolArguments ?? message?.content
-        const reasoning = extractReasoningFromMessage(message)
+        const { toolArguments, reasoning } = parsedResponse
+        const content = toolArguments || parsedResponse.content
         if (reasoning) callbacks.onThinking?.(reasoning)
         this.onSummary?.(`模型已返回：${schemaName}`)
         if (!content) throw new Error('Model response did not contain tool arguments or message content.')
@@ -293,13 +289,6 @@ export function normalizeStateUpdateKeys(stateUpdates: Record<string, string>, c
   return fixed
 }
 
-function extractReasoningFromMessage(message: { content?: string; reasoning_content?: string; reasoning?: string; thinking?: string } | undefined): string {
-  if (!message || typeof message !== 'object') return ''
-  const parts = [message.reasoning_content, message.reasoning, message.thinking]
-    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-  return parts.join('\n\n')
-}
-
 function turnIdFromScene(scene?: { turnId?: string }): string {
   return scene?.turnId ?? `turn-${Date.now()}`
 }
@@ -315,15 +304,51 @@ function turnIdFromScene(scene?: { turnId?: string }): string {
  *   3. 流自然 done → 结束；
  *   4. 空闲超时（连续无字节）→ 由调用方 abort（真正的僵死兜底）。
  */
-async function consumeSseStream(body: ReadableStream<Uint8Array>, callbacks: StreamingCallbacks, onActivity?: () => void, graceMs = 10_000): Promise<{ content: string; toolArguments: string; reasoning: string; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }; finishReason?: string }> {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
+export type ModelStreamResult = { content: string; toolArguments: string; reasoning: string; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }; finishReason?: string }
+
+/** Shared semantic parser for a completed OpenAI-compatible response. */
+export function parseModelCompleteResponse(value: unknown): ModelStreamResult {
+  const body = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const choices = body.choices as Array<Record<string, unknown>> | undefined
+  const message = choices?.[0]?.message as Record<string, unknown> | undefined
+  const toolCalls = message?.tool_calls as Array<{ function?: { arguments?: unknown } }> | undefined
+  const toolArguments = typeof toolCalls?.[0]?.function?.arguments === 'string' ? toolCalls[0].function.arguments : ''
+  const content = typeof message?.content === 'string' ? message.content : ''
+  const reasoning = firstString(message?.reasoning_content, message?.reasoning, message?.thinking)
+  const usageJson = body.usage as ModelStreamResult['usage']
+  const usage = usageJson && (typeof usageJson.prompt_tokens === 'number' || typeof usageJson.completion_tokens === 'number') ? usageJson : undefined
+  return { content, toolArguments, reasoning, ...(usage ? { usage } : {}) }
+}
+
+/** Shared OpenAI-compatible stream accumulator used by desktop fetch and Android native HTTP. */
+export type ParsedModelStreamPayload = { content?: string; toolArguments?: string; reasoning?: string; usage?: ModelStreamResult['usage']; finishReason?: string; done?: boolean }
+
+export function createModelStreamAccumulator(callbacks: StreamingCallbacks = {}): { push(payload: string): ParsedModelStreamPayload; result(): ModelStreamResult } {
   let content = ''
   let toolArguments = ''
   let reasoning = ''
-  let usage: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined
+  let usage: ModelStreamResult['usage']
   let finishReason: string | undefined
+  return {
+    push(payload: string): ParsedModelStreamPayload {
+      if (!payload || payload === '[DONE]') return payload === '[DONE]' ? { done: true } : {}
+      const parsed = parseModelStreamPayload(payload, callbacks)
+      if (parsed.reasoning) reasoning += parsed.reasoning
+      if (parsed.content) content += parsed.content
+      if (parsed.toolArguments) toolArguments += parsed.toolArguments
+      if (parsed.usage) usage = parsed.usage
+      if (parsed.finishReason) finishReason = parsed.finishReason
+      return parsed
+    },
+    result(): ModelStreamResult { return { content, toolArguments, reasoning, ...(usage ? { usage } : {}), ...(finishReason ? { finishReason } : {}) } },
+  }
+}
+
+async function consumeSseStream(body: ReadableStream<Uint8Array>, callbacks: StreamingCallbacks, onActivity?: () => void, graceMs = 10_000): Promise<ModelStreamResult> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const accumulator = createModelStreamAccumulator(callbacks)
   let finishedAt = 0
   let pendingRead: Promise<{ done: boolean; value?: Uint8Array }> | null = null
   try {
@@ -351,15 +376,10 @@ async function consumeSseStream(body: ReadableStream<Uint8Array>, callbacks: Str
         if (rawEvent.includes('[DONE]')) {
           // 流结束信号：剩余 buffer 不再有语义内容，直接收尾
           buffer = ''
-          return { content, toolArguments, reasoning, usage, finishReason }
+          return accumulator.result()
         }
-        const parsed = parseSseEvent(rawEvent, callbacks)
-        if (parsed.reasoning) reasoning += parsed.reasoning
-        if (parsed.content) content += parsed.content
-        if (parsed.toolArguments) toolArguments += parsed.toolArguments
-        if (parsed.usage) usage = parsed.usage
+        const parsed = accumulator.push(parseSseEvent(rawEvent))
         if (parsed.finishReason) {
-          finishReason = parsed.finishReason
           finishedAt = Date.now()
         } else if (finishedAt && (parsed.content || parsed.toolArguments)) {
           // finish_reason 之后仍收到新内容：供应商在补发，重置宽限继续等
@@ -368,27 +388,29 @@ async function consumeSseStream(body: ReadableStream<Uint8Array>, callbacks: Str
       }
     }
     if (buffer.trim()) {
-      const parsed = parseSseEvent(buffer, callbacks)
-      if (parsed.reasoning) reasoning += parsed.reasoning
-      if (parsed.content) content += parsed.content
-      if (parsed.toolArguments) toolArguments += parsed.toolArguments
-      if (parsed.usage) usage = parsed.usage
+      accumulator.push(parseSseEvent(buffer))
     }
   } finally {
     // 竞速失败被放弃的 read() 会在 releaseLock 时 reject，吞掉避免 unhandled rejection
     pendingRead?.catch(() => {})
     reader.releaseLock()
   }
-  return { content, toolArguments, reasoning, usage, finishReason }
+  return accumulator.result()
 }
 
-function parseSseEvent(rawEvent: string, callbacks: StreamingCallbacks): { content?: string; toolArguments?: string; reasoning?: string; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } }; finishReason?: string } {
+function parseSseEvent(rawEvent: string): string {
   const dataLine = rawEvent.split('\n').map(line => line.trim()).find(line => line.startsWith('data:'))
-  if (!dataLine) return {}
-  const payload = dataLine.slice(5).trim()
-  if (!payload || payload === '[DONE]') return {}
+  return dataLine?.slice(5).trim() ?? ''
+}
+
+export function parseModelStreamPayload(payload: string, callbacks: StreamingCallbacks = {}): ParsedModelStreamPayload {
   let json: Record<string, unknown>
   try { json = JSON.parse(payload) } catch { return {} }
+  if (!Array.isArray(json.choices) && (typeof json.delta === 'string' || typeof json.text === 'string' || json.done === true)) {
+    const content = firstString(json.delta, json.text)
+    if (content) callbacks.onContent?.(content)
+    return { ...(content ? { content } : {}), ...(json.done === true ? { done: true } : {}) }
+  }
   const choices = json.choices as Array<Record<string, unknown>> | undefined
   const choice = choices?.[0]
   const delta = (choice?.delta ?? {}) as Record<string, unknown>

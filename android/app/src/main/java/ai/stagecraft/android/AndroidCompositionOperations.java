@@ -180,7 +180,7 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
                     URI endpoint = URI.create(JsonSafety.requiredString(input, "endpoint", 2048));
                     String apiKey = JsonSafety.optionalString(input, "apiKey", 4096);
                     modelTransport.request(endpoint, apiKey, input, new AndroidModelTransport.Listener() {
-                        @Override public void onDelta(String requestId, String text) { try { callback.onResult(new JSONObject().put("requestId", requestId).put("thinkingDelta", text)); } catch (Exception error) { callback.onError(error.getMessage()); } }
+                        @Override public void onStreamEvent(String requestId, String payload) { try { callback.onResult(new JSONObject().put("requestId", requestId).put("streamPayload", payload)); } catch (Exception error) { callback.onError(error.getMessage()); } }
                         @Override public void onComplete(JSONObject result) { callback.onResult(result); }
                         @Override public void onError(String requestId, String message) { callback.onError(message); }
                     });
