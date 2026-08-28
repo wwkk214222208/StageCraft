@@ -624,7 +624,7 @@ async function loadVersionInfo() {
   try {
     const data = await (await fetch('/api/version')).json()
     const commitShort = data.commit ? data.commit.slice(0, 7) : ''
-    el.textContent = `版本 ${data.version || 'dev'}${commitShort ? ` · 提交 ${commitShort}` : ''}${data.platform ? ` · ${data.platform === 'android' ? 'APK' : '桌面'}` : ''}`
+    el.textContent = `版本 ${data.version || 'dev'}${data.tag ? `（${data.tag.replace(/^v/, '')}）` : ''}${commitShort ? ` · 提交 ${commitShort}` : ''}${data.platform ? ` · ${data.platform === 'android' ? 'APK' : '桌面'}` : ''}`
   } catch { el.textContent = '版本信息不可用。' }
 }
 // ── 更新流程：按钮与自动检查共用；APK 走原生下载安装（带进度回调），桌面走流式下载+自更新 ──
@@ -670,6 +670,8 @@ async function runUpdateFlow(data) {
 }
 $('#check-update').onclick = async () => {  const status = $('#update-status')
   if (!status) return
+  const button = $('#check-update')
+  button.disabled = true
   status.textContent = '正在检查更新…'
   try {
     const response = await fetch('/api/update/check')
@@ -680,6 +682,7 @@ $('#check-update').onclick = async () => {  const status = $('#update-status')
     if (!confirm(`发现新版本 ${data.tag}，是否下载并更新？${window.__STAGECRAFT_LOCAL__ ? '' : '更新过程中程序会短暂退出。'}`)) return
     await runUpdateFlow(data)
   } catch (error) { status.textContent = error instanceof Error ? error.message : '检查更新失败。' }
+  finally { button.disabled = false }
 }
 // ── 启动时自动检查更新（默认关闭；桌面 localStorage，APK 走原生 secret 桥）──
 function readAutoUpdatePref() {
