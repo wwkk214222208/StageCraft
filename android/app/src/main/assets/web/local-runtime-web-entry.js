@@ -184,13 +184,18 @@
       '/api/update/check': async () => {
         try {
           const versionRes = await originalFetch('/version.json')
-          const current = versionRes.ok ? await versionRes.json() : { commit: '' }
-          const release = await (await originalFetch('https://api.github.com/repos/wwkk214222208/StageCraft/releases/latest', { headers: { accept: 'application/vnd.github+json' } })).json()
+          if (!versionRes.ok) throw new Error('本地版本信息读取失败。')
+          const current = await versionRes.json()
+          const releaseRes = await originalFetch('https://api.github.com/repos/wwkk214222208/StageCraft/releases/latest', { headers: { accept: 'application/vnd.github+json' } })
+          if (!releaseRes.ok) throw new Error(`GitHub 检查失败（HTTP ${releaseRes.status}，可能触发接口限流，请稍后再试）。`)
+          const release = await releaseRes.json()
           const tag = String(release.tag_name || '')
           const apk = (release.assets || []).find(asset => /^stagecraft-[\w.\-]+-android\.apk$/i.test(String(asset.name || '')))
           let updateAvailable = false
           if (current.commit) {
-            const compare = await (await originalFetch(`https://api.github.com/repos/wwkk214222208/StageCraft/compare/${encodeURIComponent(tag)}...${encodeURIComponent(current.commit)}`, { headers: { accept: 'application/vnd.github+json' } })).json()
+            const compareRes = await originalFetch(`https://api.github.com/repos/wwkk214222208/StageCraft/compare/${encodeURIComponent(tag)}...${encodeURIComponent(current.commit)}`, { headers: { accept: 'application/vnd.github+json' } })
+            if (!compareRes.ok) throw new Error(`GitHub 比对失败（HTTP ${compareRes.status}，可能触发接口限流，请稍后再试）。`)
+            const compare = await compareRes.json()
             updateAvailable = compare.status === 'behind'
           }
           return respondJson(200, { updateAvailable, tag, version: String(tag).replace(/^v/, ''), apkUrl: apk?.browser_download_url, currentCommit: current.commit || '' })
