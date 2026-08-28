@@ -11,7 +11,7 @@ import { createAndroidComposition, type AndroidComposition } from './android-com
 import type { RoomSnapshot, RoomMode, WorldChangeRequest, ThinkingStrength, Role, LoreEntry, ConsultationMessage, Decision, Draft, PlayerCharacter } from '../types.ts'
 import type { StoryPackage } from '../story-packages.ts'
 import type { WorkerSet } from '../workers.ts'
-import { createRealWorkers, type ModelGateway } from '../model-gateway.ts'
+import { createRealWorkers, parseModelJson, type ModelGateway } from '../model-gateway.ts'
 import { resolveProviderForRequest, type ProviderRoutingEntry } from '../provider-routing.ts'
 import { setPromptStorage } from '../prompts.ts'
 import { createAndroidPromptStorage } from './android-prompt-storage.ts'
@@ -50,7 +50,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     const method = native.invokeSync as (name: string, value: string) => string
     const raw = method.call(native, operation, JSON.stringify(input))
     if (typeof raw !== 'string' || raw.length > 16 * 1024 * 1024) throw new Error('Android bridge response is invalid or too large.')
-    const parsed = JSON.parse(raw) as unknown
+    let parsed: unknown
+    try { parsed = JSON.parse(raw) } catch { throw new Error(`Android bridge response is not valid JSON for ${operation}.`) }
     if (parsed && typeof parsed === 'object' && 'error' in parsed && (parsed as { error?: unknown }).error !== null) {
       const message = (parsed as { error?: { message?: string } }).error?.message ?? 'Native operation failed.'
       throw new Error(message)
@@ -165,12 +166,12 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     return invokeAsync('model.request', { requestId: request.requestId, endpoint: endpointFor(config.baseUrl), apiKey: config.apiKey, ...toOpenAiBody(request, config) }, hooks).then(normalizeModelResult) as Promise<ModelResult>
   }
 
-  /** Java 原生传输把模型正文以字符串返回；按契约解析为对象（json_object 响应）。 */
+  /** 模型返回解析：与桌面 ModelGateway 同一套容错（剥围栏/截取片段），避免裸 JSON.parse 抛原生错误。 */
   const normalizeModelResult = (value: unknown): ModelResult => {
     const result = (value ?? {}) as ModelResult
     if (typeof result.output === 'string') {
       const text = result.output
-      try { result.output = JSON.parse(text) } catch { throw new Error('模型返回不是有效的 JSON，请改用支持 json_object 的模型或检查接口地址/模型名。') }
+      try { result.output = parseModelJson(text) } catch { throw new Error('模型返回不是有效的 JSON，请改用支持 json_object 的模型或检查接口地址/模型名。') }
       if (result.output === null || typeof result.output !== 'object') throw new Error(`模型返回内容不是 JSON 对象：${text.slice(0, 80)}`)
     }
     return result

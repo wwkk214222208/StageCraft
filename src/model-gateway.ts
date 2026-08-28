@@ -448,7 +448,8 @@ function firstString(...values: unknown[]): string {
   return ''
 }
 
-function parseModelJson(content: string): unknown {
+/** 解析模型返回的 JSON 文本（双端共享）：剥离 ```json 围栏、容忍前后缀文本、截取首个对象/数组片段。 */
+export function parseModelJson(content: string): unknown {
   const trimmed = content.trim()
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]
   const candidate = fenced ?? trimmed
