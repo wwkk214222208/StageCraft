@@ -64,7 +64,8 @@
 /* 供应商管理 */
 .provider-unconfigured-hint{background:#4a2a2a;border:1px solid #a35555;color:#ffc9b8;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.5;margin:0 0 10px}
 .provider-unconfigured-hint[hidden]{display:none}
-.provider-manager-panel{display:flex;flex-direction:column;gap:10px;min-width:420px}
+.provider-manager-panel{display:flex;flex-direction:column;gap:10px;min-width:420px;max-width:100%}
+#provider-manager-modal,#provider-edit-modal{width:min(640px,94vw);max-width:94vw;padding:16px}
 .provider-manager-panel header{height:auto;padding:0 0 8px;border-bottom:1px solid #34415b;display:flex;align-items:center;justify-content:space-between;background:none}
 .provider-manager-panel header h3{margin:0}
 .provider-manager-toolbar{display:flex;justify-content:flex-end}
@@ -404,7 +405,7 @@ html.android-device #story-edit-modal .creator-editor{min-height:0}
 
 /* Android settings dialogs: one predictable scroll area and always-visible actions. */
 @media (max-width:680px){
-  #role-modal,#player-modal,#prompt-preset-modal{
+  #role-modal,#player-modal,#prompt-preset-modal,#provider-manager-modal,#provider-edit-modal,#connection-modal,#billing-modal{
     inset:0;
     width:100%;
     max-width:none;
@@ -415,6 +416,7 @@ html.android-device #story-edit-modal .creator-editor{min-height:0}
     border:0;
     border-radius:0;
   }
+  .provider-manager-panel{min-width:0;width:100%}
   #role-modal form,#player-modal form{height:100%;min-height:0;padding-bottom:env(safe-area-inset-bottom)}
   #role-modal header,#player-modal header{
     position:relative;

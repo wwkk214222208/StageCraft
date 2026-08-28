@@ -158,8 +158,13 @@
       || (defaults.director && providers.find(item => item.id === defaults.director.providerId))
       || providers[0]
     if (preferred) {
-      const { baseUrl, apiKey, model, responseFormat } = preferred
-      core.setProvider({ baseUrl, apiKey, model, responseFormat: preferred.responseFormat })
+      // 表项用 selectedModel（兼容 model 字段），baseUrl/apiKey 必须存在
+      const baseUrl = String(preferred.baseUrl ?? '').trim()
+      const apiKey = String(preferred.apiKey ?? '')
+      const model = String(preferred.selectedModel ?? preferred.model ?? '').trim()
+      if (baseUrl && apiKey && model) {
+        core.setProvider({ baseUrl, apiKey, model, responseFormat: preferred.responseFormat === 'none' ? 'none' : 'json_object' })
+      }
     }
   }
   function nativeInvokeSync(operation, input) {
@@ -210,7 +215,15 @@
         const configured = core.getProvider().configured === true
         return respondJson(200, { route: configured ? '本地' : '模拟', model: configured ? core.getProvider().model : '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: configured ? 'local' : 'fake', billing: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
       },
-      '/api/billing': () => respondJson(200, { prices: {}, stats: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } }),
+      '/api/billing': () => {
+        let prices = {}
+        try {
+          const raw = window.StageCraftNative.invokeSync('secret.get', JSON.stringify({ key: 'local.billing.prices' }))
+          const parsed = raw ? JSON.parse(raw) : {}
+          if (parsed && parsed.found && typeof parsed.value === 'string') prices = JSON.parse(parsed.value)
+        } catch { /* 无价格配置 */ }
+        return respondJson(200, { prices, stats: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
+      },
       '/api/prompts/presets': async () => {
         const data = nativeInvokeSync('preset.list', {})
         // 与桌面同一份 gameplay 文件（APK 打包于 web/gameplay/），仅下发 userEditable 的场景
@@ -615,6 +628,9 @@
           result.providers = true
         }
       }
+      if (payload.billing && typeof payload.billing === 'object' && payload.billing.prices && typeof payload.billing.prices === 'object') {
+        nativeInvokeSync('secret.set', { key: 'local.billing.prices', value: JSON.stringify(payload.billing.prices) })
+      }
       if (payload.room && typeof payload.room === 'object' && payload.room.room && typeof payload.room.room === 'object') {
         nativeInvokeSync('stagecraft.repository', { method: 'importRoom', args: [ROOM_ID, payload.room] })
         core.refresh()
@@ -646,7 +662,13 @@
       const meta = providerMeta()
       const providerEntry = Array.isArray(meta.providers) && meta.providers.length ? meta : null
       result.providers = Boolean(providerEntry)
-      await syncRemoteFetch('PUT', { version: 1, generatedAt: new Date().toISOString(), room: roomPayload, saves, stories, providers: providerEntry, prompts: { presets, privateToggles: {} } })
+      let billingPrices = null
+      try {
+        const raw = window.StageCraftNative.invokeSync('secret.get', JSON.stringify({ key: 'local.billing.prices' }))
+        const parsed = raw ? JSON.parse(raw) : {}
+        if (parsed && parsed.found && typeof parsed.value === 'string') billingPrices = JSON.parse(parsed.value)
+      } catch { /* 无价格配置 */ }
+      await syncRemoteFetch('PUT', { version: 1, generatedAt: new Date().toISOString(), room: roomPayload, saves, stories, providers: providerEntry, billing: billingPrices ? { prices: billingPrices } : null, prompts: { presets, privateToggles: {} } })
       return result
     },
   }

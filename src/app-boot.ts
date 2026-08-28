@@ -487,6 +487,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
           saves,
           stories,
           providers: providerStore.exportPrivate(),
+          billing: { prices: billing.getPrices() },
           prompts: { presets: getPromptPresetState(promptsFilePath), privateToggles: loadPrivateToggles(promptsFilePath) },
         })
       }
@@ -496,6 +497,9 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         if (body.providers && typeof body.providers === 'object') {
           providerStore.importPrivate(body.providers as any)
           await activateProvider(providerStore.getDirector())
+        }
+        if (body.billing && typeof body.billing === 'object' && body.billing.prices && typeof body.billing.prices === 'object') {
+          billing.savePrices(body.billing.prices as Record<string, unknown>)
         }
         if (body.room && typeof body.room === 'object') await dispatchManagement('import-archive', { archive: body.room })
         if (Array.isArray(body.saves)) for (const item of body.saves) {
