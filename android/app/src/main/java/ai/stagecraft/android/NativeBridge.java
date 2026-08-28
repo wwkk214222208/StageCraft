@@ -1,6 +1,9 @@
 package ai.stagecraft.android;
 
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.content.Intent;
+import android.content.pm.PackageInstaller;
 import android.net.Uri;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
@@ -351,6 +354,60 @@ public final class NativeBridge implements AutoCloseable {
         activity.runOnUiThread(() -> ((MainActivity) activity).openCharacterCardPicker());
     }
 
+    /** APK 自更新：下载最新 release APK 并经 PackageInstaller 触发系统安装（无需 FileProvider）。 */
+    @JavascriptInterface public void updateDownloadAndInstall(String apkUrl) {
+        if (closed || apkUrl == null || apkUrl.isEmpty() || apkUrl.length() > 2048) return;
+        networkExecutor.execute(() -> {
+            HttpURLConnection connection = null;
+            try {
+                connection = (HttpURLConnection) new java.net.URL(apkUrl).openConnection();
+                connection.setConnectTimeout(15_000);
+                connection.setReadTimeout(120_000);
+                connection.setInstanceFollowRedirects(true);
+                connection.setUseCaches(false);
+                int status = connection.getResponseCode();
+                if (status < 200 || status >= 300) throw new IllegalStateException("下载失败（HTTP " + status + "）。");
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                byte[] chunk = new byte[64 * 1024];
+                try (InputStream input = connection.getInputStream()) {
+                    int count;
+                    while ((count = input.read(chunk)) >= 0) {
+                        buffer.write(chunk, 0, count);
+                        if (buffer.size() > 100 * 1024 * 1024) throw new IllegalStateException("APK 过大。");
+                    }
+                }
+                byte[] bytes = buffer.toByteArray();
+                if (bytes.length < 1024 || bytes[0] != 'P' || bytes[1] != 'K') throw new IllegalStateException("下载内容不是有效的 APK。");
+                if (closed) return;
+                activity.runOnUiThread(() -> installApkBytes(bytes));
+            } catch (Exception error) {
+                if (!closed) emit(errorMessage(error.getMessage() == null ? "下载失败。" : "下载失败：" + error.getMessage()));
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        });
+    }
+
+    private void installApkBytes(byte[] bytes) {
+        try {
+            PackageInstaller installer = activity.getPackageManager().getPackageInstaller();
+            PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            params.setAppPackageName(activity.getPackageName());
+            int sessionId = installer.createSession(params);
+            PackageInstaller.Session session = installer.openSession(sessionId);
+            try {
+                try (OutputStream output = session.openWrite("stagecraft-update.apk", 0, bytes.length)) { output.write(bytes); }
+                Intent intent = new Intent(activity, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                PendingIntent pending = PendingIntent.getActivity(activity, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                session.commit(pending.getIntentSender());
+                emit(stateMessage("已启动安装，请在系统安装界面确认。"));
+            } finally {
+                session.close();
+            }
+        } catch (Exception error) {
+            emit(errorMessage("安装启动失败：" + (error.getMessage() == null ? String.valueOf(error) : error.getMessage())));
+        }
+    }
     void importCharacterCard(Uri uri) {
         if (closed || uri == null) return;
         long fileOperation = fileGeneration.incrementAndGet();

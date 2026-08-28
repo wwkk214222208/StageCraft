@@ -73,6 +73,15 @@ function ensureStartScripts() {  // 打包一个通用的独立启动脚本（Wi
   writeFileSync(join(stageDir, 'start.sh'), sh, 'utf8')
 }
 
+/** 写入构建期版本信息（version.json）：版本号 + 当前提交编号 + 最新 tag，供 /api/version 与更新比对。 */
+function writeVersionInfo() {
+  let commit = ''
+  let tag = ''
+  try { commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim() } catch { /* 无 git */ }
+  try { tag = execFileSync('git', ['describe', '--tags', '--always'], { cwd: repoRoot, encoding: 'utf8' }).trim() } catch { /* 无 git */ }
+  writeFileSync(join(stageDir, 'version.json'), `${JSON.stringify({ version, commit, tag, buildTime: new Date().toISOString() }, null, 2)}\n`, 'utf8')
+}
+
 function makeZip() {
   // Windows: PowerShell Compress-Archive；其他平台：tar
   if (process.platform === 'win32') {
@@ -92,6 +101,7 @@ async function main() {
   mkdirSync(stageDir, { recursive: true })
   copyTree(repoRoot, stageDir)
   ensureStartScripts()
+  writeVersionInfo()
   // 清理 staging 里的 release 自身
   rmSync(join(stageDir, 'release'), { recursive: true, force: true })
   // 独立版内置运行时依赖（cordis/schemastery 为 dependencies）：解压即用，无需用户装依赖

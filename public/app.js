@@ -617,8 +617,77 @@ $('#player-avatar-url').onclick = async () => {
     if (ok) { $('#player-avatar-preview').src = ok.portraitRef ?? $('#player-avatar-preview').src; refreshRoom() }
   } catch { /* api() 已 alert */ }
 }
+// ── 关于：版本信息（当前提交编号）与更新检查 ──
+async function loadVersionInfo() {
+  const el = $('#about-version')
+  if (!el) return
+  try {
+    const data = await (await fetch('/api/version')).json()
+    const commitShort = data.commit ? data.commit.slice(0, 7) : ''
+    el.textContent = `版本 ${data.version || 'dev'}${commitShort ? ` · 提交 ${commitShort}` : ''}${data.platform ? ` · ${data.platform === 'android' ? 'APK' : '桌面'}` : ''}`
+  } catch { el.textContent = '版本信息不可用。' }
+}
+$('#check-update').onclick = async () => {  const status = $('#update-status')
+  if (!status) return
+  status.textContent = '正在检查更新…'
+  try {
+    const response = await fetch('/api/update/check')
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || '检查更新失败。')
+    if (!data.updateAvailable) { status.textContent = '当前已是最新版本。'; return }
+    status.textContent = `发现新版本 ${data.tag}（${data.version}）。`
+    // 下载并安装由各端实现：桌面走 /api/update/download + 自更新脚本；APK 走原生安装流程
+    if (window.__STAGECRAFT_LOCAL__) {
+      if (!confirm(`发现新版本 ${data.tag}，是否下载并安装？`)) return
+      status.textContent = '正在下载并安装…'
+      try {
+        // APK 端通过原生桥下载并触发系统安装器
+        window.StageCraftNative && window.StageCraftNative.updateDownloadAndInstall && window.StageCraftNative.updateDownloadAndInstall(data.apkUrl || '')
+        status.textContent = '已开始下载，完成后系统会提示安装。'
+      } catch (error) { status.textContent = `更新失败：${error instanceof Error ? error.message : String(error)}` }
+    } else {
+      if (!confirm(`发现新版本 ${data.tag}，是否下载并更新？更新过程中程序会短暂退出。`)) return
+      status.textContent = '正在下载并准备更新…'
+      try {
+        const result = await (await fetch('/api/update/download', { method: 'POST' })).json()
+        if (!result.ok) throw new Error(result.error || '下载失败。')
+        status.textContent = '下载完成，正在应用更新…'
+        await new Promise(resolve => setTimeout(resolve, 500))
+        window.location.reload()
+      } catch (error) { status.textContent = `更新失败：${error instanceof Error ? error.message : String(error)}` }
+    }
+  } catch (error) { status.textContent = error instanceof Error ? error.message : '检查更新失败。' }
+}
+// ── 启动时自动检查更新（默认关闭；桌面 localStorage，APK 走原生 secret 桥）──
+function readAutoUpdatePref() {
+  if (window.__STAGECRAFT_LOCAL__) {
+    try {
+      const raw = window.StageCraftNative && window.StageCraftNative.invokeSync('secret.get', JSON.stringify({ key: 'local.auto-update' }))
+      const parsed = raw ? JSON.parse(raw) : null
+      return Boolean(parsed && parsed.found && parsed.value === 'true')
+    } catch { return false }
+  }
+  try { return localStorage.getItem('stagecraft.autoUpdate') === '1' } catch { return false }
+}
+function writeAutoUpdatePref(enabled) {
+  if (window.__STAGECRAFT_LOCAL__) {
+    try { window.StageCraftNative && window.StageCraftNative.invokeSync('secret.set', JSON.stringify({ key: 'local.auto-update', value: enabled ? 'true' : 'false' })) } catch { /* 忽略 */ }
+    return
+  }
+  try { localStorage.setItem('stagecraft.autoUpdate', enabled ? '1' : '0') } catch { /* 忽略 */ }
+}
+$('#settings-auto-update').onchange = () => writeAutoUpdatePref($('#settings-auto-update').checked)
+async function checkForUpdatesSilent() {
+  try {
+    const response = await fetch('/api/update/check')
+    const data = await response.json()
+    if (!response.ok || !data.updateAvailable) return
+    $('#update-status').textContent = `发现新版本 ${data.tag}（${data.version}），可在「设置 → 关于」中更新。`
+    if (window.__STAGECRAFT_LOCAL__) { /* 静默检查仅提示，不自动安装 */ }
+  } catch { /* 静默失败不打扰 */ }
+}
 $('#story-settings').onclick = () => { refreshArchiveList(); const storySelect = $('#story-select'); if (room?.storyId && [...storySelect.options].some(option => option.value === room.storyId)) storySelect.value = room.storyId; const modeLabel = room?.mode === 'chat' ? '群聊' : '导演'; $('#archive-name').value = room?.title?.trim() ? `${room.title.trim()}-${modeLabel}` : (room?.storyId ?? ''); $('#room-mode-select').value = room?.mode ?? 'chat'; $('#story-modal').showModal() }
-$('#app-settings').onclick = () => { $('#settings-token-count').checked = tokenCountEnabled; $('#settings-debug').checked = !debugWindow.hidden; $('#settings-whale-meme').checked = whaleMemeEnabled; $('#settings-modal').showModal() }
+$('#app-settings').onclick = () => { $('#settings-token-count').checked = tokenCountEnabled; $('#settings-debug').checked = !debugWindow.hidden; $('#settings-whale-meme').checked = whaleMemeEnabled; $('#settings-auto-update').checked = readAutoUpdatePref(); $('#settings-modal').showModal(); void loadVersionInfo() }
 $('#settings-token-count').onchange = () => { tokenCountEnabled = $('#settings-token-count').checked; try { localStorage.setItem(TOKEN_PREFS_KEY, tokenCountEnabled ? '1' : '0') } catch {} render(room) }
 $('#settings-debug').onchange = () => { debugWindow.hidden = !$('#settings-debug').checked }
 $('#debug-toggle').onclick = () => { debugDetailsEnabled = !debugDetailsEnabled; $('#debug-toggle').classList.toggle('active', debugDetailsEnabled); debugWindow.classList.toggle('debug-details-on', debugDetailsEnabled) }
@@ -1771,6 +1840,8 @@ async function bootApp() {
   }
   // 非核心辅助接口失败不应阻断旧 UI 的操作能力。
   await Promise.allSettled([loadStories(), loadProviders(), loadPromptPresets(), coreInteractionPanel.start()])
+  // 启动自动检查更新（默认关闭，需在设置 → 关于中开启）
+  if (readAutoUpdatePref()) void checkForUpdatesSilent()
 }
 bootApp()
 const events = new EventSource('/api/events'); events.addEventListener('room', event => { try { render(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] room event render failed', error) } })

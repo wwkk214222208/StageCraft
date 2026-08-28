@@ -174,6 +174,28 @@
     /** GET 数据端点 */
     get: {
       '/api/room': () => respondJson(200, publicRoomSnapshot(guardRoom())),
+      '/api/version': async () => {
+        try {
+          const response = await originalFetch('/version.json')
+          if (!response.ok) return respondJson(200, { version: '0.0.0-dev', commit: '', tag: '', buildTime: '', platform: 'android' })
+          return respondJson(200, await response.json())
+        } catch { return respondJson(200, { version: '0.0.0-dev', commit: '', tag: '', buildTime: '', platform: 'android' }) }
+      },
+      '/api/update/check': async () => {
+        try {
+          const versionRes = await originalFetch('/version.json')
+          const current = versionRes.ok ? await versionRes.json() : { commit: '' }
+          const release = await (await originalFetch('https://api.github.com/repos/wwkk214222208/StageCraft/releases/latest', { headers: { accept: 'application/vnd.github+json' } })).json()
+          const tag = String(release.tag_name || '')
+          const apk = (release.assets || []).find(asset => /^stagecraft-[\w.\-]+-android\.apk$/i.test(String(asset.name || '')))
+          let updateAvailable = false
+          if (current.commit) {
+            const compare = await (await originalFetch(`https://api.github.com/repos/wwkk214222208/StageCraft/compare/${encodeURIComponent(tag)}...${encodeURIComponent(current.commit)}`, { headers: { accept: 'application/vnd.github+json' } })).json()
+            updateAvailable = compare.status === 'behind'
+          }
+          return respondJson(200, { updateAvailable, tag, version: String(tag).replace(/^v/, ''), apkUrl: apk?.browser_download_url, currentCommit: current.commit || '' })
+        } catch (error) { return respondJson(400, { error: error instanceof Error ? error.message : '检查更新失败。' }) }
+      },
       '/api/stories': () => respondJson(200, core.stories()),
       '/api/archive/export': () => respondJson(200, { version: 1, exportedAt: new Date().toISOString(), room: guardRoom() }),
       '/api/archive/list': () => respondJson(200, nativeInvokeSync('archive.list', {})),

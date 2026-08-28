@@ -4,6 +4,27 @@ plugins {
     id("com.android.application")
 }
 
+// ── 构建期版本信息：commit + tag + versionName/versionCode 对齐发布（更新比对依赖）──
+fun gitOutput(vararg args: String): String {
+    return try {
+        providers.exec { commandLine(listOf("git") + args) }.standardOutput.asText.get().trim()
+    } catch (e: Exception) { "" }
+}
+val gitCommit = gitOutput("rev-parse", "HEAD")
+val gitDescribe = gitOutput("describe", "--tags", "--always")
+val releaseVersion = providers.gradleProperty("version").orNull?.takeIf { it.isNotBlank() } ?: gitDescribe.removePrefix("v").ifBlank { "0.0.0-dev" }
+val gitCount = gitOutput("rev-list", "--count", "HEAD")
+val generatedVersion = layout.buildDirectory.dir("generated/local-version")
+val generateVersionInfo by tasks.registering {
+    outputs.file(generatedVersion.map { it.file("version.json") })
+    doLast {
+        val file = generatedVersion.get().asFile.resolve("version.json")
+        file.parentFile.mkdirs()
+        val json = """{"version":"${releaseVersion.replace("\"", "\\\"")}","commit":"${gitCommit.replace("\"", "\\\"")}","tag":"${gitDescribe.replace("\"", "\\\"")}","buildTime":"${java.time.Instant.now()}","platform":"android"}"""
+        file.writeText(json + "\n")
+    }
+}
+
 val rendererSource = layout.projectDirectory.dir("src/main/assets")
 val generatedRenderer = layout.buildDirectory.dir("generated/android-assets")
 val generatedRendererSource = layout.buildDirectory.dir("generated/android-renderer")
@@ -72,13 +93,14 @@ val generateLocalEntry by tasks.registering {
     }
 }
 val packageAndroidAssets by tasks.registering(Sync::class) {
-    dependsOn(packageRemoteRenderer, packageEmbeddedCore, generateLocalEntry)
+    dependsOn(packageRemoteRenderer, packageEmbeddedCore, generateLocalEntry, generateVersionInfo)
     from(generatedRendererSource)
     from(generatedWebUi) { into("web"); include("**/*") }
+    from(generatedVersion)
     into(generatedRenderer)
     // Keep the small native pairing renderer at the asset root, and package the
     // complete public Web UI under web/ so local mode can reuse its module graph.
-    include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json", "prompts/**", "stories/**", "web/**")
+    include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json", "version.json", "prompts/**", "stories/**", "web/**")
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
 val verifyEmbeddedCoreAssets by tasks.registering {
@@ -107,8 +129,8 @@ android {
         applicationId = "ai.stagecraft.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = gitCount.toIntOrNull()?.coerceAtMost(Int.MAX_VALUE) ?: 1
+        versionName = releaseVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

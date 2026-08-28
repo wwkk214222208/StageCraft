@@ -17,6 +17,8 @@ import { RoomRuntime } from './room-runtime.ts'
 import { ModelGateway, createRealWorkers, routeFromEnvironment } from './model-gateway.ts'
 import { createStoryPackage, listStoryPackages, loadStoryPackage, resolveStoryAssetFile, saveStoryAsPackage, saveStoryPackage, storyAssetsDir, storyPortraitUrl, type StoryPackage } from './story-packages.ts'
 import { collectStoryArchiveEntries, createStoredZip } from './story-package-archive.ts'
+import { getVersionInfo } from './version.ts'
+import { checkForUpdate } from './update.ts'
 import type { RoomSnapshot } from './types.ts'
 import { ProviderConfigStore, type ProviderConfig } from './provider-config.ts'
 import { deletePromptPreset, getPromptPresetState, loadGameplayScenario, setPromptPresetForScope, setPromptsFilePath, setUserPromptsDir, updatePromptPreset, loadPrivateToggles, savePrivateToggle, mergePrivateToggles, userEditableScopes } from './prompts.ts'
@@ -400,6 +402,44 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         return json(response, 200, { ok: true })
       }
       if (url.pathname === '/api/room') return json(response, 200, publicRoomSnapshot(runtime.get(url.searchParams.get('id') ?? roomId)))
+      if (url.pathname === '/api/version') return json(response, 200, getVersionInfo())
+      if (url.pathname === '/api/update/check') {
+        try { return json(response, 200, await checkForUpdate()) }
+        catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : '检查更新失败。' }) }
+      }
+      if (url.pathname === '/api/update/download' && request.method === 'POST') {
+        try {
+          const check = await checkForUpdate()
+          if (!check.updateAvailable || !check.zipUrl) throw new Error('没有可用的更新。')
+          const remote = await fetch(check.zipUrl, { signal: AbortSignal.timeout(300_000) })
+          if (!remote.ok) throw new Error(`下载失败（HTTP ${remote.status}）。`)
+          const bytes = Buffer.from(await remote.arrayBuffer())
+          if (bytes.length < 1024) throw new Error('下载内容异常。')
+          const downloadDir = join(userDataRoot ?? root, 'downloads')
+          mkdirSync(downloadDir, { recursive: true })
+          const target = join(downloadDir, `stagecraft-${check.version}.zip`)
+          writeFileSync(target, bytes)
+          // 自更新：脚本先结束当前进程，解压新包到旁目录，再启动新版本
+          const versionDir = join(dirname(root), `stagecraft-${check.version}`)
+          const batPath = join(downloadDir, 'self-update.bat')
+          const bat = [
+            '@echo off',
+            'timeout /t 2 /nobreak >nul',
+            `taskkill /PID ${process.pid} /F >nul 2>nul`,
+            `powershell -NoProfile -Command "Expand-Archive -Path '${target}' -DestinationPath '${versionDir}' -Force" >nul 2>nul`,
+            `cd /d "${versionDir}"`,
+            'start "" node --experimental-strip-types src/server.ts',
+            'exit',
+          ].join('\r\n')
+          writeFileSync(batPath, bat, 'utf8')
+          try {
+            const { spawn } = await import('node:child_process')
+            spawn('cmd', ['/c', 'start', '', batPath], { detached: true, stdio: 'ignore' }).unref()
+          } catch { /* 启动脚本失败则仅提示手动应用 */ }
+          setTimeout(() => process.exit(0), 1500)
+          return json(response, 200, { ok: true, path: target, tag: check.tag, version: check.version })
+        } catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : '下载失败。' }) }
+      }
       
       // 新架构：Core Runtime 协议端点由 HumanCoreInteractionPlugin 处理。
       if (await humanCore.handle(request, response, url)) return
