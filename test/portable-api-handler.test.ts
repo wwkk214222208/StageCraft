@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { HttpHumanCorePlugin } from '../src/core/http-human-plugin.ts'
-import { CoreProtocolPortableHandler, handlePortableApi, type ApiRequest, type ApiResponse } from '../src/portable/api-handler.ts'
+import { CoreProtocolPortableHandler, handlePortableApi, buildPortableCoverage, unhandledPortableRoutes, type ApiRequest, type ApiResponse } from '../src/portable/api-handler.ts'
 
 function makeCore(dispatchError?: Error): CoreRuntimeSkeleton {
   const core = new CoreRuntimeSkeleton()
@@ -198,4 +198,39 @@ test('W4 抽取边界：portable matches 与 registry core owner /api/core/* 非
   }
   // 反例：portable 不得覆盖未登记的 core 路径
   assert.equal(portable.matches('GET', '/api/core/not-registered'), false)
+})
+
+test('W4 合流契约：buildPortableCoverage 覆盖清单与 registry handlerId 对应（回应 W5-5）', async () => {
+  const { API_ROUTES } = await import('../src/api-route-registry.ts')
+  const core = makeCore()
+  const portable = new CoreProtocolPortableHandler(core)
+  const registrations = buildPortableCoverage(API_ROUTES, [portable])
+
+  // 全部 111 条路由都有 registration 条目（handlerId 一一对应）
+  assert.equal(registrations.length, API_ROUTES.length)
+  for (const registration of registrations) {
+    assert.ok(registration.handlerId, '每条路由必须有 handlerId')
+  }
+
+  // core owner /api/core/* 非流端点已挂载（handlerId 精确对应）
+  const coreProtocol = registrations.filter(registration =>
+    registration.handlerId.startsWith('core.') && registration.pattern.startsWith('/api/core/'))
+  const mounted = coreProtocol.filter(registration => registration.handler !== null)
+  assert.equal(mounted.length, 6, '6 个 core 协议非流端点必须挂载')
+  assert.deepEqual(
+    mounted.map(registration => registration.handlerId).sort(),
+    ['core.cancel', 'core.capabilities', 'core.commands', 'core.health', 'core.ui.action', 'core.view'],
+    '已挂载 handlerId 必须与 registry 一致',
+  )
+
+  // SSE 路由由 HTTP 层承载：登记为未挂载但明确存在
+  const sse = registrations.find(registration => registration.handlerId === 'core.events')
+  assert.ok(sse, 'core.events 必须在清单中')
+  assert.equal(sse.handler, null, 'SSE 由 HTTP 层承载，portable 不挂载')
+
+  // 未挂载清单：其余业务路由（room/turn/role/...）稳定列出，供 W5/W6 挂载或提供稳定结果
+  const unhandled = unhandledPortableRoutes(registrations)
+  assert.ok(unhandled.length > 80, '未挂载路由必须稳定存在（业务路由由 W6 接入）')
+  assert.ok(unhandled.some(registration => registration.handlerId === 'room.snapshot'), 'room.snapshot 必须列入未挂载清单')
+  assert.ok(unhandled.some(registration => registration.handlerId === 'turn.start'), 'turn.start 必须列入未挂载清单')
 })

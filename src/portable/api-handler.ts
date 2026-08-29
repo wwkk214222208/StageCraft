@@ -50,6 +50,36 @@ export async function handlePortableApi(
   return jsonResponse(404, { error: { code: 'not_found', message: `未登记的可移植 handler：${method} ${path}` } })
 }
 
+/**
+ * 可移植 handler 注册表（W4 合流契约，回应 W5-5）：
+ * 把 registry handlerId 与可移植 handler 的覆盖关系显式化，供 W5 CoreDataServer
+ * 挂载时对照，禁止复制 app-boot.ts 路由串。
+ */
+export interface PortableHandlerRegistration {
+  readonly handlerId: string
+  readonly method: string
+  readonly pattern: string
+  /** 挂载的可移植 handler；null 表示该路由由宿主/其他层承载（未挂载）。 */
+  readonly handler: PortableApiHandler | null
+}
+
+/** 由 registry 路由与可移植 handler 生成覆盖清单（W4 合流契约；测试强制无漂移）。 */
+export function buildPortableCoverage(
+  routes: ReadonlyArray<{ handlerId: string; method: string; pattern: string; owner: string; stream?: unknown }>,
+  handlers: readonly PortableApiHandler[],
+): PortableHandlerRegistration[] {
+  return routes.map(route => {
+    const path = route.pattern.replace(/[{}]/g, 'x')
+    const handler = handlers.find(item => item.matches(route.method, path)) ?? null
+    return { handlerId: route.handlerId, method: route.method, pattern: route.pattern, handler }
+  })
+}
+
+/** 未挂载路由清单（W5 挂载时须为这些提供稳定结果或宿主实现）。 */
+export function unhandledPortableRoutes(registrations: readonly PortableHandlerRegistration[]): PortableHandlerRegistration[] {
+  return registrations.filter(registration => registration.handler === null)
+}
+
 export function jsonResponse(status: number, value: unknown, extraHeaders: Record<string, string> = {}): ApiResponse {
   return {
     status,
