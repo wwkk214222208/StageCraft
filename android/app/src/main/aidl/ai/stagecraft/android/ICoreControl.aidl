@@ -15,4 +15,7 @@ interface ICoreControl {
 
     /** 优雅停止（fire-and-forget）。 */
     oneway void requestStop();
+
+    /** 接受主进程的 PluginLaunchPlan（§2.4）；≤8KiB 小消息，不承载业务数据。 */
+    void acceptLaunchPlan(String planJson);
 }

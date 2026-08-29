@@ -19,5 +19,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- W5：Core 独立进程服务（计划 §2.2/§4.2）。主进程 bindService(BIND_AUTO_CREATE) 创建并持有；
+             绝不承载主 UI；崩溃由主进程经 onServiceDisconnected/death recipient 感知并进入恢复页。 -->
+        <service
+            android:name=".CoreService"
+            android:exported="false"
+            android:process=":core"
+            android:description="@string/core_service_description" />
     </application>
 </manifest>
