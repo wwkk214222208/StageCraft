@@ -150,8 +150,23 @@ export function bootstrapPlugins(input: BootstrapInput): BootstrapResult {
   const disposables: Array<{ dispose: () => void }> = []
   const desiredOff = (id: string): boolean => input.desiredEnabled?.[id] === false
 
-  const active = input.manifests.filter(manifest => !desiredOff(manifest.id))
-  for (const manifest of input.manifests) if (desiredOff(manifest.id)) disabled.push(manifest.id)
+  // 重复 id：同一插件身份在候选集出现多次属于包装错误——保留首次出现，后续出现按 'manifest' 隔离。
+  const firstOccurrence = new Map<string, PluginManifest>()
+  for (const manifest of input.manifests) {
+    if (!firstOccurrence.has(manifest.id)) firstOccurrence.set(manifest.id, manifest)
+  }
+  const isFirstOccurrence = (manifest: PluginManifest): boolean => firstOccurrence.get(manifest.id) === manifest
+
+  const active = input.manifests.filter(manifest => !desiredOff(manifest.id) && isFirstOccurrence(manifest))
+  for (const manifest of input.manifests) {
+    if (desiredOff(manifest.id)) {
+      if (isFirstOccurrence(manifest)) disabled.push(manifest.id)
+      continue
+    }
+    if (!isFirstOccurrence(manifest)) {
+      quarantined.push(record(manifest, `插件 id 重复：${manifest.id} 在候选集中出现多次`, 'manifest', now()))
+    }
+  }
   const conflicts = new Set(checkProvidesConflicts(active).flatMap(conflict => [`${conflict.ownerA}:${conflict.id}`, `${conflict.ownerB}:${conflict.id}`]))
   const byId = new Map(active.map(manifest => [manifest.id, manifest]))
 
@@ -228,6 +243,11 @@ export interface LaunchPlanInput {
 
 /** 生成不可变 PluginLaunchPlan（§2.4）：pluginSetHash 由排序后的 (id,version,manifestHash,enabled) 决定。 */
 export function buildPluginLaunchPlan(input: LaunchPlanInput): PluginLaunchPlan {
+  const seen = new Set<string>()
+  for (const manifest of input.manifests) {
+    if (seen.has(manifest.id)) throw new Error(`buildPluginLaunchPlan：候选集存在重复插件 id ${manifest.id}（包装错误，须先经 bootstrapPlugins 隔离）。`)
+    seen.add(manifest.id)
+  }
   const quarantined = new Set(input.quarantinedIds ?? [])
   const plugins = [...input.manifests]
     .sort((a, b) => a.id.localeCompare(b.id))
@@ -303,7 +323,7 @@ export function validateArchiveDependencies(
   return { verdict: 'ok' }
 }
 
-/** 语义化版本兼容：主版本相同且当前 >= 存档（组件级比较）。无法解析时视为不兼容。 */
+/** 语义化版本兼容：完整 semver（允许 -prerelease/+build 后缀）、主版本相同且当前 >= 存档（组件级比较）。任何不完整或不可解析的版本都视为不兼容。 */
 export function isVersionCompatible(archiveVersion: string, currentVersion: string): boolean {
   const archive = parseSemver(archiveVersion)
   const current = parseSemver(currentVersion)
@@ -313,8 +333,9 @@ export function isVersionCompatible(archiveVersion: string, currentVersion: stri
   return current.patch >= archive.patch
 }
 
+/** 完整匹配（锚定首尾）：'1.2.3garbage' 这类前缀形式必须拒绝，不得截断解析。 */
 function parseSemver(version: string): { major: number; minor: number; patch: number } | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version)
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+][\w.-]+)?$/.exec(version)
   if (!match) return null
   return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) }
 }

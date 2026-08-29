@@ -16,6 +16,7 @@ import {
   resolveLoadOrder,
   stableHash,
   stableStringify,
+  isVersionCompatible,
   validateArchiveDependencies,
   validateManifest,
 } from '../src/plugin-bootstrap.ts'
@@ -236,4 +237,31 @@ test('反例（评审修订）：存档版本必须比较——主版本不同 /
     '存档声明 schema 而当前未声明 → 无法证明兼容',
   )
   assert.equal(validateArchiveDependencies([{ id: 'stagecraft.core', version: '1.0.0', manifestHash: 'h' }], [manifest({ id: 'stagecraft.core', version: '1.2.0' })]).verdict, 'ok', '存档未声明 schema 时不追加约束')
+})
+
+test('反例（评审批复建议）：重复插件 id 必须拒绝——bootstrap 隔离后续出现，launch plan 直接抛错', () => {
+  const result = bootstrapPlugins({
+    manifests: [
+      manifest({ id: 'stagecraft.dup' }),
+      manifest({ id: 'stagecraft.dup', version: '9.9.9' }),
+      manifest({ id: 'stagecraft.ok' }),
+    ],
+    install: candidate => { assert.notEqual(candidate.version, '9.9.9', '重复出现者不得安装'); return undefined },
+  })
+  assert.deepEqual(result.report.enabled, ['stagecraft.dup', 'stagecraft.ok'], '首次出现者正常装载')
+  const record = result.report.quarantined[0]
+  assert.equal(record.pluginId, 'stagecraft.dup')
+  assert.equal(record.manifestVersion, '9.9.9', '隔离的是重复出现的那份')
+  assert.equal(record.stage, 'manifest')
+  assert.match(record.reason, /插件 id 重复/)
+
+  assert.throws(() => buildPluginLaunchPlan({ manifests: [manifest({ id: 'stagecraft.dup' }), manifest({ id: 'stagecraft.dup', version: '9.9.9' })], stateSchemaVersion: 's1' }), /重复插件 id/)
+})
+
+test('反例（评审批复建议）：存档版本必须完整匹配 semver，前缀形式（1.2.3garbage）判 blocked', () => {
+  const current = [manifest({ id: 'stagecraft.core', version: '1.2.0' })]
+  assert.equal(validateArchiveDependencies([{ id: 'stagecraft.core', version: '1.2.3garbage', manifestHash: 'h' }], current).verdict, 'blocked', '前缀版本不得截断解析')
+  assert.equal(isVersionCompatible('1.2.3garbage', '1.2.0'), false)
+  assert.equal(isVersionCompatible('1.2.0-beta.1', '1.2.0'), true, '完整 semver 允许 prerelease 后缀')
+  assert.equal(isVersionCompatible('1.2', '1.2.0'), false, '不完整的 semver 不兼容')
 })
