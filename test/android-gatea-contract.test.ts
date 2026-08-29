@@ -48,7 +48,7 @@ test('CoreDataServer：nonce 强制、body 上限、SSE 逐条 flush', () => {
   assert.match(server, /MAX_BODY_BYTES/, '请求体大小上限存在')
   assert.match(server, /413/, '超限返回 413')
   assert.match(server, /output\.flush\(\)/, 'SSE 逐条 flush（不得整包缓冲）')
-  assert.match(server, /InetAddress\.getLoopbackAddress\(\)/, '只绑定 127.0.0.1')
+  assert.match(server, /getByName\("127\.0\.0\.1"\)/, '显式绑定 IPv4 回环（设备上 getLoopbackAddress 可能返回 ::1，真机实测根因）')
   assert.match(server, /subscribers\.remove/, '客户端断开后清理订阅（取消传播）')
 })
 
@@ -61,14 +61,20 @@ test('Gateway：字节流透传、取消传播、nonce 只由 gateway 注入', (
   assert.match(gateway, /URI\.create\(parts\[1\]\)\.getPath\(\)/, '只按路径代理，不改写 payload')
 })
 
-test('Binder 控制面：Q8 最小契约方法齐备，回调走 ResultReceiver 小消息', () => {
-  const service = read('java', 'ai', 'stagecraft', 'android', 'GateACoreService.java')
+test('Binder 控制面：Q8 最小契约经 AIDL 冻结（真机实测修复 BinderProxy 强转）', () => {
+  const control = read('aidl', 'ai', 'stagecraft', 'android', 'ICoreControl.aidl')
   for (const method of ['getEndpoint', 'requestStop', 'getStatusSummary', 'registerCallback']) {
-    assert.match(service, new RegExp(`public.*${method}`), `缺少 Q8 契约方法 ${method}`)
+    assert.match(control, new RegExp(method), `缺少 Q8 契约方法 ${method}`)
   }
-  assert.match(service, /MSG_STATUS/)
-  assert.match(service, /MSG_ENDPOINT_READY/)
+  const callback = read('aidl', 'ai', 'stagecraft', 'android', 'ICoreControlCallback.aidl')
+  assert.match(callback, /onStatus/)
+  assert.match(callback, /onEndpointReady/)
+  const service = read('java', 'ai', 'stagecraft', 'android', 'GateACoreService.java')
+  assert.match(service, /ICoreControl\.Stub/, '服务端实现 AIDL Stub')
+  assert.match(service, /RemoteCallbackList/, '跨进程回调列表（死亡自动清理）')
   assert.match(service, /failureCode/, '崩溃原因进入状态摘要')
+  const activity = read('java', 'ai', 'stagecraft', 'android', 'GateASpikeActivity.java')
+  assert.match(activity, /ICoreControl\.Stub\.asInterface/, '跨进程必须 asInterface（真机实锤：强转 BinderProxy 崩溃）')
 })
 
 test('进程内桥：独立命名 CoreNative，不得复用 StageCraftNative（Q1/Q9）', () => {
