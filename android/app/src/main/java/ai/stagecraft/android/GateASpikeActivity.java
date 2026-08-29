@@ -517,7 +517,10 @@ public class GateASpikeActivity extends Activity {
                 gonePid = gone.optString("pid");
                 String oldPid = String.valueOf(oldEndpoint == null ? -1 : oldEndpoint.optInt("pid"));
                 boolean pidMatches = oldPid.equals(gonePid);
-                boolean afterDispatch = gone.optString("at").compareTo(new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").format(new java.util.Date(dispatchedAt))) >= 0;
+                // 统一 UTC 比较（SimpleDateFormat 默认本地时区会错判）
+                java.time.Instant goneInstant = java.time.Instant.parse(gone.optString("at"));
+                java.time.Instant dispatchedInstant = java.time.Instant.ofEpochMilli(dispatchedAt);
+                boolean afterDispatch = goneInstant.isAfter(dispatchedInstant);
                 renderGoneConfirmed = pidMatches && afterDispatch;
             } catch (Exception ignored) { }
         }
@@ -527,6 +530,7 @@ public class GateASpikeActivity extends Activity {
             .put("serviceRenderGoneEvidence", goneFileContent == null ? "missing" : goneFileContent)
             .put("gonePidMatchesOldEndpoint", renderGoneConfirmed)
             .put("gonePid", gonePid == null ? "missing" : gonePid)
+            .put("oldPid", oldEndpoint == null ? -1 : oldEndpoint.optInt("pid"))
             .put("renderProcessGoneAt", rendererGoneStatusAt == null ? "not-observed" : rendererGoneStatusAt)
             .put("oldPort", oldEndpoint == null ? -1 : oldEndpoint.optInt("port"))
             .put("newPort", newEndpoint == null ? -1 : newEndpoint.optInt("port"))
@@ -658,6 +662,7 @@ public class GateASpikeActivity extends Activity {
             report.put("kind", "w0-gatea-spike");
             // 构建身份（评审第 7 条：证据可追溯性）
             report.put("buildVariant", "debug");
+            report.put("runId", runId == null ? "missing" : runId);
             report.put("buildCommit", readBuildCommit());
             report.put("apkSha256", apkSha256());
             report.put("startedAt", java.time.Instant.ofEpochMilli(startedAtMillis).toString());
