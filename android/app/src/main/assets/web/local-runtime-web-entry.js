@@ -182,8 +182,8 @@
     return result
   }
 
-  // ── 路由表 ──
-  const routes = {
+  // ── 回退路由表（旧页面内 Core；Gate D 前保留，gateway 模式下不使用）──
+  const legacyRoutes = {
     /** GET 数据端点 */
     get: {
       '/api/room': () => respondJson(200, publicRoomSnapshot(guardRoom())),
@@ -492,7 +492,7 @@
       },
     },
   }
-  const DEGRADED = {
+  const legacyDegraded = {
     '/api/archive/import': '导入存档',
     '/api/state/scene-revision': '正文字段回滚',
     '/api/state/rollback': '正文回滚',
@@ -521,12 +521,21 @@
   // ── /api/core/* 协议端点（CoreClient 交互面板）──
   function respondJsonAsync(status, value) { return Promise.resolve(respondJson(status, value)) }
 
-  // ── fetch 补丁 ──
+  // ── fetch 补丁：W6 起同源 /api/* 由主进程 CoreGatewayServer 按 registry 分派 ──
+  // 页面 fetch('/api/...') 直通同源 gateway（gateway → core 代理 / main-host handler / 稳定错误）。
+  // 保留回退：gateway 不可用（__STAGECRAFT_GATEWAY__ = false，由 native 侧注入）时，
+  // 回退旧页面内 Core 的 routes 表（见下方 legacyRoutes）。
   const originalFetch = window.fetch.bind(window)
+  const gatewayMode = window.__STAGECRAFT_GATEWAY__ !== false
   window.fetch = (input, init = {}) => {
     let url
     try { url = typeof input === 'string' ? new URL(input, window.location.href) : (input && input.url ? new URL(input.url, window.location.href) : null) } catch { return originalFetch(input, init) }
     if (!url || url.origin !== window.location.origin || !url.pathname.startsWith('/api/')) return originalFetch(input, init)
+    if (gatewayMode) {
+      // W6 数据面：直通同源 gateway（CoreGatewayServer 按 registry 分派；nonce 由 gateway 原生注入）
+      return originalFetch(input, init)
+    }
+    // ── 回退路径：页面内 Core（旧 shim；Gate D 前保留）──
     const method = String(init.method ?? (typeof input === 'object' && input && input.method ? input.method : 'GET')).toUpperCase()
     const pathname = url.pathname
     // SSE（CoreClient 用 fetch 读流）
@@ -559,7 +568,7 @@
     }
     if (pathname === '/api/core/ui/action') return respondJsonAsync(200, { ok: false, error: '本地模式暂不支持扩展面板操作。' })
 
-    const handler = routes[method.toLowerCase()] && routes[method.toLowerCase()][pathname]
+    const handler = legacyRoutes[method.toLowerCase()] && legacyRoutes[method.toLowerCase()][pathname]
     if (handler) {
       return new Promise(resolve => {
         let body = {}
@@ -574,8 +583,8 @@
         }
       })
     }
-    if (pathname in DEGRADED) {
-      const message = DEGRADED[pathname]
+    if (pathname in legacyDegraded) {
+      const message = legacyDegraded[pathname]
       return Promise.resolve(method === 'GET' ? respondJson(503, { error: `本地运行时暂不支持：${message}` }) : respondJson(503, { error: `本地运行时暂不支持：${message}` }))
     }
     return Promise.resolve(method === 'GET' ? respondJson(404, { error: 'Not found' }) : respondJson(404, { error: '未知的本地接口。' }))

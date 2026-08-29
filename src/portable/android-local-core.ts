@@ -16,6 +16,7 @@ import { resolveProviderForRequest, type ProviderRoutingEntry } from '../provide
 import { setPromptStorage } from '../prompts.ts'
 import { createAndroidPromptStorage } from './android-prompt-storage.ts'
 import { CoreProtocolPortableHandler, handlePortableApi, type ApiRequest, type ApiResponse } from './api-handler.ts'
+import { CoreBusinessPortableHandler, CORE_BUSINESS_ROUTES, type CoreFacade } from './core-business-handlers.ts'
 
 export const ANDROID_CORE_BUNDLE_VERSION = '1.1.0'
 export const ANDROID_CORE_BRIDGE_VERSION = '1'
@@ -324,17 +325,28 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     approve: (draftId: string, text: string, stateUpdates: Record<string, string>, sceneUpdates?: { time?: string; location?: string }): void => requireComposition().director.approve(LOCAL_ROOM_ID, draftId, text, stateUpdates, sceneUpdates),
   }
 
-  // ── W4 合流：可移植 API handler（Core 协议端点语义单一来源）──
+  // ── W4/W6 合流：可移植 API handler（协议端点 + 业务 handler 语义单一来源）──
   // 组合根 core（CoreRuntimeSkeleton）即 CoreRuntimePort：dispatch/getView/cancel/subscribe/invokeUiAction。
   // health/capabilities 由 Java 侧 CoreDataServer 承载（真实 bundle 身份/能力矩阵），handler 的可选链
   // getHealth/getCapabilities 不调用（Android 侧不提供），commands/cancel/ui-action 语义与桌面完全同构。
+  // W6：业务 handler 由 registry handlerId 驱动（CoreBusinessPortableHandler），调组合根 facade。
   let portableHandler: CoreProtocolPortableHandler | undefined
+  let businessHandler: CoreBusinessPortableHandler | undefined
   const requirePortableHandler = (): CoreProtocolPortableHandler => {
     let handler = portableHandler
     if (!handler) {
       const core = requireComposition().core
       handler = new CoreProtocolPortableHandler(core, { roomId: () => LOCAL_ROOM_ID })
       portableHandler = handler
+    }
+    return handler
+  }
+  const requireBusinessHandler = (): CoreBusinessPortableHandler => {
+    let handler = businessHandler
+    if (!handler) {
+      const facade = localCore as unknown as CoreFacade
+      handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+      businessHandler = handler
     }
     return handler
   }
@@ -356,7 +368,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     }
     let response: ApiResponse
     try {
-      response = await handlePortableApi([requirePortableHandler()], request)
+      // 协议端点优先；未命中时业务 handler（registry 驱动）兜底
+      response = await handlePortableApi([requirePortableHandler(), requireBusinessHandler()], request)
     } catch (error) {
       return { status: 500, body: JSON.stringify({ error: { code: 'internal_error', message: error instanceof Error ? error.message : String(error) } }) }
     }

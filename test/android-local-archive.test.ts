@@ -31,6 +31,8 @@ function runtime() {
   context.EventSource = class {}
   context.StageCraftNative = native
   context.StageCraftLocalCore = core
+  // W6：旧页面内 Core 回退路径测试（无 gateway 环境）
+  context.__STAGECRAFT_GATEWAY__ = false
   vm.runInNewContext(readFileSync(entryPath, 'utf8'), context, { filename: entryPath })
   return context
 }

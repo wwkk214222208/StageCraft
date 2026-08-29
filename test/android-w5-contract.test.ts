@@ -125,3 +125,65 @@ test('W4 合流：Core WebView JS 必须暴露协议端点分发（可移植 han
   assert.match(localCore, /CoreProtocolPortableHandler/, '必须实例化 W4 可移植 handler')
   assert.match(localCore, /handlePortableApi\(/, '必须经 handlePortableApi 分发')
 })
+
+test('W6：主进程 CoreGatewayServer 必须按 registry 分派且 nonce 只在原生层', () => {
+  const gateway = read('java', 'ai', 'stagecraft', 'android', 'CoreGatewayServer.java')
+  assert.match(gateway, /RouteRegistry\.Route route = registry\.match/, '必须按 registry 匹配分派')
+  assert.match(gateway, /x-core-nonce: "\)\.append\(nonce\)/, 'nonce 必须由 gateway 注入原生代理请求头')
+  assert.match(gateway, /case "proxy-core"/, 'core owner 必须代理')
+  assert.match(gateway, /case "host-handler"/, 'main-host 必须走宿主 handler')
+  assert.match(gateway, /case "stable-unsupported"/, 'desktop-only 必须稳定错误')
+  assert.match(gateway, /case "deprecated-adapter"/, 'deprecated 必须稳定错误')
+  assert.match(gateway, /route_not_registered/, '未知路径必须稳定 404')
+  assert.match(gateway, /pipeStreaming/, 'SSE 必须逐块透传')
+})
+
+test('W6：CoreConnection 必须绑定 CoreService 并处理死亡/重绑/launch plan', () => {
+  const connection = read('java', 'ai', 'stagecraft', 'android', 'CoreConnection.java')
+  assert.match(connection, /bindService\(intent, connection, Context\.BIND_AUTO_CREATE\)/, '必须 BIND_AUTO_CREATE 绑定')
+  assert.match(connection, /linkToDeath/, '客户端必须 linkToDeath（death recipient）')
+  assert.match(connection, /scheduleRebindOnce/, '必须幂等重绑')
+  assert.match(connection, /onServiceDisconnected/, '必须处理断连')
+  assert.match(connection, /onBindingDied/, '必须处理 binding died')
+  assert.match(connection, /acceptLaunchPlan/, '必须传递 launch plan')
+  assert.match(connection, /registerCallback/, '必须注册状态回调')
+})
+
+test('W6：MainActivity 必须启动 gateway、绑定 Core、注入 host handlers', () => {
+  const activity = read('java', 'ai', 'stagecraft', 'android', 'MainActivity.java')
+  assert.match(activity, /new CoreGatewayServer\(this, registry\)/, '必须启动 CoreGatewayServer')
+  assert.match(activity, /coreConnection\.bind\(\)/, '必须绑定 CoreService')
+  assert.match(activity, /setHostHandlers/, '必须注入 main-host handler')
+  assert.match(activity, /setCoreEndpoint/, 'endpoint 必须传给 gateway')
+  assert.match(activity, /new PluginManager\(/, '必须创建 PluginManager')
+  assert.match(activity, /acceptLaunchPlan/, '必须传递 launch plan')
+})
+
+test('W6：PluginConfigStore 必须独立于 Core 持久化（Core 不可用时仍可读写）', () => {
+  const store = read('java', 'ai', 'stagecraft', 'android', 'PluginConfigStore.java')
+  assert.match(store, /getFilesDir\(\), "plugin-config-store\.json"/, '必须持久化到独立文件')
+  assert.match(store, /writeEnabled/, '必须写启用意图')
+  assert.match(store, /readQuarantine/, '必须读隔离记录')
+  assert.match(store, /launchPlan/, '必须持久化 launch plan')
+  assert.match(store, /损坏.*空状态|emptyState/, '损坏文件必须兜底空状态')
+})
+
+test('W6：页面切换——local-runtime-web-entry 必须 gateway 直通且保留回退', () => {
+  const entry = read('assets', 'web', 'local-runtime-web-entry.js')
+  assert.match(entry, /gatewayMode/, '必须有 gateway 模式判定')
+  assert.match(entry, /直通同源 gateway/, 'gateway 模式必须直通 originalFetch')
+  assert.match(entry, /legacyRoutes/, '回退路径必须保留旧路由表')
+  assert.match(entry, /legacyDegraded/, '回退路径必须保留降级表')
+  assert.match(entry, /__STAGECRAFT_LOCAL__/, '本地标记必须保留')
+})
+
+test('W6：Core 业务 handler 必须由 registry 驱动且已挂载协议端点', () => {
+  const business = read('..', '..', '..', '..', 'src', 'portable', 'core-business-handlers.ts')
+  assert.match(business, /API_ROUTES/, '必须由 registry 派生路由')
+  assert.match(business, /CORE_BUSINESS_HANDLERS/, '必须有业务 handler 声明表')
+  assert.match(business, /handler_not_mounted/, '未挂载必须稳定错误')
+  assert.match(business, /buildBusinessCoverage/, '必须有挂载覆盖校验')
+  const localCore = read('..', '..', '..', '..', 'src', 'portable', 'android-local-core.ts')
+  assert.match(localCore, /CoreBusinessPortableHandler/, '组合根必须接入业务 handler')
+  assert.match(localCore, /CORE_BUSINESS_ROUTES/, '组合根必须消费 registry 业务路由')
+})

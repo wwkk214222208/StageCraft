@@ -1,0 +1,106 @@
+package ai.stagecraft.android;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.junit.Test;
+
+import java.io.File;
+import java.nio.file.Files;
+
+/**
+ * W6：PluginConfigStore + PluginManager 纯 JVM 测试（计划 §2.1/§5.3/阶段 5；Q4 裁决）。
+ *
+ * 验证：
+ *  - PluginConfigStore：Core 不可用时仍可读写（独立文件，损坏兜底空状态）；
+ *  - PluginManager：desired/effective/quarantined 状态聚合；launch plan 生成与持久化；
+ *  - 隔离插件不进 effective。
+ */
+public final class PluginManagerTest {
+
+    private File tempStore() throws Exception {
+        File dir = Files.createTempDirectory("w6-plugin-store").toFile();
+        return new File(dir, "plugin-config-store.json");
+    }
+
+    @Test public void storeReadWriteEnabled() throws Exception {
+        File file = tempStore();
+        PluginConfigStore store = new PluginConfigStore(file);
+        store.writeEnabled("stagecraft.chat", false);
+        JSONObject enabled = store.readEnabled();
+        assertFalse("写后必须可读", enabled.optBoolean("stagecraft.chat", true));
+        // 重新实例化（模拟重启）仍可读
+        PluginConfigStore reloaded = new PluginConfigStore(file);
+        assertFalse("重启后必须持久化", reloaded.readEnabled().optBoolean("stagecraft.chat", true));
+    }
+
+    @Test public void storeCorruptFallsBackToEmpty() throws Exception {
+        File file = tempStore();
+        Files.write(file.toPath(), "{corrupt json".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        PluginConfigStore store = new PluginConfigStore(file);
+        JSONObject enabled = store.readEnabled();
+        assertNotNull("损坏文件必须兜底空状态（Core 不可用时管理器仍可用）", enabled);
+        // 兜底后仍可写
+        store.writeEnabled("stagecraft.chat", true);
+        assertTrue(store.readEnabled().optBoolean("stagecraft.chat", false));
+    }
+
+    @Test public void managerTracksDesiredEffectiveQuarantined() throws Exception {
+        File file = tempStore();
+        PluginManager manager = new PluginManager(new PluginConfigStore(file));
+        manager.setEnabled("stagecraft.chat", true);
+        manager.setEnabled("bad.plugin", true);
+        // Core 上报隔离 bad.plugin
+        JSONArray quarantine = new JSONArray();
+        quarantine.put(new JSONObject().put("pluginId", "bad.plugin").put("reason", "install failed").put("stage", "install"));
+        manager.updateQuarantine(quarantine);
+        // effective = desired − quarantined
+        assertTrue("正常插件必须 effective", manager.effectiveEnabled().contains("stagecraft.chat"));
+        assertFalse("隔离插件必须不进 effective", manager.effectiveEnabled().contains("bad.plugin"));
+        assertEquals("隔离记录必须可读", "install failed", manager.quarantined().optJSONObject(0).optString("reason"));
+    }
+
+    @Test public void managerBuildsAndPersistsLaunchPlan() throws Exception {
+        File file = tempStore();
+        PluginManager manager = new PluginManager(new PluginConfigStore(file));
+        manager.setEnabled("stagecraft.chat", true);
+        JSONObject plan = manager.regenerateLaunchPlan();
+        assertNotNull(plan);
+        assertEquals("1.1", plan.optString("protocolVersion"));
+        JSONArray plugins = plan.optJSONArray("plugins");
+        assertNotNull(plugins);
+        boolean found = false;
+        for (int i = 0; i < plugins.length(); i++) {
+            JSONObject plugin = plugins.optJSONObject(i);
+            if ("stagecraft.chat".equals(plugin.optString("id"))) {
+                found = true;
+                assertTrue("启用插件必须 enabled", plugin.optBoolean("enabled"));
+            }
+        }
+        assertTrue("launch plan 必须含启用插件", found);
+        // plan 持久化：新实例可读同一 plan
+        PluginManager reloaded = new PluginManager(new PluginConfigStore(file));
+        assertNotNull("launch plan 必须持久化", reloaded.buildLaunchPlan());
+    }
+
+    @Test public void regeneratedPlanMarksQuarantinedDisabled() throws Exception {
+        File file = tempStore();
+        PluginManager manager = new PluginManager(new PluginConfigStore(file));
+        manager.setEnabled("bad.plugin", true);
+        JSONArray quarantine = new JSONArray();
+        quarantine.put(new JSONObject().put("pluginId", "bad.plugin"));
+        manager.updateQuarantine(quarantine);
+        JSONObject plan = manager.regenerateLaunchPlan();
+        JSONArray plugins = plan.optJSONArray("plugins");
+        for (int i = 0; i < plugins.length(); i++) {
+            JSONObject plugin = plugins.optJSONObject(i);
+            if ("bad.plugin".equals(plugin.optString("id"))) {
+                assertFalse("隔离插件必须 enabled=false", plugin.optBoolean("enabled"));
+            }
+        }
+    }
+}
