@@ -16,13 +16,16 @@ final class GateALog {
     static final String TAG = "GATEA";
 
     private static volatile File logFile;
+    private static volatile File externalLogFile;
 
     private GateALog() {}
 
-    /** 进程入口调用一次：绑定本进程的日志落盘文件。 */
+    /** 进程入口调用一次：绑定本进程的日志落盘文件。内部 + 外部双写（外部可 adb pull）。 */
     static void init(Context context) {
         String suffix = GateACrashGuard.processName().replace(':', '_');
         logFile = new File(context.getFilesDir(), "gatea-log-" + suffix + ".txt");
+        File external = context.getExternalFilesDir(null);
+        if (external != null) externalLogFile = new File(external, "gatea-log-" + suffix + ".txt");
     }
 
     static void i(String message) {
@@ -41,10 +44,15 @@ final class GateALog {
     }
 
     private static synchronized void append(String message) {
-        File target = logFile;
+        String line = System.currentTimeMillis() + "  " + message + "\n";
+        appendTo(logFile, line);
+        appendTo(externalLogFile, line);
+    }
+
+    private static void appendTo(File target, String line) {
         if (target == null) return;
         try (FileOutputStream output = new FileOutputStream(target, true)) {
-            output.write((System.currentTimeMillis() + "  " + message + "\n").getBytes(StandardCharsets.UTF_8));
+            output.write(line.getBytes(StandardCharsets.UTF_8));
         } catch (Exception ignored) { }
     }
 }

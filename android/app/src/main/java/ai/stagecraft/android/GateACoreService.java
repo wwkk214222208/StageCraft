@@ -15,6 +15,8 @@ import android.webkit.WebView;
 
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -292,6 +294,23 @@ public class GateACoreService extends Service {
         status = "failed";
         failureCode = code;
         GateALog.w("core failed code=" + code + " message=" + message);
+        if ("renderer_gone".equals(code)) {
+            // renderer 证据独立落盘（评审：oneway 广播竞态导致主进程侧漏帧）——
+            // 本文件由 :core 进程在 onRenderProcessGone 处理路径内同步写入，先于 stopSelf
+            try {
+                File evidence = new File(getExternalFilesDir(null), "gatea-renderer-gone.txt");
+                String payload = new JSONObject()
+                    .put("event", "onRenderProcessGone")
+                    .put("failureCode", code)
+                    .put("message", message)
+                    .put("pid", corePid)
+                    .put("at", java.time.Instant.now().toString())
+                    .toString();
+                try (FileOutputStream output = new FileOutputStream(evidence, false)) {
+                    output.write(payload.getBytes(StandardCharsets.UTF_8));
+                }
+            } catch (Exception ignored) { }
+        }
         broadcastStatus();
     }
 

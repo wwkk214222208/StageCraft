@@ -409,6 +409,7 @@ public class GateASpikeActivity extends Activity {
         boolean boundedEnd = streamEndedMs <= 3_000;
         // 主进程 + 正式 MainActivity 在 kill 后仍可打开（评审第 3 条；恢复页/远程入口归 W6 验收）
         boolean mainActivityOk = false;
+        boolean mainActivityAtTop = false;
         long mainLaunchStarted = System.currentTimeMillis();
         try {
             Intent mainIntent = new Intent(this, MainActivity.class);
@@ -416,6 +417,14 @@ public class GateASpikeActivity extends Activity {
             startActivity(mainIntent);
             Thread.sleep(2_500);
             mainActivityOk = true;
+            // 栈顶验证：本应用任务栈的顶部 Activity 必须是 MainActivity（评审第 3 条）
+            android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (manager != null) {
+                List<android.app.ActivityManager.RunningTaskInfo> tasks = manager.getRunningTasks(1);
+                if (!tasks.isEmpty() && tasks.get(0).topActivity != null) {
+                    mainActivityAtTop = MainActivity.class.getName().equals(tasks.get(0).topActivity.getClassName());
+                }
+            }
             // 回到 spike 界面继续
             startActivity(new Intent(this, GateASpikeActivity.class));
         } catch (Exception error) {
@@ -431,8 +440,9 @@ public class GateASpikeActivity extends Activity {
             .put("secondHandshakeReady", secondHandshake)
             .put("mainProcessAlive", true)
             .put("mainActivityLaunchVerified", mainActivityOk)
+            .put("mainActivityAtTop", mainActivityAtTop)
             .put("mainActivityLaunchMs", mainLaunchMs)
-            .put("recoveryPageAndRemoteEntry", "deferred-to-W6（恢复页/远程入口 UI 属 W6 交付，此处验证主 Activity 打开与主进程存活）"));
+            .put("recoveryPageAndRemoteEntry", "deferred-to-W6（恢复页/远程入口 UI 属 W6 交付；此处验证主 Activity 栈顶打开与主进程存活）"));
     }
 
     /**
@@ -476,16 +486,36 @@ public class GateASpikeActivity extends Activity {
                 secondHandshake = false;
             }
         }
+        // 权威证据：:core 在 onRenderProcessGone 处理路径内同步落盘的文件（与 oneway 广播竞态无关）
+        String goneFileContent = readRendererGoneEvidence();
+        boolean renderGoneConfirmed = goneFileContent != null && goneFileContent.contains("renderer_gone");
         JSONObject evidence = new JSONObject()
             .put("method", "page commit-OOM（替代测法：renderer 为 isolated UID，应用/shell kill 均 EPERM；需架构 AI 追认）")
             .put("dispatchedResponse", raw.substring(0, Math.min(140, raw.length())))
+            .put("serviceRenderGoneEvidence", goneFileContent == null ? "missing" : goneFileContent)
             .put("renderProcessGoneAt", rendererGoneStatusAt == null ? "not-observed" : rendererGoneStatusAt)
             .put("oldPort", oldEndpoint == null ? -1 : oldEndpoint.optInt("port"))
             .put("newPort", newEndpoint == null ? -1 : newEndpoint.optInt("port"))
             .put("portChangedMs", newEndpoint == null ? -1 : System.currentTimeMillis() - dispatchedAt)
             .put("restarted", restarted)
             .put("secondHandshakeReady", secondHandshake);
-        record("renderer-crash-recovery", restarted && secondHandshake && !"not-observed".equals(rendererGoneStatusAt), evidence);
+        record("renderer-crash-recovery", restarted && secondHandshake && renderGoneConfirmed, evidence);
+    }
+
+    /** 读取 :core 落盘的 renderer-gone 证据文件（与主进程 oneway 竞态无关）。 */
+    private String readRendererGoneEvidence() {
+        try {
+            File evidence = new File(getExternalFilesDir(null), "gatea-renderer-gone.txt");
+            if (!evidence.exists()) return null;
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(evidence))) {
+                StringBuilder builder = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) builder.append(line);
+                return builder.toString();
+            }
+        } catch (Exception error) {
+            return null;
+        }
     }
 
     private Socket openSse() throws Exception {
