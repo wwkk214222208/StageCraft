@@ -384,6 +384,10 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     return handler
   }
   /** 供 core-host-bridge 调用的协议端点分发：返回 Promise<{status, body}>（body 为 JSON 文本）。 */
+  // R3-5：每个请求用独立 AbortController 注册到 pendingPortableCancels；客户端断开时
+  // Java 侧 cancel(requestId) → 桥发 protocol-cancel → cancelPortableRequest(requestId) → abort signal，
+  // 使长模型请求（turn/chat 等）在页面断开后停止。
+  const pendingPortableCancels = new Map<string, AbortController>()
   const handlePortableRequest = async (method: string, path: string, headersJson: string, bodyJson: string): Promise<{ status: number; body: string }> => {
     const headers: Record<string, string> = {}
     try {
@@ -392,12 +396,21 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
         if (typeof value === 'string') headers[name.toLowerCase()] = value
       }
     } catch { /* 非法 headers 按空表处理 */ }
+    // 请求身份：query/body 的 requestId 或 id（与 CoreDataServer 的 cancelRequestId 同源）
+    let requestId = ''
+    try {
+      const parsed = JSON.parse(bodyJson || '{}') as { requestId?: string; id?: string }
+      requestId = parsed.requestId ?? parsed.id ?? ''
+    } catch { /* 非 JSON body（zip 等）：无 requestId 可取消 */ }
+    const controller = new AbortController()
+    if (requestId) pendingPortableCancels.set(requestId, controller)
+    const timeout = setTimeout(() => controller.abort(), 20_000)
     const request: ApiRequest = {
       method,
       url: path,
       headers,
       body: bodyJson ? new TextEncoder().encode(bodyJson) : undefined,
-      signal: AbortSignal.timeout(20_000),
+      signal: controller.signal,
     }
     let response: ApiResponse
     try {
@@ -405,11 +418,27 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       response = await handlePortableApi([requirePortableHandler(), requireBusinessHandler()], request)
     } catch (error) {
       return { status: 500, body: JSON.stringify({ error: { code: 'internal_error', message: error instanceof Error ? error.message : String(error) } }) }
+    } finally {
+      clearTimeout(timeout)
+      if (requestId) pendingPortableCancels.delete(requestId)
     }
     if (response.body instanceof Uint8Array) {
       return { status: response.status, body: new TextDecoder().decode(response.body) }
     }
     return { status: response.status, body: '' }
+  }
+  /** R3-5：客户端断开时 abort 对应请求（Java 经桥 protocol-cancel 调用）。 */
+  const cancelPortableRequest = (requestId: string): void => {
+    if (!requestId) return
+    const controller = pendingPortableCancels.get(requestId)
+    if (controller) {
+      controller.abort()
+      pendingPortableCancels.delete(requestId)
+    }
+    // 组合根模型请求同步取消（业务路由的长模型调用经 core.cancel(requestId) 停止底层 transport）
+    try {
+      void requireComposition().core.cancel(requestId).catch(() => {})
+    } catch { /* 组合根未启动：signal abort 已足够 */ }
   }
 
   // ── W6：PluginLaunchPlan 消费与隔离回报（阶段 5；D2 管理层独立于 Core）──
@@ -466,6 +495,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     dispose: (): void => { composition?.dispose(); composition = undefined; sink = undefined },
     /** W4 合流：协议端点分发（core-host-bridge 调用）。 */
     handlePortableRequest,
+    /** R3-5：客户端断开时取消请求（core-host-bridge 经 protocol-cancel 调用）。 */
+    cancelPortableRequest,
     /** W6：接受 PluginLaunchPlan 并回报隔离记录（主进程经桥下发）。 */
     applyLaunchPlan,
   }, facade)

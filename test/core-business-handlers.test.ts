@@ -25,6 +25,7 @@ import {
 /** 记录 facade 调用的假组合根。 */
 function makeFacade(): CoreFacade & { calls: string[] } {
   const calls: string[] = []
+  const secrets = new Map<string, string>()
   const record = (name: string) => (...args: unknown[]) => { calls.push(name + ':' + args.map(arg => JSON.stringify(arg)).join(',')); return Promise.resolve({ ok: true }) }
   return {
     calls,
@@ -33,7 +34,8 @@ function makeFacade(): CoreFacade & { calls: string[] } {
       if (operation === 'story.create') return { ok: true, id: 'story-created', title: input?.title }
       if (operation === 'archive.list') return { files: ['存档A'] }
       if (operation === 'preset.list') return { presets: [{ id: 'p1' }] }
-      if (operation === 'secret.get') return { found: false }
+      if (operation === 'secret.get') return secrets.has(String(input?.key)) ? { found: true, value: secrets.get(String(input?.key)) } : { found: false }
+      if (operation === 'secret.set') { secrets.set(String(input?.key), String(input?.value)); return { ok: true } }
       if (operation === 'archive.export') return { ok: true, url: 'archive://x' }
       return { ok: true }
     },
@@ -218,23 +220,87 @@ test('W6-1：prompt.presets.list 经原生端口返回预设', async () => {
   assert.equal(body.presets[0].id, 'p1')
 })
 
-test('W6-1：billing.summary 返回稳定响应形状（secret 兜底空态）', async () => {
+test('W6-1：billing.summary 返回 R3-2 桌面契约形状 {prices, stats}（secret 兜底空态）', async () => {
   const facade = makeFacade()
   const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
   const response = await handler.handle(apiRequest('GET', '/api/billing'))
   assert.equal(response.status, 200)
   const body = JSON.parse(await bodyText(response))
-  assert.ok('billing' in body && 'usage' in body, 'billing.summary 必须返回 {billing, usage}')
+  assert.ok('prices' in body && 'stats' in body, 'billing.summary 必须返回 {prices, stats}')
+  assert.ok('rates' in body.prices && 'totalCost' in body.stats, 'prices.rates 与 stats.totalCost 必须存在')
 })
 
-test('W6-1：原生端口失败 → 500 handler_failed（失败语义）', async () => {
+test('W6-1：原生端口失败 → 400 {error: string}（R3-2 桌面错误契约）', async () => {
   const facade = makeFacade()
   facade.invokeSync = () => { throw new Error('database write failed') }
   const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
   const response = await handler.handle(apiRequest('POST', '/api/stories', { title: 'x' }))
-  assert.equal(response.status, 500)
+  assert.equal(response.status, 400)
   const body = JSON.parse(await bodyText(response))
-  assert.equal(body.error.code, 'handler_failed')
+  assert.equal(body.error, 'database write failed')
+})
+
+test('R3-2：providers 返回桌面契约 {providers, defaults}（含 hasApiKey）', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('GET', '/api/providers'))
+  assert.equal(response.status, 200)
+  const body = JSON.parse(await bodyText(response))
+  assert.ok(Array.isArray(body.providers), 'providers 必须是数组')
+  assert.ok('defaults' in body, 'defaults 必须存在')
+  assert.ok('defaultRoleProviderId' in body.defaults, 'defaults.defaultRoleProviderId 必须存在')
+})
+
+test('R3-2：roles/memories 按 roleId 返回 {memories}（未知 roleId → 空数组）', async () => {
+  const facade = makeFacade()
+  facade.getRoom = () => ({ revision: 3, roles: [{ id: 'seraphina', memories: [{ id: 'm1', text: '记忆' }] }] })
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const found = await handler.handle(apiRequest('GET', '/api/roles/memories?roleId=seraphina'))
+  assert.equal(found.status, 200)
+  const foundBody = JSON.parse(await bodyText(found))
+  assert.deepEqual(foundBody.memories, [{ id: 'm1', text: '记忆' }])
+  const missing = await handler.handle(apiRequest('GET', '/api/roles/memories?roleId=nobody'))
+  const missingBody = JSON.parse(await bodyText(missing))
+  assert.deepEqual(missingBody.memories, [])
+})
+
+test('R3-2：stories 返回裸数组；story/get?id= 返回裸 StoryPackage', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const list = await handler.handle(apiRequest('GET', '/api/stories'))
+  const listBody = JSON.parse(await bodyText(list))
+  assert.ok(Array.isArray(listBody), 'stories 必须是裸数组')
+  const get = await handler.handle(apiRequest('GET', '/api/story/get?id=s1'))
+  assert.equal(get.status, 200)
+  const getBody = JSON.parse(await bodyText(get))
+  assert.equal(getBody.id, 's1', 'story.get 必须返回裸 StoryPackage')
+})
+
+test('R3-2：private-toggles GET 读持久化值（PUT 写后 GET 可读）', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  await handler.handle(apiRequest('PUT', '/api/prompts/private-toggles', { presetId: 'p1', nodeId: 'n1', enabled: true }))
+  const get = await handler.handle(apiRequest('GET', '/api/prompts/private-toggles'))
+  const body = JSON.parse(await bodyText(get))
+  assert.deepEqual(body, { p1: { n1: true } }, 'GET 必须读回 PUT 写入的值')
+})
+
+test('R3-2：billing/prices PUT 返回 {prices, stats}（前端保存后 renderBilling）', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('PUT', '/api/billing/prices', { prices: { version: 1, rates: [] } }))
+  assert.equal(response.status, 200)
+  const body = JSON.parse(await bodyText(response))
+  assert.ok('prices' in body && 'stats' in body, '必须返回 {prices, stats}')
+})
+
+test('R3-1：query 参数并入 body（story/get?id= 命中 story.get handler）', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('GET', '/api/story/get?id=story-42'))
+  assert.equal(response.status, 200)
+  const body = JSON.parse(await bodyText(response))
+  assert.equal(body.id, 'story-42', 'query id 必须到达 handler')
 })
 
 test('W6：参数 pattern 匹配与路径参数提取', () => {

@@ -79,9 +79,11 @@ public final class PluginManager {
         return store.readEnabled();
     }
 
-    /** 写启用意图（改配置 → 提示重启生效，不热加载）。 */
+    /** 写启用意图（改配置 → 原子重新生成 plan + 提示重启生效，不热加载）。 */
     public void setEnabled(String id, boolean enabled) {
         store.writeEnabled(id, enabled);
+        // R3-4：desired 变化立即重建 plan（重启消费新 plan；不依赖调用方记得 regenerate）
+        regenerateLaunchPlan();
     }
 
     /** 插件配置（desired config）。 */
@@ -90,9 +92,10 @@ public final class PluginManager {
         return config == null ? null : config.optJSONObject(id);
     }
 
-    /** 写插件配置。 */
+    /** 写插件配置（原子重新生成 plan）。 */
     public void setPluginConfig(String id, JSONObject config) {
         store.writeConfig(id, config);
+        regenerateLaunchPlan();
     }
 
     /** Core 上报的隔离记录（quarantined）。 */
@@ -100,10 +103,25 @@ public final class PluginManager {
         return quarantine;
     }
 
-    /** 更新隔离记录（Core plugin-report 经 health 回报；主进程持久化）。 */
+    /** 更新隔离记录（Core plugin-report 经 health 回报；主进程持久化 + 原子重建 plan）。 */
     public void updateQuarantine(JSONArray records) {
-        quarantine = records == null ? new JSONArray() : records;
-        store.writeQuarantine(quarantine);
+        JSONArray next = records == null ? new JSONArray() : records;
+        if (sameQuarantine(this.quarantine, next)) return; // 无变化：不重建 plan（防 endpoint 轮询覆盖）
+        this.quarantine = next;
+        store.writeQuarantine(this.quarantine);
+        // R3-4：quarantine 变化影响 enabled 集合 → 立即重建 plan
+        regenerateLaunchPlan();
+    }
+
+    private static boolean sameQuarantine(JSONArray a, JSONArray b) {
+        if (a == null || b == null) return a == b;
+        if (a.length() != b.length()) return false;
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject x = a.optJSONObject(i);
+            JSONObject y = b.optJSONObject(i);
+            if (x == null || y == null || !x.toString().equals(y.toString())) return false;
+        }
+        return true;
     }
 
     /** effective：desired − quarantined（id 列表）。 */

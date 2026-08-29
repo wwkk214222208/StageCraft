@@ -77,12 +77,52 @@ export interface CoreBusinessHandlerEntry {
 }
 
 const ok = (value: unknown): { status: number; body: unknown } => ({ status: 200, body: value })
+/** R3-2：业务错误契约 = 400 {error: string}（与桌面 app-boot 外层 catch 一致）。 */
+const err = (message: string): { status: number; body: unknown } => ({ status: 400, body: { error: message } })
 /** W6-1 逐条裁决：明确 unsupported 的稳定错误（评审允许路径；前端 DEGRADED 表已有容错）。 */
 const unsupported = (message: string): { status: number; body: unknown } => ({
   status: 503,
   body: { error: { code: 'unsupported_capability', message } },
 })
 const stringOf = (body: Record<string, unknown>, key: string): string => typeof body[key] === 'string' ? body[key] as string : ''
+
+/** R3-2：读供应商 meta（secret local.provider.meta → {providers, defaults}）。 */
+function readProviderMeta(facade: CoreFacade): { providers: unknown[]; defaults: Record<string, unknown> } {
+  const raw = facade.invokeSync('secret.get', { key: 'local.provider.meta' }) as { found?: boolean; value?: string } | null
+  if (raw?.found && raw.value) {
+    try {
+      const parsed = JSON.parse(raw.value) as { providers?: unknown; defaults?: unknown }
+      return {
+        providers: Array.isArray(parsed.providers) ? parsed.providers : [],
+        defaults: parsed.defaults && typeof parsed.defaults === 'object' ? parsed.defaults as Record<string, unknown> : {},
+      }
+    } catch { /* 损坏按空表 */ }
+  }
+  return { providers: [], defaults: {} }
+}
+
+/** R3-2：组装桌面契约的 provider 状态（剥 apiKey → hasApiKey）。 */
+function providerState(facade: CoreFacade): Record<string, unknown> {
+  const meta = readProviderMeta(facade)
+  const providers = (meta.providers as Array<Record<string, unknown>>).map(p => {
+    const clean: Record<string, unknown> = { ...p }
+    delete clean.apiKey
+    clean.hasApiKey = Boolean(p.hasApiKey) || Boolean(p.apiKey)
+    return clean
+  })
+  return {
+    providers,
+    defaults: {
+      defaultRoleProviderId: meta.defaults.defaultRoleProviderId ?? meta.defaults.role ?? '',
+      defaultRoleModel: meta.defaults.defaultRoleModel ?? '',
+      directorProviderId: meta.defaults.directorProviderId ?? meta.defaults.director ?? '',
+      directorModel: meta.defaults.directorModel ?? '',
+      assistantProviderId: meta.defaults.assistantProviderId ?? '',
+      assistantModel: meta.defaults.assistantModel ?? '',
+      ...(meta.defaults.directorThinkingStrength ? { directorThinkingStrength: meta.defaults.directorThinkingStrength } : {}),
+    },
+  }
+}
 const stringArray = (body: Record<string, unknown>, key: string): string[] => Array.isArray(body[key]) ? (body[key] as unknown[]).filter((item): item is string => typeof item === 'string') : []
 const recordOf = (body: Record<string, unknown>, key: string): Record<string, string> => {
   const value = body[key]
@@ -199,10 +239,14 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   { handlerId: 'role.memories.update', impl: (facade, body) => { facade.updateNpcMemory(stringOf(body, 'memoryId'), body.entry ?? {}); return ok({ ok: true }) } },
   { handlerId: 'role.memories.reorder', impl: (facade, body) => { facade.reorderNpcMemories(stringOf(body, 'roleId'), stringArray(body, 'memoryIds')); return ok({ ok: true }) } },
   { handlerId: 'role.memories.supersede', impl: (facade, body) => { facade.supersedeNpcMemory(stringOf(body, 'memoryId'), body.entry ?? {}); return ok({ ok: true }) } },
-  { handlerId: 'role.memories.list', impl: facade => {
+  // R3-2：桌面契约 GET /api/roles/memories?roleId=<id> → {memories: [...]}（未知 roleId → 空数组）
+  { handlerId: 'role.memories.list', impl: (facade, body) => {
     const room = facade.getRoom() as { roles?: Array<{ id?: string; memories?: unknown[] }> } | null
     const roles = Array.isArray(room?.roles) ? room.roles : []
-    return ok(roles.map(role => ({ roleId: role.id ?? '', memories: Array.isArray(role.memories) ? role.memories : [] })))
+    const roleId = stringOf(body, 'roleId')
+    if (!roleId) return ok({ memories: [] })
+    const role = roles.find(item => item.id === roleId)
+    return ok({ memories: Array.isArray(role?.memories) ? role.memories : [] })
   } },
 
   // ── 玩家 ──
@@ -217,103 +261,205 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   { handlerId: 'player.avatar', impl: (facade, body) => { facade.setPlayerAvatar(stringOf(body, 'portraitRef')); return ok({ ok: true }) } },
 
   // ── 供应商 ──
-  { handlerId: 'provider.list', impl: facade => ok(facade.getProvider()) },
+  // R3-2：桌面契约 {providers: [{id,name,baseUrl,models,selectedModel,hasApiKey,responseFormat}], defaults: {...}}
+  // 从 secret local.provider.meta 组装（与旧 shim providerMetaView 同语义，形状对齐桌面 provider-config.ts）
+  { handlerId: 'provider.list', impl: facade => ok(providerState(facade)) },
   { handlerId: 'provider.save', impl: (facade, body) => {
     const config = body.config && typeof body.config === 'object' ? body.config as Record<string, unknown> : body
-    facade.setProvider({
+    // 读取现有 meta，追加/更新供应商
+    const meta = readProviderMeta(facade)
+    const providers = Array.isArray(meta.providers) ? meta.providers as Array<Record<string, unknown>> : []
+    const id = stringOf(config, 'id') || stringOf(config, 'name') || 'provider-' + providers.length
+    const existing = providers.findIndex(p => p.id === id)
+    const entry: Record<string, unknown> = {
+      id,
+      name: stringOf(config, 'name') || id,
       baseUrl: stringOf(config, 'baseUrl'),
-      apiKey: stringOf(config, 'apiKey'),
-      model: stringOf(config, 'model'),
-      responseFormat: stringOf(config, 'responseFormat') || undefined,
-    })
-    return ok({ ok: true })
+      models: Array.isArray(config.models) ? config.models : (stringOf(config, 'model') ? [stringOf(config, 'model')] : []),
+      selectedModel: stringOf(config, 'selectedModel') || stringOf(config, 'model') || '',
+      hasApiKey: Boolean(stringOf(config, 'apiKey')) || Boolean(stringOf(config, 'hasApiKey')),
+      responseFormat: stringOf(config, 'responseFormat') || 'json_object',
+    }
+    if (stringOf(config, 'apiKey')) entry.apiKey = stringOf(config, 'apiKey') // 仅内部存，响应剥掉
+    if (existing >= 0) providers[existing] = { ...providers[existing], ...entry }
+    else providers.push(entry)
+    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers, defaults: meta.defaults ?? {} }) })
+    // 激活当前供应商（组合根 setProvider 用 baseUrl/apiKey/model）
+    facade.setProvider({ baseUrl: entry.baseUrl as string, apiKey: stringOf(config, 'apiKey'), model: entry.selectedModel as string, responseFormat: entry.responseFormat as 'json_object' | 'none' | undefined })
+    return ok(providerState(facade))
+  } },
+  { handlerId: 'provider.delete', impl: (facade, body) => {
+    const meta = readProviderMeta(facade)
+    const providers = Array.isArray(meta.providers) ? meta.providers as Array<Record<string, unknown>> : []
+    const id = stringOf(body, 'id') || stringOf(body, 'providerId')
+    const next = providers.filter(p => p.id !== id)
+    if (next.length === providers.length) return err('供应商不存在')
+    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: next, defaults: meta.defaults ?? {} }) })
+    return ok(providerState(facade))
   } },
 
   // ── 故事 ──
-  { handlerId: 'story.list', impl: facade => ok({ stories: facade.stories() }) },
-  { handlerId: 'story.get', impl: async (facade, body) => { const story = await facade.story(stringOf(body, 'id')); return ok({ story }) } },
+  // R3-2：桌面契约 GET /api/stories → 裸数组 [{id,title,custom}]；GET /api/story/get?id= → 裸 StoryPackage
+  { handlerId: 'story.list', impl: facade => ok(facade.stories()) },
+  { handlerId: 'story.get', impl: async (facade, body) => { const story = await facade.story(stringOf(body, 'id')); return ok(story) } },
 
   // ── W6-1 补挂：故事写入/导入导出（经原生端口 core-native 操作）──
   { handlerId: 'story.create', impl: (facade, body) => {
-    const result = facade.invokeSync('story.create', { title: stringOf(body, 'title'), opening: body.opening ?? '', playerCharacter: body.playerCharacter ?? {}, roles: Array.isArray(body.roles) ? body.roles : [] })
-    return ok(result ?? { ok: true })
+    const result = facade.invokeSync('story.create', { title: stringOf(body, 'title'), opening: body.opening ?? '', playerCharacter: body.playerCharacter ?? {}, roles: Array.isArray(body.roles) ? body.roles : [] }) as { id?: string; title?: string } | null
+    return ok({ ok: true, id: result?.id ?? stringOf(body, 'title'), title: result?.title ?? stringOf(body, 'title') })
   } },
-  { handlerId: 'story.delete', impl: (facade, body) => { facade.invokeSync('story.delete', { id: stringOf(body, 'id') }); return ok({ ok: true }) } },
-  { handlerId: 'story.save', impl: (facade, body) => { facade.invokeSync('story.save', { story: body.story ?? body }); return ok({ ok: true }) } },
-  { handlerId: 'story.save-as', impl: (facade, body) => { facade.invokeSync('story.saveAs', { story: body.story ?? body }); return ok({ ok: true }) } },
-  { handlerId: 'story.import', impl: (facade, body) => { facade.invokeSync('archive.import', { archive: body.archive ?? body }); return ok({ ok: true }) } },
-  { handlerId: 'story.export', impl: (facade, body) => { const result = facade.invokeSync('archive.export', { storyId: stringOf(body, 'storyId') }); return ok(result ?? { ok: true }) } },
+  // R3-2：桌面契约 DELETE /api/stories?id= → {ok:true, id}
+  { handlerId: 'story.delete', impl: (facade, body) => {
+    const id = stringOf(body, 'id')
+    if (!id) return err('故事 id 缺失')
+    facade.invokeSync('story.delete', { id })
+    return ok({ ok: true, id })
+  } },
+  { handlerId: 'story.save', impl: (facade, body) => {
+    const story = (body.story ?? body) as { id?: string }
+    if (!story?.id) return err('故事 id 缺失')
+    facade.invokeSync('story.save', { story })
+    return ok({ ok: true })
+  } },
+  // R3-3：save-as 必须传 id/title（AndroidCompositionOperations.story.saveAs 要求 id）
+  { handlerId: 'story.save-as', impl: (facade, body) => {
+    const story = (body.story ?? body) as { id?: string; title?: string }
+    const title = stringOf(body, 'title') || story?.title || ''
+    const id = stringOf(body, 'id') || story?.id
+    if (!id) return err('故事 id 缺失')
+    const result = facade.invokeSync('story.saveAs', { id, title, story: story ?? body }) as { id?: string; title?: string } | null
+    return ok({ ok: true, id: result?.id ?? id, title: result?.title ?? title })
+  } },
+  // R3-3 裁决：story/archive 导入导出是 zip/文件字节，经 SAF 原生通道（NativeBridge.importStoryDocument/
+  // exportDocument）承载；gateway 路由返回明确稳定 unsupported，UI 走同一受测入口（不假挂载 JSON 占位）。
+  { handlerId: 'story.import', impl: () => unsupported('剧本导入经 SAF 原生通道（文件选择器）') },
+  { handlerId: 'story.export', impl: () => unsupported('剧本导出经 SAF 原生通道（创建文档）') },
+  { handlerId: 'archive.import', impl: () => unsupported('存档导入经 SAF 原生通道（文件选择器）') },
+  { handlerId: 'archive.export', impl: () => unsupported('存档导出经 SAF 原生通道（创建文档）') },
 
   // ── W6-1 补挂：存档（经原生端口）──
   { handlerId: 'archive.list', impl: facade => { const result = facade.invokeSync('archive.list', {}) as { files?: unknown[] } | null; return ok(result ?? { files: [] }) } },
-  { handlerId: 'archive.save', impl: (facade, body) => { facade.invokeSync('archive.save', { name: stringOf(body, 'name'), archive: body.archive ?? {} }); return ok({ ok: true, name: stringOf(body, 'name') }) } },
+  // R3-2：桌面契约 archive.save → {ok:true, name, files:[...]}
+  { handlerId: 'archive.save', impl: (facade, body) => {
+    const name = stringOf(body, 'name') || '存档-' + new Date().toISOString().slice(0, 10)
+    facade.invokeSync('archive.save', { name, archive: body.archive ?? {} })
+    const files = (facade.invokeSync('archive.list', {}) as { files?: string[] } | null)?.files ?? []
+    return ok({ ok: true, name, files })
+  } },
   { handlerId: 'archive.load', impl: (facade, body) => { const result = facade.invokeSync('archive.load', { name: stringOf(body, 'name') }); return ok(result ?? { ok: true }) } },
-  { handlerId: 'archive.delete', impl: (facade, body) => { facade.invokeSync('archive.delete', { name: stringOf(body, 'name') }); return ok({ ok: true }) } },
-  { handlerId: 'archive.export', impl: (facade, body) => { const result = facade.invokeSync('archive.export', { storyId: stringOf(body, 'storyId') }); return ok(result ?? { ok: true }) } },
-  { handlerId: 'archive.import', impl: (facade, body) => { facade.invokeSync('archive.import', { archive: body.archive ?? body }); return ok({ ok: true }) } },
+  // R3-2：桌面契约 archive.delete → {ok:true, files:[...]}
+  { handlerId: 'archive.delete', impl: (facade, body) => {
+    const name = stringOf(body, 'name')
+    if (!name) return err('存档名缺失')
+    const result = facade.invokeSync('archive.delete', { name }) as { ok?: boolean; error?: { message?: string } } | null
+    if (result && result.ok === false) return err(result.error?.message ?? '存档不存在或已删除。')
+    const files = (facade.invokeSync('archive.list', {}) as { files?: string[] } | null)?.files ?? []
+    return ok({ ok: true, files })
+  } },
 
   // ── W6-1 补挂：供应商扩展（经原生端口 secret）──
-  { handlerId: 'provider.delete', impl: (facade, body) => {
-    // 删除后回退默认：组合根 setProvider 重新解析（无默认时保持未配置）
-    facade.invokeSync('secret.remove', { key: 'local.provider.meta' })
-    return ok({ ok: true })
-  } },
   { handlerId: 'provider.default-role', impl: (facade, body) => {
-    const meta = facade.invokeSync('secret.get', { key: 'local.provider.meta' }) as { found?: boolean; value?: string } | null
-    const parsed = meta?.found && meta.value ? JSON.parse(meta.value) as { defaults?: Record<string, unknown> } : { defaults: {} }
-    parsed.defaults = { ...(parsed.defaults ?? {}), role: stringOf(body, 'providerId') }
-    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify(parsed) })
-    return ok({ ok: true })
+    const meta = readProviderMeta(facade)
+    const defaults = { ...(meta.defaults ?? {}), defaultRoleProviderId: stringOf(body, 'id') || stringOf(body, 'providerId'), defaultRoleModel: stringOf(body, 'model') || meta.defaults.defaultRoleModel || '' }
+    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: meta.providers, defaults }) })
+    return ok(providerState(facade))
   } },
   { handlerId: 'provider.director', impl: (facade, body) => {
-    const meta = facade.invokeSync('secret.get', { key: 'local.provider.meta' }) as { found?: boolean; value?: string } | null
-    const parsed = meta?.found && meta.value ? JSON.parse(meta.value) as { defaults?: Record<string, unknown> } : { defaults: {} }
-    parsed.defaults = { ...(parsed.defaults ?? {}), director: stringOf(body, 'providerId') }
-    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify(parsed) })
-    return ok({ ok: true })
+    const meta = readProviderMeta(facade)
+    const defaults = { ...(meta.defaults ?? {}), directorProviderId: stringOf(body, 'id') || stringOf(body, 'providerId'), directorModel: stringOf(body, 'model') || meta.defaults.directorModel || '' }
+    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: meta.providers, defaults }) })
+    return ok(providerState(facade))
   } },
   { handlerId: 'provider.director-thinking', impl: (facade, body) => {
-    // 导演思考强度：与角色 thinking 同语义（组合根无独立设置，映射为默认强度持久化）
-    const meta = facade.invokeSync('secret.get', { key: 'local.provider.meta' }) as { found?: boolean; value?: string } | null
-    const parsed = meta?.found && meta.value ? JSON.parse(meta.value) as { defaults?: Record<string, unknown> } : { defaults: {} }
-    parsed.defaults = { ...(parsed.defaults ?? {}), directorThinking: stringOf(body, 'strength') || 'balanced' }
-    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify(parsed) })
-    return ok({ ok: true })
+    const meta = readProviderMeta(facade)
+    const defaults = { ...(meta.defaults ?? {}), directorThinkingStrength: stringOf(body, 'thinking') || stringOf(body, 'strength') || meta.defaults.directorThinkingStrength || 'standard' }
+    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: meta.providers, defaults }) })
+    return ok({ ok: true, defaults })
   } },
 
   // ── W6-1 补挂：计费/用量（经原生端口 secret 持久化；billing 为本地模拟）──
+  // R3-2：桌面契约 GET /api/billing → {prices: {...}, stats: {...}}（renderBilling 读 data.stats/data.prices）
   { handlerId: 'billing.summary', impl: facade => {
-    const raw = facade.invokeSync('secret.get', { key: 'local.billing.state' }) as { found?: boolean; value?: string } | null
-    const state = raw?.found && raw.value ? JSON.parse(raw.value) as Record<string, unknown> : {}
-    return ok({ billing: state.billing ?? { totalCost: 0 }, usage: state.usage ?? { turns: 0, tokens: 0 } })
+    const pricesRaw = facade.invokeSync('secret.get', { key: 'local.billing.prices' }) as { found?: boolean; value?: string } | null
+    const statsRaw = facade.invokeSync('secret.get', { key: 'local.billing.state' }) as { found?: boolean; value?: string } | null
+    const prices = pricesRaw?.found && pricesRaw.value ? JSON.parse(pricesRaw.value) : { version: 1, rates: [] }
+    const stats = statsRaw?.found && statsRaw.value ? JSON.parse(statsRaw.value) : { version: 1, currency: 'RMB', totalCost: 0, requests: 0, byProvider: [], byModel: [] }
+    return ok({ prices, stats })
   } },
   { handlerId: 'billing.prices.get', impl: facade => {
     const raw = facade.invokeSync('secret.get', { key: 'local.billing.prices' }) as { found?: boolean; value?: string } | null
-    return ok(raw?.found && raw.value ? JSON.parse(raw.value) : { prices: [] })
+    return ok(raw?.found && raw.value ? JSON.parse(raw.value) : { version: 1, rates: [] })
   } },
-  { handlerId: 'billing.prices.put', impl: (facade, body) => { facade.invokeSync('secret.set', { key: 'local.billing.prices', value: JSON.stringify(body) }); return ok({ ok: true }) } },
-  { handlerId: 'billing.reset', impl: facade => { facade.invokeSync('secret.set', { key: 'local.billing.state', value: JSON.stringify({ billing: { totalCost: 0 }, usage: { turns: 0, tokens: 0 } }) }); return ok({ ok: true }) } },
+  // R3-2：桌面契约 PUT /api/billing/prices → {prices, stats}（前端保存后直接 renderBilling）
+  { handlerId: 'billing.prices.put', impl: (facade, body) => {
+    facade.invokeSync('secret.set', { key: 'local.billing.prices', value: JSON.stringify(body.prices ?? body) })
+    const statsRaw = facade.invokeSync('secret.get', { key: 'local.billing.state' }) as { found?: boolean; value?: string } | null
+    const stats = statsRaw?.found && statsRaw.value ? JSON.parse(statsRaw.value) : { version: 1, currency: 'RMB', totalCost: 0, requests: 0, byProvider: [], byModel: [] }
+    return ok({ prices: body.prices ?? body, stats })
+  } },
+  // R3-2：桌面契约 POST /api/billing/reset → 裸 stats 对象
+  { handlerId: 'billing.reset', impl: facade => {
+    const emptyStats = { version: 1, currency: 'RMB', totalCost: 0, requests: 0, updatedAt: new Date().toISOString(), byProvider: [], byModel: [] }
+    facade.invokeSync('secret.set', { key: 'local.billing.state', value: JSON.stringify(emptyStats) })
+    return ok(emptyStats)
+  } },
   { handlerId: 'billing.usage', impl: facade => {
     const raw = facade.invokeSync('secret.get', { key: 'local.billing.state' }) as { found?: boolean; value?: string } | null
-    const state = raw?.found && raw.value ? JSON.parse(raw.value) as { usage?: Record<string, unknown> } : {}
-    return ok(state.usage ?? { turns: 0, tokens: 0 })
+    const state = raw?.found && raw.value ? JSON.parse(raw.value) as Record<string, unknown> : {}
+    return ok({ route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake', billing: state })
   } },
 
   // ── W6-1 补挂：提示词预设（经原生端口 preset）──
+  // R3-2：桌面契约 GET /api/prompts/presets → {presets, activeByScope, modes, gameplayScenarios}
   { handlerId: 'prompt.presets.list', impl: facade => {
     const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[] } | null
-    return ok(result ?? { presets: [] })
+    return ok({
+      presets: result?.presets ?? [],
+      activeByScope: {},
+      modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }],
+      gameplayScenarios: {},
+    })
   } },
-  { handlerId: 'prompt.presets.put', impl: (facade, body) => { facade.invokeSync('preset.save', { preset: body.preset ?? body }); return ok({ ok: true }) } },
-  { handlerId: 'prompt.presets.delete', impl: (facade, body) => { facade.invokeSync('preset.delete', { id: stringOf(body, 'id') }); return ok({ ok: true }) } },
-  { handlerId: 'prompt.presets.export', impl: facade => {
+  // R3-2：桌面契约 PUT 两种模式 → 裸 PromptPresetState 或 {ok:true, presets}
+  { handlerId: 'prompt.presets.put', impl: (facade, body) => {
+    if (body.preset) {
+      facade.invokeSync('preset.save', { preset: body.preset })
+      const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[] } | null
+      return ok({ ok: true, presets: result?.presets ?? [] })
+    }
+    // 切换当前预设：仅持久化 activeByScope
+    facade.invokeSync('secret.set', { key: 'local.prompt.active-scope', value: JSON.stringify({ [stringOf(body, 'scope')]: stringOf(body, 'activePresetId') }) })
+    return ok({ presets: (facade.invokeSync('preset.list', {}) as { presets?: unknown[] } | null)?.presets ?? [], activeByScope: { [stringOf(body, 'scope')]: stringOf(body, 'activePresetId') } })
+  } },
+  // R3-2：桌面契约 DELETE /api/prompts/presets?id= → {ok:true, presets}
+  { handlerId: 'prompt.presets.delete', impl: (facade, body) => {
+    const id = stringOf(body, 'id')
+    if (!id) return err('预设 id 缺失')
+    facade.invokeSync('preset.delete', { id })
     const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[] } | null
-    return ok({ presets: result?.presets ?? [] })
+    return ok({ ok: true, presets: result?.presets ?? [] })
   } },
-  { handlerId: 'prompt.private-toggles.get', impl: () => ok({}) },
+  { handlerId: 'prompt.presets.export', impl: () => unsupported('预设导出经 SAF 原生通道（创建文档）') },
+  // R3-2：桌面契约 GET/PUT /api/prompts/private-toggles（GET 读持久化值）
+  { handlerId: 'prompt.private-toggles.get', impl: facade => {
+    const raw = facade.invokeSync('secret.get', { key: 'local.prompt.private-toggles' }) as { found?: boolean; value?: string } | null
+    return ok(raw?.found && raw.value ? JSON.parse(raw.value) : {})
+  } },
   { handlerId: 'prompt.private-toggles.put', impl: (facade, body) => {
-    facade.invokeSync('secret.set', { key: 'local.prompt.private-toggles', value: JSON.stringify(body.toggles ?? body) })
-    return ok({ ok: true })
+    const raw = facade.invokeSync('secret.get', { key: 'local.prompt.private-toggles' }) as { found?: boolean; value?: string } | null
+    const current = raw?.found && raw.value ? JSON.parse(raw.value) as Record<string, unknown> : {}
+    const presetId = stringOf(body, 'presetId')
+    const nodeId = stringOf(body, 'nodeId')
+    if (presetId && nodeId) {
+      const preset = (current[presetId] && typeof current[presetId] === 'object' ? current[presetId] as Record<string, unknown> : {})
+      preset[nodeId] = body.enabled === true || body.enabled === undefined
+      current[presetId] = preset
+    } else if (body.toggles && typeof body.toggles === 'object') {
+      Object.assign(current, body.toggles)
+    }
+    facade.invokeSync('secret.set', { key: 'local.prompt.private-toggles', value: JSON.stringify(current) })
+    const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[] } | null
+    return ok({ ok: true, presets: result?.presets ?? [] })
   } },
 
   // ── W6-1 逐条裁决（明确 unsupported + 前端 DEGRADED 容错；评审允许路径）──
@@ -369,12 +515,33 @@ export class CoreBusinessPortableHandler implements PortableApiHandler {
     try {
       const body = await readJsonBody(request)
       const params = extractParams(route.pattern, path)
+      // R3-1：query 参数并入 body（GET/DELETE 的 ?id=... 等）；query 优先于 body 同名字段
+      const queryParams = parseQuery(request.url)
+      for (const [key, value] of Object.entries(queryParams)) {
+        if (value !== undefined) body[key] = value
+      }
       const result = await impl(this.facade, body, params)
       return jsonResponse(result.status, result.body)
     } catch (error) {
-      return jsonResponse(500, { error: { code: 'handler_failed', message: error instanceof Error ? error.message : String(error) } })
+      // R3-2：业务错误契约 = 400 {error: string}（与桌面 app-boot 外层 catch 一致；前端读 body.error）
+      return jsonResponse(400, { error: error instanceof Error ? error.message : String(error) })
     }
   }
+}
+
+/** R3-1：解析 URL query 为参数表（无 query 返回空对象）。 */
+export function parseQuery(url: string): Record<string, string> {
+  const queryIndex = url.indexOf('?')
+  if (queryIndex < 0) return {}
+  const params: Record<string, string> = {}
+  for (const pair of url.slice(queryIndex + 1).split('&')) {
+    if (!pair) continue
+    const eq = pair.indexOf('=')
+    const key = eq < 0 ? pair : pair.slice(0, eq)
+    const value = eq < 0 ? '' : pair.slice(eq + 1)
+    if (key) params[decodeURIComponent(key)] = decodeURIComponent(value)
+  }
+  return params
 }
 
 /** 静态/参数 pattern 匹配（与 RouteRegistry.match 同语义：段数相同、静态段相等）。 */

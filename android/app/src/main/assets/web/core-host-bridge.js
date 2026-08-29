@@ -186,6 +186,15 @@
       localCore.applyLaunchPlan(planJson)
     },
 
+    /**
+     * R3-5：客户端断开 → Java 侧 cancel(requestId) → 本方法 abort 对应请求（长模型请求停止）。
+     */
+    cancelPortableRequest: function (requestId) {
+      if (localCore && typeof localCore.cancelPortableRequest === 'function') {
+        localCore.cancelPortableRequest(requestId)
+      }
+    },
+
     /** 供 CoreService currentView() 调用：返回权威 CoreView 文本。 */
     view: function () {
       if (!localCore) return null

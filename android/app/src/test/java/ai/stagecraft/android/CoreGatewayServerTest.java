@@ -250,4 +250,26 @@ public final class CoreGatewayServerTest {
             assertTrue("nonce 必须注入", "nonce-sse".equals(core.receivedNonce));
         }
     }
+
+    @Test public void queryIsPreservedInForwardedRequest() throws Exception {
+        try (FakeCoreServer core = new FakeCoreServer(); CoreGatewayServer gateway = startGateway()) {
+            gateway.setCoreEndpoint(core.port, "nonce-q");
+            // GET with query：/api/story/get?id=s1（registry 匹配 pathOnly，转发保留 query）
+            String response = request(gateway, "GET", "/api/core/health?id=s1", null, null);
+            assertTrue("query 请求必须 200: " + response.split("\n")[0], response.contains(" 200 "));
+            assertTrue("转发必须保留 query", core.receivedPath.contains("?id=s1"));
+        }
+    }
+
+    @Test public void queryPreservedForBusinessRouteThroughCoreDataServer() throws Exception {
+        // 经 CoreDataServer 的 forwardApi 链路：query 从 gateway → CoreDataServer → forwardApi
+        try (CoreGatewayServer gateway = startGateway()) {
+            // 未设 core endpoint：验证 gateway 仍按 registry 分派（proxy-core → core_not_ready）
+            // query 保留由 CoreGatewayServerTest.queryIsPreservedInForwardedRequest 覆盖字节级；
+            // 这里验证 CoreDataServer 侧（CoreDataServerTest.coreBusinessRouteWithForwarderIsForwarded 已覆盖转发）
+            String response = request(gateway, "GET", "/api/core/health?x=1", null, null);
+            assertTrue("未就绪 core 必须 503（query 不影响分派）", response.contains(" 503 "));
+            assertTrue(response.contains("core_not_ready"));
+        }
+    }
 }

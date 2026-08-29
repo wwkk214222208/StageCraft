@@ -174,7 +174,17 @@ public final class CoreService extends Service {
                 }
 
                 @Override public void cancel(String requestId) {
-                    forwardCommand("{\"command\":\"cancel\",\"requestId\":\"" + requestId.replace("\"", "") + "\"}", result -> { });
+                    // R3-5：客户端断开 → 经桥取消 JS 侧对应请求（abort AbortSignal，长模型请求停止）
+                    String safeId = requestId == null ? "" : requestId.replace("\"", "");
+                    if (!safeId.isEmpty()) {
+                        main.post(() -> {
+                            if (coreWebView != null) {
+                                coreWebView.evaluateJavascript(
+                                    "window.CoreHostBridge && window.CoreHostBridge.cancelPortableRequest(" + JSONObject.quote(safeId) + ")",
+                                    null);
+                            }
+                        });
+                    }
                 }
 
                 @Override public void forwardApi(String method, String path, Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {

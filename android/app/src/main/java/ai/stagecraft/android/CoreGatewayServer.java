@@ -123,7 +123,10 @@ public final class CoreGatewayServer implements AutoCloseable {
             String path = rawPath;
             int query = path.indexOf('?');
             if (query >= 0) path = path.substring(0, query);
+            // R3-1：pathOnly 用于 registry 分派（query 不参与匹配）；rawPath（含 query）用于转发，
+            // 保证 /api/story/get?id=... 等 GET/DELETE 查询参数到达 handler。
             String pathOnly = URI.create(rawPath).getPath();
+            String fullPath = URI.create(rawPath).getPath() + (query >= 0 ? rawPath.substring(query) : "");
             // POST body 统一读入内存（≤16MB），静态/代理/host 三面共用
             byte[] body = readBodyBytes(input, headers);
 
@@ -145,7 +148,7 @@ public final class CoreGatewayServer implements AutoCloseable {
             switch (action) {
                 case "proxy-core" -> { /* 继续走 Core 代理 */ }
                 case "host-handler" -> {
-                    handleHostRoute(connection, method, pathOnly, headers, body, route);
+                    handleHostRoute(connection, method, fullPath, headers, body, route);
                     return;
                 }
                 case "stable-unsupported" -> {
@@ -176,7 +179,7 @@ public final class CoreGatewayServer implements AutoCloseable {
             try {
                 upstream = SocketFactory.getDefault().createSocket(InetAddress.getByName("127.0.0.1"), currentCorePort);
                 activeUpstreams.put(connectionId, upstream);
-                writeProxyHead(upstream.getOutputStream(), method, pathOnly, headers, body.length, coreNonce);
+                writeProxyHead(upstream.getOutputStream(), method, fullPath, headers, body.length, coreNonce);
                 if (body.length > 0) {
                     upstream.getOutputStream().write(body);
                     upstream.getOutputStream().flush();
