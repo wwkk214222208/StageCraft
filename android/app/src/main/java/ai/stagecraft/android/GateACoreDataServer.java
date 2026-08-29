@@ -52,14 +52,19 @@ public final class GateACoreDataServer {
     private ServerSocket server;
     private int port = -1;
     private volatile String healthJson = "{}";
+    private volatile String lastError = "";
     private final AtomicLong connections = new AtomicLong();
     private final AtomicLong rejected = new AtomicLong();
     /** 由 GateACoreService 注入：把 HTTP POST 转发到 Core WebView JS（进程内桥量测）。 */
     private volatile CommandForwarder commandForwarder;
 
     public interface CommandForwarder {
-        /** 在主线程异步执行，完成后回调 respond(status, json)。 */
-        void forward(String bodyJson, java.util.function.BiConsumer<Integer, String> respond);
+        /**
+         * 在主线程异步执行；回调只交付回执 JSON 字符串（不做任何 socket I/O——
+         * 主线程上写 socket 会抛 NetworkOnMainThreadException，实测根因）。
+         * HTTP 写回由数据服务连接线程完成。
+         */
+        void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer);
     }
 
     public GateACoreDataServer(String nonce) {
@@ -73,7 +78,8 @@ public final class GateACoreDataServer {
     public long getRejectedCount() { return rejected.get(); }
 
     public void start() throws IOException {
-        server = ServerSocketFactory.getDefault().createServerSocket(0, 64, InetAddress.getLoopbackAddress());
+        // 显式 IPv4 回环（与 gateway 的 127.0.0.1 连接一致，见 GateAGatewayServer 注释）
+        server = ServerSocketFactory.getDefault().createServerSocket(0, 64, InetAddress.getByName("127.0.0.1"));
         port = server.getLocalPort();
         Thread acceptor = new Thread(this::acceptLoop, "gatea-core-data-accept");
         acceptor.setDaemon(true);
@@ -123,7 +129,17 @@ public final class GateACoreDataServer {
                 return;
             }
             if ("/api/core/health".equals(path) && "GET".equals(method)) {
-                respond(socket, 200, "application/json", healthJson);
+                String payload = healthJson;
+                try {
+                    JSONObject health = new JSONObject(healthJson);
+                    health.put("dataServerStats", new JSONObject()
+                        .put("connections", connections.get())
+                        .put("rejected", rejected.get())
+                        .put("subscribers", subscribers.size())
+                        .put("lastError", lastError));
+                    payload = health.toString();
+                } catch (Exception ignored) { }
+                respond(socket, 200, "application/json", payload);
                 return;
             }
             if ("/api/core/events".equals(path) && "GET".equals(method)) {
@@ -141,16 +157,26 @@ public final class GateACoreDataServer {
                     respond(socket, 503, "application/json", "{\"error\":{\"code\":\"core_not_ready\",\"message\":\"core bridge is not ready\"}}");
                     return;
                 }
-                final Socket target = socket;
-                // 命令转发经主线程进 WebView；响应回到本连接线程。
-                main.post(() -> forwarder.forward(body, (status, json) -> respond(target, status, "application/json", json)));
+                // 命令转发经主线程进 WebView（evaluateJavascript）；连接线程等结果后自行写回，
+                // socket I/O 全部留在连接线程（主线程写 loopback 也触发 NetworkOnMainThreadException）。
+                final String[] result = new String[1];
+                java.util.concurrent.CountDownLatch responded = new java.util.concurrent.CountDownLatch(1);
+                main.post(() -> forwarder.forward(body, json -> { result[0] = json; responded.countDown(); }));
+                responded.await();
+                respond(socket, 200, "application/json", result[0] == null
+                    ? "{\"error\":{\"code\":\"bridge_no_result\",\"message\":\"core bridge returned no result\"}}"
+                    : result[0]);
                 return;
             }
             respond(socket, 404, "application/json", "{\"error\":{\"code\":\"not_found\",\"message\":\"unknown core data path\"}}");
-        } catch (SocketTimeoutException idle) {
-            GateALog.i("core data connection idle timeout, closing");
-        } catch (IOException disconnected) {
-            GateALog.i("core data connection lost: " + disconnected.getClass().getSimpleName());
+        } catch (InterruptedException latchWait) {
+            Thread.currentThread().interrupt();
+        } catch (Throwable error) {
+            // 华为设备 logcat 受抑制：把异常如实回写进响应体并记录到 lastError（health 可见）
+            lastError = error.getClass().getSimpleName() + ": " + error.getMessage();
+            GateALog.w("core data error: " + lastError);
+            try { respond(socket, 500, "application/json", "{\"error\":{\"code\":\"data_server_internal\",\"message\":\"" + lastError.replace("\"", "'") + "\"}}"); } catch (Exception ignored) { }
+            try { socket.close(); } catch (IOException ignored) { }
         }
     }
 

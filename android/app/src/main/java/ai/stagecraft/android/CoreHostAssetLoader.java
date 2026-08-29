@@ -27,12 +27,17 @@ public final class CoreHostAssetLoader extends WebViewClient {
 
     public interface RenderGoneListener { void onRenderProcessGone(WebView view); }
 
+    /** 页面加载完成回调：WebMessage 端口必须在此时下发，早于页面监听器注册会被丢弃。 */
+    public interface PageLoadListener { void onPageFinished(WebView view, String url); }
+
     private final Context context;
     private final RenderGoneListener renderGoneListener;
+    private final PageLoadListener pageLoadListener;
 
-    public CoreHostAssetLoader(Context context, RenderGoneListener renderGoneListener) {
+    public CoreHostAssetLoader(Context context, RenderGoneListener renderGoneListener, PageLoadListener pageLoadListener) {
         this.context = context.getApplicationContext();
         this.renderGoneListener = renderGoneListener;
+        this.pageLoadListener = pageLoadListener;
     }
 
     @Override
@@ -49,6 +54,12 @@ public final class CoreHostAssetLoader extends WebViewClient {
             headers.put("content-type", "text/plain");
             return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", headers, new ByteArrayInputStream("asset not found".getBytes()));
         }
+    }
+
+    @Override
+    public void onPageFinished(WebView view, String url) {
+        GateALog.i("core host page finished: " + url);
+        if (pageLoadListener != null) pageLoadListener.onPageFinished(view, url);
     }
 
     @Override

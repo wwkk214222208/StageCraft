@@ -126,6 +126,10 @@ val verifyEmbeddedCoreAssets by tasks.registering {
 
 android {
     namespace = "ai.stagecraft.android"
+    // Q8 Binder 控制面契约使用 AIDL（AGP 8 起默认关闭，需显式开启）
+    buildFeatures {
+        aidl = true
+    }
     compileSdk = 35
 
     defaultConfig {

@@ -3,12 +3,11 @@ package ai.stagecraft.android;
 import android.app.Service;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.RemoteCallbackList;
 import android.os.Process;
-import android.os.ResultReceiver;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebMessage;
 import android.webkit.WebMessagePort;
@@ -17,7 +16,6 @@ import android.webkit.WebView;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -29,12 +27,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 该服务是 spike 原型；Gate A 通过后由 W5/W6 选择性移植为正式 CoreService。
  */
 public class GateACoreService extends Service {
-    public static final int MSG_STATUS = 1;
-    public static final int MSG_ENDPOINT_READY = 2;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final AtomicBoolean disposed = new AtomicBoolean(false);
-    private final CopyOnWriteArrayList<ResultReceiver> callbacks = new CopyOnWriteArrayList<>();
     private WebView coreWebView;
     private GateACoreDataServer dataServer;
     private String startedAt;
@@ -43,42 +38,65 @@ public class GateACoreService extends Service {
     private String nonce = "";
     private int corePid;
 
-    /** Q8 最小 Binder 契约：getEndpoint / requestStop / getStatusSummary / registerCallback。 */
-    public class Binder extends android.os.Binder {
-        /** 端点就绪后返回 {"port":int,"nonce":String,"pid":int}；未就绪返回 null。nonce 仅经 Binder 传递。 */
-        public JSONObject getEndpoint() {
+    /** Q8 最小 AIDL 契约：getEndpoint / getStatusSummary / registerCallback / requestStop。 */
+    private final ICoreControl.Stub control = new ICoreControl.Stub() {
+        @Override
+        public String getEndpoint() {
             if (dataServer == null || dataServer.getPort() < 0 || !"ready".equals(status)) return null;
             try {
                 return new JSONObject()
                     .put("port", dataServer.getPort())
                     .put("nonce", nonce)
-                    .put("pid", corePid);
+                    .put("pid", corePid)
+                    .toString();
             } catch (Exception error) {
                 return null;
             }
         }
 
-        public JSONObject getStatusSummary() {
-            return GateACoreService.this.getStatusSummary();
+        @Override
+        public String getStatusSummary() {
+            return GateACoreService.this.getStatusSummary().toString();
         }
 
-        public synchronized void registerCallback(ResultReceiver receiver) {
-            receiver.send(MSG_STATUS, summaryBundle());
-            JSONObject endpoint = getEndpoint();
-            if (endpoint != null) {
-                Bundle data = new Bundle();
-                data.putString("summary", endpoint.toString());
-                receiver.send(MSG_ENDPOINT_READY, data);
-            }
-            callbacks.add(receiver);
+        @Override
+        public void registerCallback(ICoreControlCallback callback) {
+            callbacks.register(callback);
+            broadcastStatus();
+            String endpoint = getEndpoint();
+            if (endpoint != null) broadcastEndpoint(endpoint);
         }
 
+        @Override
         public void requestStop() {
             stopGracefully();
         }
+    };
+
+    private final RemoteCallbackList<ICoreControlCallback> callbacks = new RemoteCallbackList<>();
+
+    private void broadcastStatus() {
+        String summary = getStatusSummary().toString();
+        int count = callbacks.beginBroadcast();
+        try {
+            for (int index = 0; index < count; index++) {
+                try { callbacks.getBroadcastItem(index).onStatus(summary); } catch (Exception ignored) { }
+            }
+        } finally {
+            callbacks.finishBroadcast();
+        }
     }
 
-    private final Binder control = new Binder();
+    private void broadcastEndpoint(String endpoint) {
+        int count = callbacks.beginBroadcast();
+        try {
+            for (int index = 0; index < count; index++) {
+                try { callbacks.getBroadcastItem(index).onEndpointReady(endpoint); } catch (Exception ignored) { }
+            }
+        } finally {
+            callbacks.finishBroadcast();
+        }
+    }
 
     @Override
     public void onCreate() {
@@ -110,9 +128,17 @@ public class GateACoreService extends Service {
             coreWebView.getSettings().setAllowFileAccess(false);
             coreWebView.getSettings().setAllowContentAccess(false);
             coreWebView.getSettings().setDomStorageEnabled(false);
-            coreWebView.setWebViewClient(new CoreHostAssetLoader(this, view -> fail("renderer_gone", "core webview renderer crashed")));
+            coreWebView.setWebViewClient(new CoreHostAssetLoader(this, view -> fail("renderer_gone", "core webview renderer crashed"), (view, url) -> {
+                if (bridgeReady.compareAndSet(false, true)) setupWebMessageBridge(); // 页面监听器就绪后下发端口
+            }));
+            coreWebView.setWebChromeClient(new android.webkit.WebChromeClient() {
+                @Override
+                public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
+                    GateALog.i("core-host console [" + message.messageLevel() + "] " + message.message() + " @" + message.sourceId() + ":" + message.lineNumber());
+                    return true;
+                }
+            });
             coreWebView.addJavascriptInterface(new CoreNativeMeasure(), "CoreNative");
-            setupWebMessageBridge();
             coreWebView.loadUrl(CoreHostAssetLoader.CORE_ORIGIN + "/assets/core-host.html");
             GateALog.i("core webview loading appassets core-host");
         } catch (Throwable error) {
@@ -120,6 +146,8 @@ public class GateACoreService extends Service {
             fail("boot_failed", error.getClass().getSimpleName() + ": " + error.getMessage());
         }
     }
+
+    private final AtomicBoolean bridgeReady = new AtomicBoolean(false);
 
     /** Q1 优先通道：WebMessagePort。Java 建立通道并把一个端口交给页面，页面事件经端口回流。 */
     private void setupWebMessageBridge() {
@@ -132,7 +160,7 @@ public class GateACoreService extends Service {
                 handleBridgeMessage(message.getData());
             }
         });
-        coreWebView.postWebMessage(new WebMessage("{\"type\":\"init\",\"bridge\":\"web-message-port\"}", new WebMessagePort[]{pagePort}), Uri.EMPTY);
+        coreWebView.postWebMessage(new WebMessage("{\"type\":\"init\",\"bridge\":\"web-message-port\"}", new WebMessagePort[]{pagePort}), Uri.parse(CoreHostAssetLoader.CORE_ORIGIN));
         GateALog.i("web message bridge posted");
     }
 
@@ -172,35 +200,45 @@ public class GateACoreService extends Service {
     }
 
     private void publishEndpointReady() {
-        JSONObject endpoint = control.getEndpoint();
+        // 控制面约定：端点信息只经 Binder 小消息（Q8）；此处直接广播，不经本地 Stub 以免 RemoteException
         GateALog.i("endpoint ready port=" + dataServer.getPort() + " status=ready");
-        for (ResultReceiver receiver : callbacks) {
-            Bundle data = new Bundle();
-            data.putString("summary", endpoint.toString());
-            receiver.send(MSG_ENDPOINT_READY, data);
+        String endpoint = null;
+        try {
+            if (dataServer != null) {
+                endpoint = new JSONObject()
+                    .put("port", dataServer.getPort())
+                    .put("nonce", nonce)
+                    .put("pid", corePid)
+                    .toString();
+            }
+        } catch (Exception error) {
+            endpoint = null;
         }
+        if (endpoint != null) broadcastEndpoint(endpoint);
     }
 
     /** POST /api/core/commands → 进程内桥（evaluateJavascript echo）→ 回执。Q1 量测点。 */
-    private void forwardCommand(String bodyJson, java.util.function.BiConsumer<Integer, String> respond) {
+    private void forwardCommand(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
         long startedAtMillis = System.currentTimeMillis();
         coreWebView.evaluateJavascript(
-            "window.CoreHostBridge && window.CoreHostBridge.echo(" + JSONObject.quote(bodyJson) + ")",
+            "window.CoreHostBridge && window.CoreHostBridge.dispatch(" + JSONObject.quote(bodyJson) + ")",
             resultJson -> {
                 long elapsed = System.currentTimeMillis() - startedAtMillis;
                 String payload = unquote(resultJson);
-                JSONObject receipt = new JSONObject();
+                String receipt;
                 try {
-                    receipt.put("requestId", new JSONObject(bodyJson).optString("requestId"));
-                    receipt.put("status", payload == null ? "rejected" : "accepted");
-                    receipt.put("bridgeElapsedMs", elapsed);
-                    receipt.put("bodyBytes", bodyJson.getBytes(StandardCharsets.UTF_8).length);
-                    if (payload != null) receipt.put("echo", new JSONObject(payload));
-                    else receipt.put("error", new JSONObject().put("code", "bridge_failed").put("message", "core host echo unavailable"));
+                    JSONObject object = new JSONObject();
+                    object.put("requestId", new JSONObject(bodyJson).optString("requestId"));
+                    object.put("status", payload == null ? "rejected" : "accepted");
+                    object.put("bridgeElapsedMs", elapsed);
+                    object.put("bodyBytes", bodyJson.getBytes(StandardCharsets.UTF_8).length);
+                    if (payload != null) object.put("echo", new JSONObject(payload));
+                    else object.put("error", new JSONObject().put("code", "bridge_failed").put("message", "core host echo unavailable"));
+                    receipt = object.toString();
                 } catch (Exception error) {
-                    try { receipt.put("status", "rejected"); } catch (Exception ignored) { }
+                    receipt = "{\"status\":\"rejected\"}";
                 }
-                respond.accept(200, receipt.toString());
+                resultConsumer.accept(receipt); // 只交付 JSON 字符串，socket 写回在连接线程
             });
     }
 
@@ -230,7 +268,7 @@ public class GateACoreService extends Service {
         status = "failed";
         failureCode = code;
         GateALog.w("core failed code=" + code + " message=" + message);
-        for (ResultReceiver receiver : callbacks) receiver.send(MSG_STATUS, summaryBundle());
+        broadcastStatus();
     }
 
     private JSONObject getStatusSummary() {
@@ -244,12 +282,6 @@ public class GateACoreService extends Service {
         } catch (Exception error) {
             return new JSONObject();
         }
-    }
-
-    private Bundle summaryBundle() {
-        Bundle bundle = new Bundle();
-        bundle.putString("summary", getStatusSummary().toString());
-        return bundle;
     }
 
     private void stopGracefully() {

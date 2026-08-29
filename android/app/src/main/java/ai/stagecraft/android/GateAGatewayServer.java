@@ -42,7 +42,8 @@ public final class GateAGatewayServer {
     }
 
     public void start() throws IOException {
-        server = ServerSocketFactory.getDefault().createServerSocket(0, 64, InetAddress.getLoopbackAddress());
+        // 显式 IPv4 回环：部分设备 getLoopbackAddress() 返回 ::1，与页面/URL 的 127.0.0.1 不一致会导致拒连
+        server = ServerSocketFactory.getDefault().createServerSocket(0, 64, InetAddress.getByName("127.0.0.1"));
         port = server.getLocalPort();
         Thread acceptor = new Thread(this::acceptLoop, "gatea-gateway-accept");
         acceptor.setDaemon(true);
@@ -94,7 +95,7 @@ public final class GateAGatewayServer {
                 writeResponse(client, 503, "application/json", "{\"error\":{\"code\":\"core_not_ready\",\"message\":\"core endpoint is not ready\"}}");
                 return;
             }
-            upstream = SocketFactory.getDefault().createSocket(InetAddress.getLoopbackAddress(), currentCorePort);
+            upstream = SocketFactory.getDefault().createSocket(InetAddress.getByName("127.0.0.1"), currentCorePort);
             activeUpstreams.put(connectionId, upstream);
             request.writeTo(upstream.getOutputStream(), coreNonce, hostTag);
             // 请求体（POST）转发

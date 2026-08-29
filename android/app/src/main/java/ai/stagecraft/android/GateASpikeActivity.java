@@ -3,12 +3,11 @@ package ai.stagecraft.android;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
+import android.os.Bundle;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Process;
-import android.os.ResultReceiver;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -50,21 +49,28 @@ public class GateASpikeActivity extends Activity {
     private final List<String> screenLog = new ArrayList<>();
     private final List<JSONObject> checks = new ArrayList<>();
     private GateAGatewayServer gateway;
-    private GateACoreService.Binder core;
+    private ICoreControl core;
     private volatile JSONObject endpoint;
     private final Object endpointSignal = new Object();
     private long startedAtMillis;
 
     private final ServiceConnection connection = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName name, IBinder binder) {
-            log("service connected, registering callback");
-            core = (GateACoreService.Binder) binder;
-            core.registerCallback(new ResultReceiver(null) {
-                @Override protected void onReceiveResult(int resultCode, Bundle resultData) {
-                    if (resultCode == GateACoreService.MSG_ENDPOINT_READY) handleEndpointReady(resultData.getString("summary"));
-                    else log("status: " + resultData.getString("summary"));
-                }
-            });
+            log("service connected (cross-process proxy), registering callback");
+            core = ICoreControl.Stub.asInterface(binder);
+            try {
+                core.registerCallback(new ICoreControlCallback.Stub() {
+                    @Override public void onStatus(String summaryJson) {
+                        log("status: " + summaryJson);
+                    }
+
+                    @Override public void onEndpointReady(String endpointJson) {
+                        handleEndpointReady(endpointJson);
+                    }
+                });
+            } catch (Exception error) {
+                log("registerCallback FAILED: " + error);
+            }
         }
 
         @Override public void onServiceDisconnected(ComponentName name) {
@@ -138,6 +144,8 @@ public class GateASpikeActivity extends Activity {
     private synchronized void handleEndpointReady(String summaryJson) {
         try {
             endpoint = new JSONObject(summaryJson);
+            // 关键链路：把 :core 端点交给 gateway（nonce 只在原生层流转，不进页面）
+            gateway.setCoreEndpoint(endpoint.optInt("port"), endpoint.optString("nonce"));
             log("endpoint ready: port=" + endpoint.optInt("port") + " pid=" + endpoint.optInt("pid") + " nonce=<native-only>");
             synchronized (endpointSignal) { endpointSignal.notifyAll(); }
         } catch (Exception error) {
@@ -148,19 +156,14 @@ public class GateASpikeActivity extends Activity {
     private void runCheckSequence() {
         checks.clear();
         new Thread(() -> {
-            try {
-                awaitEndpoint(30_000);
-                checkHealth();
-                checkSseRoundtrip();
-                checkCommandRoundtrip();
-                checkBridgeMeasurements();
-                checkClientAbort();
-                checkCoreKillAndRestart();
-            } catch (Exception error) {
-                JSONObject evidence = new JSONObject();
-                try { evidence.put("error", String.valueOf(error)); } catch (Exception ignored) { }
-                record("sequence", false, evidence);
-            }
+            runCheck("endpoint-ready", () -> awaitEndpoint(30_000));
+            // 逐项容错：单项失败不中断其余检查（Gate A 需要完整证据面）
+            runCheck("health-handshake", this::checkHealth);
+            runCheck("sse-incremental-delivery", this::checkSseRoundtrip);
+            runCheck("command-roundtrip", this::checkCommandRoundtrip);
+            runCheck("bridge-measurements", this::checkBridgeMeasurements);
+            runCheck("client-abort-propagation", this::checkClientAbort);
+            runCheck("core-kill-restart", this::checkCoreKillAndRestart);
             finishReport();
         }, "gatea-checks").start();
     }
@@ -178,11 +181,15 @@ public class GateASpikeActivity extends Activity {
         HttpURLConnection connection = (HttpURLConnection) new URL(String.format(CORE_HOST_URL, gateway.getPort(), "/api/core/health")).openConnection();
         connection.setConnectTimeout(3000);
         connection.setReadTimeout(5000);
+        int code = connection.getResponseCode();
         String body = readAll(connection);
         JSONObject health = new JSONObject(body);
-        boolean pass = connection.getResponseCode() == 200 && "ready".equals(health.optString("status")) && "1.1".equals(health.optString("protocolVersion"));
+        boolean pass = code == 200 && "ready".equals(health.optString("status")) && "1.1".equals(health.optString("protocolVersion"));
         JSONObject evidence = new JSONObject()
             .put("elapsedMs", System.currentTimeMillis() - started)
+            .put("httpCode", code)
+            .put("bodyPrefix", body.substring(0, Math.min(200, body.length())))
+            .put("gatewayProxied", gateway.getProxiedCount())
             .put("status", health.optString("status"))
             .put("protocolVersion", health.optString("protocolVersion"))
             .put("coreBundleVersion", health.optString("coreBundleVersion"))
@@ -194,8 +201,9 @@ public class GateASpikeActivity extends Activity {
     /** SSE 逐条到达：3 个事件应分批到达（间隔 > 0），且在流关闭前到达（非整包缓冲）。 */
     private void checkSseRoundtrip() throws Exception {
         Socket socket = openSse();
-        // 先开订阅，再让 Core 页面发 3 个事件（间隔 300ms）
-        postCommand(new JSONObject().put("requestId", "emit-events").put("command", "emit-events").put("count", 3).put("intervalMs", 300));
+        // 先开订阅，再让 Core 页面发 3 个事件（间隔 300ms）——原始 socket POST 旁路 okhttp
+        String postResult = rawPost(new JSONObject().put("requestId", "emit-events").put("command", "emit-events").put("count", 3).put("intervalMs", 300));
+        log("rawPost emit-events: " + postResult.substring(0, Math.min(220, postResult.length())));
         long started = System.currentTimeMillis();
         List<Long> arrivals = new ArrayList<>();
         BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
@@ -220,12 +228,17 @@ public class GateASpikeActivity extends Activity {
                 .put("requestId", "cmd-" + bytes)
                 .put("command", "echo")
                 .put("payload", repeat("x", bytes));
-            JSONObject receipt = postCommand(command);
+            String viaGateway = rawPost(command, false);
+            String direct = rawPost(command, true);
+            log("viaGateway=[" + viaGateway.substring(0, Math.min(160, viaGateway.length())) + "] direct=[" + direct.substring(0, Math.min(160, direct.length())) + "]");
+            JSONObject receipt = new JSONObject(direct.substring(direct.indexOf('{')));
             boolean pass = receipt != null && "accepted".equals(receipt.optString("status"))
                 && receipt.optJSONObject("echo") != null
                 && bytes == receipt.optJSONObject("echo").optInt("payloadBytes");
             record("command-roundtrip-" + bytes, pass, new JSONObject()
                 .put("elapsedMs", System.currentTimeMillis() - started)
+                .put("httpCode", receipt == null ? -1 : receipt.optInt("httpCode", -1))
+                .put("gatewayProxied", receipt == null ? -1 : receipt.optInt("gatewayProxied", -1))
                 .put("bridgeElapsedMs", receipt == null ? -1 : receipt.optLong("bridgeElapsedMs"))
                 .put("bodyBytes", receipt == null ? -1 : receipt.optLong("bodyBytes")));
         }
@@ -235,10 +248,11 @@ public class GateASpikeActivity extends Activity {
     private void checkBridgeMeasurements() throws Exception {
         for (int bytes : new int[] {8 * 1024, 512 * 1024, 2 * 1024 * 1024}) {
             long started = System.currentTimeMillis();
-            JSONObject receipt = postCommand(new JSONObject()
+            String raw = rawPost(new JSONObject()
                 .put("requestId", "measure-" + bytes)
                 .put("command", "measure-eval")
                 .put("bytes", bytes));
+            JSONObject receipt = new JSONObject(raw.substring(raw.indexOf('{')));
             long elapsed = System.currentTimeMillis() - started;
             int echoBytes = receipt == null || receipt.optJSONObject("echo") == null ? -1 : receipt.optJSONObject("echo").optInt("payloadBytes");
             record("bridge-eval-result-" + bytes, echoBytes == bytes, new JSONObject()
@@ -253,7 +267,9 @@ public class GateASpikeActivity extends Activity {
     private void checkClientAbort() throws Exception {
         long before = gateway.getUpstreamClosedByClientCount();
         Socket socket = openSse();
-        postCommand(new JSONObject().put("requestId", "abort-emit").put("command", "emit-events").put("count", 1).put("intervalMs", 0));
+        // 发多个间隔事件：close 之后紧跟的下一个事件写入必然触发 broken-pipe 检测
+        // （若只发 1 个 interval=0 的事件，事件会在 close 前被消费，检测要等 10s 心跳）
+        postCommand(new JSONObject().put("requestId", "abort-emit").put("command", "emit-events").put("count", 6).put("intervalMs", 300));
         BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
         long deadline = System.currentTimeMillis() + 10_000;
         while (System.currentTimeMillis() < deadline) {
@@ -264,7 +280,7 @@ public class GateASpikeActivity extends Activity {
         long closedAt = System.currentTimeMillis();
         socket.close();
         long deadlineWait = System.currentTimeMillis() + 5_000;
-        while (gateway.getUpstreamClosedByClientCount() == before && System.currentTimeMillis() < deadlineWait) Thread.sleep(50);
+        while (gateway.getUpstreamClosedByClientCount() == before && System.currentTimeMillis() < deadlineWait) Thread.sleep(30);
         boolean pass = gateway.getUpstreamClosedByClientCount() > before;
         long observedWithinMs = System.currentTimeMillis() - closedAt;
         record("client-abort-propagation", pass, new JSONObject()
@@ -329,7 +345,7 @@ public class GateASpikeActivity extends Activity {
 
     private Socket openSse() throws Exception {
         awaitEndpoint(30_000);
-        Socket socket = new Socket(InetAddress.getLoopbackAddress(), gateway.getPort());
+        Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), gateway.getPort());
         OutputStream output = socket.getOutputStream();
         output.write(("GET /api/core/events HTTP/1.1\r\nhost: 127.0.0.1\r\naccept: text/event-stream\r\nconnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
         output.flush();
@@ -347,8 +363,12 @@ public class GateASpikeActivity extends Activity {
         connection.setFixedLengthStreamingMode(body.length);
         connection.setRequestProperty("content-type", "application/json");
         connection.getOutputStream().write(body);
+        int code = connection.getResponseCode();
         String response = readAll(connection);
-        return new JSONObject(response);
+        JSONObject parsed = new JSONObject(response);
+        parsed.put("httpCode", code);
+        parsed.put("gatewayProxied", gateway.getProxiedCount());
+        return parsed;
     }
 
     private static String readAll(HttpURLConnection connection) throws Exception {
@@ -365,6 +385,52 @@ public class GateASpikeActivity extends Activity {
         StringBuilder builder = new StringBuilder(bytes);
         while (builder.length() < bytes) builder.append(unit);
         return builder.substring(0, bytes);
+    }
+
+    private void runCheck(String name, CheckBody body) {
+        try { body.run(); } catch (Throwable error) {
+            JSONObject evidence = new JSONObject();
+            try {
+                evidence.put("error", String.valueOf(error));
+                evidence.put("gatewayProxied", gateway.getProxiedCount());
+                evidence.put("upstreamClosedByClient", gateway.getUpstreamClosedByClientCount());
+                evidence.put("downstreamClosedByUpstream", gateway.getDownstreamClosedByUpstreamCount());
+            } catch (Exception ignored) { }
+            record(name, false, evidence);
+        }
+    }
+
+    interface CheckBody { void run() throws Exception; }
+
+    /** 原始 socket POST（旁路 okhttp）：target=gateway 或直连 :core 数据服务；返回完整响应文本。 */
+    private String rawPost(JSONObject command, boolean directToCore) throws Exception {
+        awaitEndpoint(30_000);
+        byte[] body = command.toString().getBytes(StandardCharsets.UTF_8);
+        int targetPort = directToCore ? endpoint.optInt("port") : gateway.getPort();
+        String nonceHeader = directToCore ? "x-core-nonce: " + endpoint.optString("nonce") + "\r\n" : "";
+        try (Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), targetPort)) {
+            socket.setSoTimeout(20_000);
+            OutputStream output = socket.getOutputStream();
+            String requestHead = "POST /api/core/commands HTTP/1.1\r\n"
+                + "host: 127.0.0.1\r\n"
+                + nonceHeader
+                + "content-type: application/json\r\n"
+                + "content-length: " + body.length + "\r\n"
+                + "connection: close\r\n\r\n";
+            output.write(requestHead.getBytes(StandardCharsets.US_ASCII));
+            output.write(body);
+            output.flush();
+            java.io.InputStream input = socket.getInputStream();
+            StringBuilder builder = new StringBuilder();
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = input.read(buffer)) >= 0) builder.append(new String(buffer, 0, read, StandardCharsets.UTF_8));
+            return builder.toString();
+        }
+    }
+
+    private String rawPost(JSONObject command) throws Exception {
+        return rawPost(command, false);
     }
 
     private synchronized void record(String name, boolean pass, JSONObject evidence) {
@@ -384,6 +450,11 @@ public class GateASpikeActivity extends Activity {
             report.put("startedAt", java.time.Instant.ofEpochMilli(startedAtMillis).toString());
             report.put("finishedAt", java.time.Instant.now().toString());
             report.put("checks", new JSONArray(checks));
+            report.put("gateway", new JSONObject()
+                .put("port", gateway.getPort())
+                .put("proxied", gateway.getProxiedCount())
+                .put("upstreamClosedByClient", gateway.getUpstreamClosedByClientCount())
+                .put("downstreamClosedByUpstream", gateway.getDownstreamClosedByUpstreamCount()));
             boolean allPass = true;
             for (JSONObject check : checks) allPass &= check.optBoolean("pass");
             report.put("allPass", allPass);
