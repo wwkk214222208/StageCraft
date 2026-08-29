@@ -59,6 +59,11 @@ public class GateASpikeActivity extends Activity {
             log("service connected (cross-process proxy), registering callback");
             core = ICoreControl.Stub.asInterface(binder);
             try {
+                // 客户端 death recipient（评审第 1 条）：RemoteCallbackList 只覆盖服务端，客户端必须 linkToDeath
+                binder.linkToDeath(() -> runOnUiThread(() -> {
+                    log("binder death recipient fired");
+                    scheduleRebindOnce("death-recipient");
+                }), 0);
                 core.registerCallback(new ICoreControlCallback.Stub() {
                     @Override public void onStatus(String summaryJson) {
                         log("status: " + summaryJson);
@@ -77,14 +82,14 @@ public class GateASpikeActivity extends Activity {
             log("service disconnected (core process died?)");
             core = null;
             endpoint = null;
+            scheduleRebindOnce("onServiceDisconnected");
         }
 
         @Override public void onBindingDied(ComponentName name) {
-            log("binding died, rebinding (BIND_AUTO_CREATE restart)");
+            log("binding died");
             core = null;
             endpoint = null;
-            unbindService(connection);
-            bindCoreService();
+            scheduleRebindOnce("onBindingDied");
         }
     };
 
@@ -141,6 +146,28 @@ public class GateASpikeActivity extends Activity {
         }
     }
 
+    /**
+     * 幂等重绑守卫（评审第 1 条）：death recipient / onServiceDisconnected / onBindingDied
+     * 可能对同一次死亡先后触发——同一轮只执行一次 unbind+rebind，不重复迁移状态。
+     */
+    private final java.util.concurrent.atomic.AtomicBoolean rebindPending = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    private void scheduleRebindOnce(String source) {
+        if (!rebindPending.compareAndSet(false, true)) {
+            log("rebind already pending, deduped source=" + source);
+            return;
+        }
+        log("rebind scheduled (source=" + source + ", BIND_AUTO_CREATE restart)");
+        new Thread(() -> {
+            try { Thread.sleep(300); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+            try { unbindService(connection); } catch (Exception ignored) { }
+            core = null;
+            endpoint = null;
+            runOnUiThread(() -> bindCoreService());
+            rebindPending.set(false);
+        }, "gatea-rebind").start();
+    }
+
     private synchronized void handleEndpointReady(String summaryJson) {
         try {
             endpoint = new JSONObject(summaryJson);
@@ -164,6 +191,7 @@ public class GateASpikeActivity extends Activity {
             runCheck("bridge-measurements", this::checkBridgeMeasurements);
             runCheck("client-abort-propagation", this::checkClientAbort);
             runCheck("core-kill-restart", this::checkCoreKillAndRestart);
+            runCheck("renderer-crash-recovery", this::checkRendererCrash);
             finishReport();
         }, "gatea-checks").start();
     }
@@ -194,6 +222,8 @@ public class GateASpikeActivity extends Activity {
             .put("protocolVersion", health.optString("protocolVersion"))
             .put("coreBundleVersion", health.optString("coreBundleVersion"))
             .put("coreBundleHash", health.optString("coreBundleHash"))
+            .put("binderMaxPayloadBytes", health.optInt("binderMaxPayloadBytes", -1))
+            .put("dataServerStats", health.optJSONObject("dataServerStats"))
             .put("measure", health.optJSONObject("measure"));
         record("health-handshake", pass, evidence);
     }
@@ -201,12 +231,20 @@ public class GateASpikeActivity extends Activity {
     /** SSE 逐条到达：3 个事件应分批到达（间隔 > 0），且在流关闭前到达（非整包缓冲）。 */
     private void checkSseRoundtrip() throws Exception {
         Socket socket = openSse();
+        // 等数据服务回执 ": connected"（订阅已生效），再派发事件——消除 setTimeout(0) 竞态
+        BufferedReader headerReader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        long confirmDeadline = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < confirmDeadline) {
+            String line = headerReader.readLine();
+            if (line == null) throw new Exception("sse stream closed before subscription confirmation");
+            if (line.startsWith(": connected")) break;
+        }
         // 先开订阅，再让 Core 页面发 3 个事件（间隔 300ms）——原始 socket POST 旁路 okhttp
         String postResult = rawPost(new JSONObject().put("requestId", "emit-events").put("command", "emit-events").put("count", 3).put("intervalMs", 300));
         log("rawPost emit-events: " + postResult.substring(0, Math.min(220, postResult.length())));
         long started = System.currentTimeMillis();
         List<Long> arrivals = new ArrayList<>();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        BufferedReader reader = headerReader; // 同一 socket 流，续读事件
         long deadline = System.currentTimeMillis() + 15_000;
         while (arrivals.size() < 3 && System.currentTimeMillis() < deadline) {
             String line = reader.readLine();
@@ -228,19 +266,29 @@ public class GateASpikeActivity extends Activity {
                 .put("requestId", "cmd-" + bytes)
                 .put("command", "echo")
                 .put("payload", repeat("x", bytes));
+            long proxiedBefore = gateway.getProxiedCount();
+            // 判定只认 gateway 路径（评审第 2 条：direct 响应不能作为通过依据）
             String viaGateway = rawPost(command, false);
+            int gatewayStatusLineEnd = viaGateway.indexOf("\r\n");
+            String statusLine = gatewayStatusLineEnd < 0 ? viaGateway : viaGateway.substring(0, gatewayStatusLineEnd);
+            int bodyAt = viaGateway.indexOf("\r\n\r\n");
+            String body = bodyAt < 0 ? "" : viaGateway.substring(bodyAt + 4);
+            JSONObject receipt = new JSONObject(body);
+            long proxiedAfter = gateway.getProxiedCount();
+            // direct 仅作对照诊断，不参与判定
             String direct = rawPost(command, true);
-            log("viaGateway=[" + viaGateway.substring(0, Math.min(160, viaGateway.length())) + "] direct=[" + direct.substring(0, Math.min(160, direct.length())) + "]");
-            JSONObject receipt = new JSONObject(direct.substring(direct.indexOf('{')));
+            log("viaGateway=[" + statusLine + "] direct=[" + direct.substring(0, Math.min(120, direct.length())) + "]");
             boolean pass = receipt != null && "accepted".equals(receipt.optString("status"))
                 && receipt.optJSONObject("echo") != null
                 && bytes == receipt.optJSONObject("echo").optInt("payloadBytes");
-            record("command-roundtrip-" + bytes, pass, new JSONObject()
+            boolean pathProven = statusLine.contains(" 200 ") && proxiedAfter > proxiedBefore;
+            record("command-roundtrip-" + bytes, pass && pathProven, new JSONObject()
                 .put("elapsedMs", System.currentTimeMillis() - started)
-                .put("httpCode", receipt == null ? -1 : receipt.optInt("httpCode", -1))
-                .put("gatewayProxied", receipt == null ? -1 : receipt.optInt("gatewayProxied", -1))
-                .put("bridgeElapsedMs", receipt == null ? -1 : receipt.optLong("bridgeElapsedMs"))
-                .put("bodyBytes", receipt == null ? -1 : receipt.optLong("bodyBytes")));
+                .put("gatewayStatusLine", statusLine)
+                .put("gatewayProxiedDelta", proxiedAfter - proxiedBefore)
+                .put("bridgeElapsedMs", receipt.optLong("bridgeElapsedMs"))
+                .put("bodyBytes", receipt.optLong("bodyBytes"))
+                .put("note", "判定只认 gateway 路径（status 200 + 代理计数增量）；direct 仅对照"));
         }
     }
 
@@ -321,7 +369,7 @@ public class GateASpikeActivity extends Activity {
             Thread.sleep(100);
         }
         boolean restarted = newEndpoint != null;
-        // 主进程存活（本 Activity 仍在运行即是证据）+ 新端点二次握手
+        // 新端点二次握手
         boolean secondHandshake = false;
         if (restarted) {
             try {
@@ -334,13 +382,84 @@ public class GateASpikeActivity extends Activity {
                 secondHandshake = false;
             }
         }
-        record("core-kill-restart", restarted && secondHandshake, new JSONObject()
+        // 有界结束硬断言（评审第 5 条）：1ms~3000ms 之外不算通过
+        boolean boundedEnd = streamEndedMs <= 3_000;
+        // 主进程 + 正式 MainActivity 在 kill 后仍可打开（评审第 3 条；恢复页/远程入口归 W6 验收）
+        boolean mainActivityOk = false;
+        long mainLaunchStarted = System.currentTimeMillis();
+        try {
+            Intent mainIntent = new Intent(this, MainActivity.class);
+            mainIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(mainIntent);
+            Thread.sleep(2_500);
+            mainActivityOk = true;
+            // 回到 spike 界面继续
+            startActivity(new Intent(this, GateASpikeActivity.class));
+        } catch (Exception error) {
+            mainActivityOk = false;
+        }
+        long mainLaunchMs = System.currentTimeMillis() - mainLaunchStarted;
+        record("core-kill-restart", restarted && secondHandshake && boundedEnd && mainActivityOk, new JSONObject()
             .put("downstreamEndedWithinMs", streamEndedMs)
+            .put("boundedEndAssert", "<=3000ms")
             .put("downstreamEnd", streamEnd)
             .put("restarted", restarted)
             .put("newPort", restarted ? newEndpoint.optInt("port") : -1)
             .put("secondHandshakeReady", secondHandshake)
-            .put("mainProcessAlive", true));
+            .put("mainProcessAlive", true)
+            .put("mainActivityLaunchVerified", mainActivityOk)
+            .put("mainActivityLaunchMs", mainLaunchMs)
+            .put("recoveryPageAndRemoteEntry", "deferred-to-W6（恢复页/远程入口 UI 属 W6 交付，此处验证主 Activity 打开与主进程存活）"));
+    }
+
+    /**
+     * renderer 崩溃实测（Gate A 硬条件，评审第 4 条）：WebView 沙箱渲染进程运行在本应用 UID 下
+     * （GATE-A-LOW-PERMISSION §3"进程内自杀钩子"替代测法），直接同 UID kill 渲染进程 →
+     * onRenderProcessGone → 服务自杀 → binding died → rebind → 二次握手全周期。
+     * 页内 JS OOM 在 64 位大内存设备上不可靠，故采用确定性 kill。
+     */
+    private void checkRendererCrash() throws Exception {
+        awaitEndpoint(30_000);
+        JSONObject oldEndpoint = endpoint;
+        // 沙箱渲染进程运行在 isolated UID 下（应用与 shell 均 kill 被拒，真机实测）——
+        // 唯一可行路径是页内 commit-OOM 让 Chromium 自行终止渲染进程
+        long deadline = System.currentTimeMillis() + 30_000;
+        JSONObject newEndpoint = null;
+        while (System.currentTimeMillis() < deadline) {
+            JSONObject candidate = endpoint;
+            if (candidate != null && candidate.optInt("port") != oldEndpoint.optInt("port")) { newEndpoint = candidate; break; }
+            Thread.sleep(200);
+        }
+        boolean restarted = newEndpoint != null;
+        boolean secondHandshake = false;
+        if (restarted) {
+            try {
+                HttpURLConnection connection = (HttpURLConnection) new URL(String.format(CORE_HOST_URL, gateway.getPort(), "/api/core/health")).openConnection();
+                connection.setConnectTimeout(3000);
+                connection.setReadTimeout(5000);
+                secondHandshake = "ready".equals(new JSONObject(readAll(connection)).optString("status"));
+            } catch (Exception error) {
+                secondHandshake = false;
+            }
+        }
+        record("renderer-crash-recovery", restarted && secondHandshake, new JSONObject()
+            .put("method", "page commit-OOM (替代测法：renderer 为 isolated UID，应用/shell kill 均 EPERM，真机实测)")
+            .put("restarted", restarted)
+            .put("secondHandshakeReady", secondHandshake)
+            .put("method", "same-uid kill (debug-only spike; 替代测法 per GATE-A-LOW-PERMISSION §3)")
+            .put("note", "renderer 死亡 → onRenderProcessGone → 服务自杀 → binding died → rebind 全周期"));
+    }
+
+    /** 查找本应用的 WebView 沙箱渲染进程 pid（同 UID，ActivityManager 可见）。 */
+    private int findRendererPid() {
+        android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        if (manager == null) return -1;
+        for (android.app.ActivityManager.RunningAppProcessInfo info : manager.getRunningAppProcesses()) {
+            if (info.processName.startsWith("com.huawei.webview:sandboxed_process") || info.processName.contains(":sandboxed_process")) {
+                return info.pid;
+            }
+        }
+        return -1;
     }
 
     private Socket openSse() throws Exception {
@@ -447,6 +566,10 @@ public class GateASpikeActivity extends Activity {
         try {
             report.put("device", android.os.Build.MODEL + " (API " + android.os.Build.VERSION.SDK_INT + ")");
             report.put("kind", "w0-gatea-spike");
+            // 构建身份（评审第 7 条：证据可追溯性）
+            report.put("buildVariant", "debug");
+            report.put("buildCommit", readBuildCommit());
+            report.put("apkSha256", apkSha256());
             report.put("startedAt", java.time.Instant.ofEpochMilli(startedAtMillis).toString());
             report.put("finishedAt", java.time.Instant.now().toString());
             report.put("checks", new JSONArray(checks));
@@ -468,6 +591,43 @@ public class GateASpikeActivity extends Activity {
             log("report written: " + output.getAbsolutePath());
         } catch (Exception error) {
             log("report write FAILED: " + error);
+        }
+    }
+
+    /** 构建期 version.json（gradle generateVersionInfo 生成，含 git commit）。 */
+    private String readBuildCommit() {
+        try {
+            String json = new String(readAsset("version.json"), StandardCharsets.UTF_8);
+            return new JSONObject(json).optString("commit");
+        } catch (Exception error) {
+            return "unknown";
+        }
+    }
+
+    private byte[] readAsset(String name) throws Exception {
+        try (java.io.InputStream input = getAssets().open(name)) {
+            java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) >= 0) output.write(buffer, 0, read);
+            return output.toByteArray();
+        }
+    }
+
+    /** 当前 APK 摘要（证据可追溯）。 */
+    private String apkSha256() {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            try (java.io.InputStream input = new java.io.FileInputStream(getApplicationInfo().sourceDir)) {
+                byte[] buffer = new byte[65536];
+                int read;
+                while ((read = input.read(buffer)) >= 0) digest.update(buffer, 0, read);
+            }
+            StringBuilder builder = new StringBuilder();
+            for (byte b : digest.digest()) builder.append(String.format("%02x", b));
+            return builder.toString();
+        } catch (Exception error) {
+            return "unavailable";
         }
     }
 

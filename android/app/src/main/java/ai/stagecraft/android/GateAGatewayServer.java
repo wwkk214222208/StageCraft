@@ -95,17 +95,24 @@ public final class GateAGatewayServer {
                 writeResponse(client, 503, "application/json", "{\"error\":{\"code\":\"core_not_ready\",\"message\":\"core endpoint is not ready\"}}");
                 return;
             }
-            upstream = SocketFactory.getDefault().createSocket(InetAddress.getByName("127.0.0.1"), currentCorePort);
-            activeUpstreams.put(connectionId, upstream);
-            request.writeTo(upstream.getOutputStream(), coreNonce, hostTag);
-            // 请求体（POST）转发
-            if (request.contentLength > 0) pipeFixed(request.bodyStream, upstream.getOutputStream(), request.contentLength);
-            if (request.isSse()) {
-                pipeStreaming(upstream.getInputStream(), client.getOutputStream(), connectionId, true);
-            } else {
-                pipeResponseAndClose(upstream, client);
+            try {
+                upstream = SocketFactory.getDefault().createSocket(InetAddress.getByName("127.0.0.1"), currentCorePort);
+                activeUpstreams.put(connectionId, upstream);
+                request.writeTo(upstream.getOutputStream(), coreNonce, hostTag);
+                // 请求体（POST）转发
+                if (request.contentLength > 0) pipeFixed(request.bodyStream, upstream.getOutputStream(), request.contentLength);
+                if (request.isSse()) {
+                    pipeStreaming(upstream.getInputStream(), client.getOutputStream(), connectionId, true);
+                } else {
+                    pipeResponseAndClose(upstream, client);
+                }
+                proxied.incrementAndGet();
+            } catch (IOException upstreamFailure) {
+                // 上游失败且尚未写出字节 → 明确 502（评审第 5 条）；SSE 已发头则只能有界断流
+                writeResponse(client, 502, "application/json",
+                    "{\"error\":{\"code\":\"core_unreachable\",\"message\":\"core data plane unreachable (killed or restarting)\"}}");
+                throw upstreamFailure;
             }
-            proxied.incrementAndGet();
         } catch (IOException error) {
             GateALog.i(hostTag + " gateway connection ended: " + error.getClass().getSimpleName());
         } finally {

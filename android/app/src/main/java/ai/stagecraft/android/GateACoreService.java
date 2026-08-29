@@ -35,6 +35,7 @@ public class GateACoreService extends Service {
     private String startedAt;
     private String status = "starting";
     private String failureCode;
+    private EmbeddedCoreArtifact.Verification verifiedArtifact;
     private String nonce = "";
     private int corePid;
 
@@ -44,11 +45,13 @@ public class GateACoreService extends Service {
         public String getEndpoint() {
             if (dataServer == null || dataServer.getPort() < 0 || !"ready".equals(status)) return null;
             try {
-                return new JSONObject()
+                return enforceBinderLimit(new JSONObject()
                     .put("port", dataServer.getPort())
                     .put("nonce", nonce)
                     .put("pid", corePid)
-                    .toString();
+                    .toString());
+            } catch (IllegalStateException limit) {
+                throw limit;
             } catch (Exception error) {
                 return null;
             }
@@ -74,9 +77,19 @@ public class GateACoreService extends Service {
     };
 
     private final RemoteCallbackList<ICoreControlCallback> callbacks = new RemoteCallbackList<>();
+    /** Binder 发送侧观测到的最大单条字节（Q8：硬上限 64KiB；GATE-A-LOW-PERMISSION §5 要求记录）。 */
+    private volatile int maxBinderPayloadBytes = 0;
+
+    /** 发送侧 64KiB 硬断言 + 最大单条观测记录。 */
+    private String enforceBinderLimit(String payload) {
+        int bytes = payload.getBytes(StandardCharsets.UTF_8).length;
+        if (bytes > maxBinderPayloadBytes) maxBinderPayloadBytes = bytes;
+        if (bytes > 64 * 1024) throw new IllegalStateException("Binder payload exceeds 64KiB hard limit: " + bytes);
+        return payload;
+    }
 
     private void broadcastStatus() {
-        String summary = getStatusSummary().toString();
+        String summary = enforceBinderLimit(getStatusSummary().toString());
         int count = callbacks.beginBroadcast();
         try {
             for (int index = 0; index < count; index++) {
@@ -87,7 +100,8 @@ public class GateACoreService extends Service {
         }
     }
 
-    private void broadcastEndpoint(String endpoint) {
+    private void broadcastEndpoint(String endpointRaw) {
+        String endpoint = enforceBinderLimit(endpointRaw);
         int count = callbacks.beginBroadcast();
         try {
             for (int index = 0; index < count; index++) {
@@ -118,6 +132,7 @@ public class GateACoreService extends Service {
                 fail("bundle_invalid", "embedded core verification failed: " + artifact.reason());
                 return;
             }
+            verifiedArtifact = artifact;
             nonce = java.util.UUID.randomUUID().toString().replace("-", "");
             dataServer = new GateACoreDataServer(nonce);
             dataServer.setCommandForwarder(this::forwardCommand);
@@ -128,7 +143,11 @@ public class GateACoreService extends Service {
             coreWebView.getSettings().setAllowFileAccess(false);
             coreWebView.getSettings().setAllowContentAccess(false);
             coreWebView.getSettings().setDomStorageEnabled(false);
-            coreWebView.setWebViewClient(new CoreHostAssetLoader(this, view -> fail("renderer_gone", "core webview renderer crashed"), (view, url) -> {
+            coreWebView.setWebViewClient(new CoreHostAssetLoader(this, view -> {
+                // renderer 崩溃（Gate A 硬条件实测项）：标记 failed 并自杀，主进程 onBindingDied → rebind 全周期
+                fail("renderer_gone", "core webview renderer crashed");
+                stopGracefully();
+            }, (view, url) -> {
                 if (bridgeReady.compareAndSet(false, true)) setupWebMessageBridge(); // 页面监听器就绪后下发端口
             }));
             coreWebView.setWebChromeClient(new android.webkit.WebChromeClient() {
@@ -171,19 +190,23 @@ public class GateACoreService extends Service {
             String type = message.optString("type");
             switch (type) {
                 case "core-ready" -> {
+                    // 幂等状态迁移：重复 ready 不重复广播
+                    if ("ready".equals(status)) return;
                     status = "ready";
                     JSONObject health = new JSONObject();
-                    health.put("protocolVersion", message.optString("protocolVersion", "1.1"));
+                    health.put("protocolVersion", "1.1");
                     health.put("minSupportedProtocolVersion", "1.0");
                     health.put("maxSupportedProtocolVersion", "1.1");
                     health.put("bridgeVersion", "gatea-spike");
-                    health.put("coreBundleVersion", message.optString("bundleVersion", ""));
-                    health.put("coreBundleHash", message.optString("bundleSha256", ""));
+                    // bundle 身份以服务端 EmbeddedCoreArtifact 校验结果为权威（评审第 6 条：页面自报不可信）
+                    health.put("coreBundleVersion", verifiedArtifact == null ? "unknown" : verifiedArtifact.version());
+                    health.put("coreBundleHash", verifiedArtifact == null ? "" : verifiedArtifact.sha256());
                     health.put("pluginSetHash", "spike");
                     health.put("stateSchemaVersion", "spike");
                     health.put("status", "ready");
                     health.put("pid", corePid);
                     health.put("startedAt", startedAt);
+                    health.put("binderMaxPayloadBytes", maxBinderPayloadBytes);
                     if (message.optJSONObject("measure") != null) health.put("measure", message.optJSONObject("measure"));
                     dataServer.setHealthJson(health.toString());
                     publishEndpointReady();
@@ -265,6 +288,7 @@ public class GateACoreService extends Service {
     }
 
     private void fail(String code, String message) {
+        if ("failed".equals(status) && code.equals(failureCode)) return; // 幂等：重复失败通知不重复迁移
         status = "failed";
         failureCode = code;
         GateALog.w("core failed code=" + code + " message=" + message);

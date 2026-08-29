@@ -162,7 +162,11 @@ public final class GateACoreDataServer {
                 final String[] result = new String[1];
                 java.util.concurrent.CountDownLatch responded = new java.util.concurrent.CountDownLatch(1);
                 main.post(() -> forwarder.forward(body, json -> { result[0] = json; responded.countDown(); }));
-                responded.await();
+                // 超时护栏：桥回调永久不返回时连接线程不得泄漏（评审实现风险 1）
+                if (!responded.await(20, java.util.concurrent.TimeUnit.SECONDS)) {
+                    respond(socket, 504, "application/json", "{\"error\":{\"code\":\"bridge_timeout\",\"message\":\"core bridge did not respond within 20s\"}}");
+                    return;
+                }
                 respond(socket, 200, "application/json", result[0] == null
                     ? "{\"error\":{\"code\":\"bridge_no_result\",\"message\":\"core bridge returned no result\"}}"
                     : result[0]);
@@ -191,15 +195,22 @@ public final class GateACoreDataServer {
         output.write(head.toString().getBytes(StandardCharsets.US_ASCII));
         output.flush();
         ConcurrentLinkedQueue<String> queue = new ConcurrentLinkedQueue<>();
+        java.util.concurrent.atomic.AtomicBoolean overflowClosed = new java.util.concurrent.atomic.AtomicBoolean(false);
         Subscriber subscriber = event -> {
-            if (queue.size() >= SSE_QUEUE_LIMIT) return false; // 慢消费者背压：丢弃最旧策略为直接断开
+            if (queue.size() >= SSE_QUEUE_LIMIT) {
+                overflowClosed.set(true); // 慢消费者背压：通知写循环关闭连接（评审实现风险 2）
+                return false;
+            }
             queue.add(event);
             return true;
         };
         eventSource.subscribe(subscriber);
         try {
+            // 订阅已生效，回执确认行：调用方读到本行后才允许派发事件（消除 setTimeout(0) 竞态）
+            output.write(": connected\n\n".getBytes(StandardCharsets.US_ASCII));
+            output.flush();
             long lastHeartbeat = System.currentTimeMillis();
-            while (true) {
+            while (!overflowClosed.get()) {
                 String event = queue.poll();
                 if (event != null) {
                     output.write(("data: " + event + "\n\n").getBytes(StandardCharsets.UTF_8));

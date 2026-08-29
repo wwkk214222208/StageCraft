@@ -30,6 +30,31 @@
         while (payload.length < request.bytes) payload += unit
         return JSON.stringify({ requestId: request.requestId, payloadBytes: payload.slice(0, request.bytes).length })
       }
+      if (request.command === 'crash-renderer') {
+        // Gate A 实测项（评审第 4 条）：在沙箱渲染进程内提交物理内存直到 OOM。
+        // 关键：必须"写入"才提交——仅 new ArrayBuffer 只保留虚拟内存，64 位设备上永远压不垮。
+        // 提交失败后 Chromium 会主动终止渲染进程（OOM crash）→ onRenderProcessGone。
+        console.log('[core-host] crash-renderer: committing memory until renderer OOM')
+        const chunks = []
+        let committed = 0
+        const commit = function (bytes) {
+          const buf = new ArrayBuffer(bytes)
+          new Uint8Array(buf).fill(1)
+          chunks.push(buf)
+          committed += bytes
+        }
+        try {
+          while (true) commit(32 * 1024 * 1024)
+        } catch (bigFailure) {
+          console.error('[core-host] big alloc halted at ' + committed + ' bytes: ' + bigFailure)
+          try {
+            while (true) commit(1024 * 1024)
+          } catch (smallFailure) {
+            console.error('[core-host] small alloc halted: ' + smallFailure)
+          }
+        }
+        return JSON.stringify({ requestId: request.requestId, committed: committed })
+      }
       if (request.command === 'emit-events') {
         const count = request.count || 3
         const interval = request.intervalMs || 300

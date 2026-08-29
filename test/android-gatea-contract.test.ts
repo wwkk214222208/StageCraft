@@ -19,12 +19,15 @@ import path from 'node:path'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (...segments: string[]) => readFileSync(path.join(ROOT, 'android', 'app', 'src', 'main', ...segments), 'utf8')
 
-test('manifest：:core 进程服务与 spike 入口已声明', () => {
-  const manifest = read('AndroidManifest.xml')
-  assert.match(manifest, /android:name="\.GateACoreService"/)
-  assert.match(manifest, /android:process=":core"/)
-  assert.match(manifest, /android:name="\.GateASpikeActivity"/)
-  assert.doesNotMatch(manifest, /android:debuggable/, 'debuggable 由 buildType 管理，不得写入 manifest')
+test('manifest：spike 组件 debug-only 隔离（评审第 8 条：release 剔除自杀入口）', () => {
+  const mainManifest = read('AndroidManifest.xml')
+  assert.doesNotMatch(mainManifest, /GateASpikeActivity/, 'release 主 manifest 不得含 spike 入口')
+  assert.doesNotMatch(mainManifest, /GateACoreService/, 'release 主 manifest 不得含 spike 服务')
+  const debugManifest = readFileSync(path.join(ROOT, 'android', 'app', 'src', 'debug', 'AndroidManifest.xml'), 'utf8')
+  assert.match(debugManifest, /android:name="\.GateACoreService"/)
+  assert.match(debugManifest, /android:process=":core"/)
+  assert.match(debugManifest, /android:name="\.GateASpikeActivity"/)
+  assert.doesNotMatch(mainManifest, /android:debuggable/, 'debuggable 由 buildType 管理，不得写入 manifest')
 })
 
 test('WebView suffix：唯一初始化入口先于 WebView 使用（§5.1）', () => {
@@ -59,6 +62,25 @@ test('Gateway：字节流透传、取消传播、nonce 只由 gateway 注入', (
   assert.match(gateway, /upstreamClosedByClient/, '页面断开 → 关闭上游（取消传播计数）')
   assert.match(gateway, /503/, 'Core 未就绪返回稳定错误')
   assert.match(gateway, /URI\.create\(parts\[1\]\)\.getPath\(\)/, '只按路径代理，不改写 payload')
+})
+
+test('Binder 发送侧 64KiB 断言 + 客户端 linkToDeath + 幂等重绑（评审第 1 条）', () => {
+  const service = read('java', 'ai', 'stagecraft', 'android', 'GateACoreService.java')
+  assert.match(service, /enforceBinderLimit/, '发送侧 64KiB 硬断言存在')
+  assert.match(service, /64 \* 1024/, '上限字面量')
+  assert.match(service, /maxBinderPayloadBytes/, '最大单条字节观测记录')
+  const activity = read('java', 'ai', 'stagecraft', 'android', 'GateASpikeActivity.java')
+  assert.match(activity, /linkToDeath/, '客户端 death recipient（RemoteCallbackList 不覆盖客户端）')
+  assert.match(activity, /rebindPending/, '幂等重绑守卫（三种死亡通知去重）')
+})
+
+test('数据服务与 gateway：超时护栏 / 溢出关闭信号 / 明确 502（评审第 5 条+实现风险）', () => {
+  const server = read('java', 'ai', 'stagecraft', 'android', 'GateACoreDataServer.java')
+  assert.match(server, /responded\.await\(20/, 'latch 必须带超时（防连接线程泄漏）')
+  assert.match(server, /504/, '桥超时返回明确错误')
+  assert.match(server, /overflowClosed/, 'SSE 溢出通知写循环关闭连接')
+  const gateway = read('java', 'ai', 'stagecraft', 'android', 'GateAGatewayServer.java')
+  assert.match(gateway, /502/, '上游失败且未写出字节时返回明确 502')
 })
 
 test('Binder 控制面：Q8 最小契约经 AIDL 冻结（真机实测修复 BinderProxy 强转）', () => {
