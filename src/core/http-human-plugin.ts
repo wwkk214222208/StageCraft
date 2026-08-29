@@ -1,8 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { URL } from 'node:url'
-import { CORE_PROTOCOL_VERSION, MAX_SUPPORTED_PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION } from './protocol.ts'
-import type { CoreEvent, CoreEventEnvelope, CoreHealth, CoreRuntimePort, HumanCommand } from './protocol.ts'
+import { CORE_PROTOCOL_VERSION } from './protocol.ts'
+import type { CoreEvent, CoreEventEnvelope, CoreRuntimePort, HumanCommand } from './protocol.ts'
 import type { Disposable, HumanCoreInteractionPlugin } from './plugins.ts'
+import { CoreProtocolPortableHandler, type ApiRequest, type ApiResponse } from '../portable/api-handler.ts'
 
 export interface HttpHumanCorePluginOptions {
   /** envelope 上下文（§3.4）：提供权威 roomId；requestId→turnId 映射用于回合作用域过滤。缺省 roomId 为空串。 */
@@ -33,6 +34,8 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
   private heartbeat?: ReturnType<typeof setInterval>
   private readonly roomId?: () => string
   private readonly turnIdForRequest?: (requestId: string) => string | undefined
+  /** W4：可移植 handler（惰性构造，与 Android harness 共享同一实现）。 */
+  private portable?: CoreProtocolPortableHandler
 
   constructor(options: HttpHumanCorePluginOptions = {}) {
     this.roomId = options.roomId
@@ -107,59 +110,8 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
   async handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
     if (!url.pathname.startsWith('/api/core/')) return false
     this.requireCore()
-    if (url.pathname === '/api/core/health' && request.method === 'GET') {
-      this.sendJson(response, 200, this.health())
-      return true
-    }
-    if (url.pathname === '/api/core/capabilities' && request.method === 'GET') {
-      const capabilities = this.requireCore().getCapabilities?.() ?? [{ id: 'core.protocol', supported: true, mode: 'full' as const }]
-      this.sendJson(response, 200, { capabilities })
-      return true
-    }
-    if (url.pathname === '/api/core/cancel' && request.method === 'POST') {
-      const body = await this.readJson(request)
-      const requestId = String(body.requestId ?? '')
-      if (!requestId) throw new Error('cancel requires a requestId.')
-      await this.requireCore().cancel(requestId)
-      this.sendJson(response, 200, { ok: true, requestId })
-      return true
-    }
-    if (url.pathname === '/api/core/view' && request.method === 'GET') {
-      this.sendJson(response, 200, this.requireCore().getView())
-      return true
-    }
-    if (url.pathname === '/api/core/commands' && request.method === 'POST') {
-      const command = await this.readJson(request) as unknown as HumanCommand
-      const clientProtocol = this.clientProtocol(request)
-      if (clientProtocol === '1.1') {
-        let receipt
-        try {
-          await this.dispatch(command)
-          const view = this.requireCore().getView()
-          receipt = { requestId: command.id, status: 'accepted' as const, revision: view.revision, view }
-        } catch (error) {
-          receipt = { requestId: command.id, status: 'rejected' as const, error: { code: 'command_failed', message: error instanceof Error ? error.message : String(error) } }
-        }
-        this.sendJson(response, 200, receipt)
-        return true
-      }
-      await this.dispatch(command)
-      this.sendJson(response, 200, { ok: true, view: this.requireCore().getView() })
-      return true
-    }
-    if (url.pathname === '/api/core/ui/action' && request.method === 'POST') {
-      const body = await this.readJson(request)
-      const core = this.requireCore()
-      const actionId = String(body.actionId ?? '')
-      const input = body.input
-      const owner = String(body.owner ?? '')
-      // CoreRuntimePort 不含 UI 能力；只有实现了 CoreExtensionPort 的 core（如 CoreRuntimeSkeleton）支持。
-      const invoke = (core as { invokeUiAction?: (actionId: string, input: unknown, owner: string) => Promise<unknown> }).invokeUiAction
-      if (typeof invoke !== 'function') throw new Error('UI action is not available on this core.')
-      const output = await invoke(actionId, input, owner)
-      this.sendJson(response, 200, { ok: true, actionId, output: structuredClone(output ?? null) })
-      return true
-    }
+    // W4：JSON 端点委托给可移植 handler（与 Android harness 同一实现，保证桌面/可移植对等）。
+    // SSE 端点保留在 HTTP 层（需要 node:http 流式响应）。
     if (url.pathname === '/api/core/events' && request.method === 'GET') {
       response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
       // 首个注释块用于立即刷新 headers；EventSource 会忽略 SSE 注释，协议仍只广播 data 事件。
@@ -174,7 +126,61 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
       response.once('close', cleanup)
       return true
     }
+    const portable = this.portableHandler()
+    if (portable.matches(request.method ?? 'GET', url.pathname)) {
+      const apiRequest = await this.toApiRequest(request, url)
+      const apiResponse = await portable.handle(apiRequest)
+      this.writeApiResponse(response, apiResponse)
+      return true
+    }
     return false
+  }
+
+  /** 惰性构造可移植 handler（与 HttpHumanCorePlugin 共享 core 与 envelope 上下文）。 */
+  private portableHandler(): CoreProtocolPortableHandler {
+    let handler = this.portable
+    if (!handler) {
+      handler = new CoreProtocolPortableHandler(this.requireCore(), {
+        roomId: this.roomId,
+        turnIdForRequest: this.turnIdForRequest,
+      })
+      this.portable = handler
+    }
+    return handler
+  }
+
+  /** node:http 请求 → ApiRequest（可移植形状；body 读入内存，与旧 readJson 行为一致）。 */
+  private async toApiRequest(request: IncomingMessage, url: URL): Promise<ApiRequest> {
+    const headers: Record<string, string> = {}
+    for (const [name, value] of Object.entries(request.headers)) {
+      if (typeof value === 'string') headers[name.toLowerCase()] = value
+      else if (Array.isArray(value)) headers[name.toLowerCase()] = value.join(', ')
+    }
+    let body: Uint8Array | undefined
+    if (request.method === 'POST' || request.method === 'PUT') {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      body = new Uint8Array(Buffer.concat(chunks))
+    }
+    return {
+      method: request.method ?? 'GET',
+      url: url.pathname + (url.search ? url.search : ''),
+      headers,
+      body,
+      signal: AbortSignal.timeout(0), // 与旧行为一致：不设超时；页面断开由 HTTP 层 close 处理
+    }
+  }
+
+  /** ApiResponse → node:http 响应（与旧 sendJson 行为一致）。 */
+  private writeApiResponse(response: ServerResponse, apiResponse: ApiResponse): void {
+    const headers: Record<string, string> = {}
+    for (const [name, value] of Object.entries(apiResponse.headers)) headers[name] = value
+    response.writeHead(apiResponse.status, headers)
+    if (apiResponse.body instanceof Uint8Array) {
+      response.end(Buffer.from(apiResponse.body))
+    } else {
+      response.end()
+    }
   }
 
   private health(): CoreHealth {
@@ -203,16 +209,5 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
   private requireCore(): CoreRuntimePort {
     if (!this.core) throw new Error('HTTP human plugin is not installed.')
     return this.core
-  }
-
-  private sendJson(response: ServerResponse, status: number, value: unknown): void {
-    response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-    response.end(JSON.stringify(value))
-  }
-
-  private async readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
-    const chunks: Buffer[] = []
-    for await (const chunk of request) chunks.push(Buffer.from(chunk))
-    return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as Record<string, unknown>
   }
 }
