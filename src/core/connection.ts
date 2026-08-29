@@ -32,6 +32,21 @@ export interface CoreConnection {
   dispose(): void | Promise<void>
 }
 
+/** 版本支持范围无交集（§3.2）：确定性失败，连接不得自动重试，UI 收到 protocol_incompatible。 */
+export class ProtocolIncompatibleError extends Error {
+  readonly code = 'protocol_incompatible'
+  readonly clientVersion: string
+  readonly serverMin: string
+  readonly serverMax: string
+  constructor(clientVersion: string, serverMin: string, serverMax: string) {
+    super(`协议版本无交集：client ${clientVersion} 不在 server 支持范围 [${serverMin}, ${serverMax}] 内，升级方向见 server health。`)
+    this.name = 'ProtocolIncompatibleError'
+    this.clientVersion = clientVersion
+    this.serverMin = serverMin
+    this.serverMax = serverMax
+  }
+}
+
 /** §3.4 关联过滤的状态：UI 侧当前权威 revision / 当前 turn / 关心的 request。 */
 export interface CoreEventDeliveryFilter {
   revision?: number
@@ -391,13 +406,21 @@ export class RemoteCoreConnection implements CoreConnection {
       const view = await this.requestView(controller.signal)
       if (!this.isCurrent(generation)) throw new Error('Connection superseded.')
       this.lastView = clone(view)
-      this.lastDeliveredRevision = Number.NEGATIVE_INFINITY
+      // revision 地板 = 权威 view revision（§3.4）：SSE 在取 view 期间缓存的旧事件不得发给 UI，
+      // 否则上一回合内容会重新显示（评审实锤的 W2 缺陷）。
+      this.lastDeliveredRevision = typeof view.revision === 'number' ? view.revision : Number.NEGATIVE_INFINITY
       this.setState('connected')
       this.emit({ type: 'core.resync', reason, revision: view.revision, view })
       void this.consume(eventStream, generation, controller).catch(error => this.handleDisconnect(error, generation, attempt + 1))
       return clone(view)
     } catch (error) {
       try { await eventStream?.cancel() } catch { /* stream setup may already have failed */ }
+      // 版本无交集是确定性失败：不得进入重连循环（否则对 1.2 server 无限重试）。
+      if (error instanceof ProtocolIncompatibleError) {
+        this.emit({ type: 'connection.error', code: error.code, message: error.message })
+        this.stop('disconnected')
+        throw error
+      }
       if (this.isCurrent(generation)) void this.handleDisconnect(error, generation, attempt + 1)
       throw error
     }
@@ -413,13 +436,11 @@ export class RemoteCoreConnection implements CoreConnection {
       const max = typeof health.maxSupportedProtocolVersion === 'string' ? health.maxSupportedProtocolVersion : serverVersion
       if (!supportsProtocolVersion(CORE_PROTOCOL_VERSION, min, max)) {
         this.negotiated = '1.0'
-        this.setState('disconnected')
-        this.emit({ type: 'connection.error', code: 'protocol_incompatible', message: `协议版本无交集：client ${CORE_PROTOCOL_VERSION} 不在 server 支持范围 [${min}, ${max}] 内，升级方向见 server health。` })
-        throw new Error('protocol_incompatible')
+        throw new ProtocolIncompatibleError(CORE_PROTOCOL_VERSION, min, max)
       }
       this.negotiated = serverVersion === '1.0' ? '1.0' : '1.1'
     } catch (error) {
-      if (error instanceof Error && error.message === 'protocol_incompatible') throw error
+      if (error instanceof ProtocolIncompatibleError) throw error
       this.negotiated = '1.0'
     }
   }
@@ -461,6 +482,7 @@ export class RemoteCoreConnection implements CoreConnection {
   }
 
   private async handleDisconnect(_error: unknown, generation: number, attempt: number): Promise<void> {
+    if (_error instanceof ProtocolIncompatibleError) return
     if (!this.isCurrent(generation) || this.listeners.size === 0) return
     this.setState('reconnecting', attempt)
     const milliseconds = Math.min(this.reconnectMaxMs, this.reconnectInitialMs * 2 ** Math.max(0, attempt - 1))

@@ -282,18 +282,44 @@ test('提交后连接丢失 → unknown-after-disconnect，dispatch() 抛错且�
   await assert.rejects(connection.dispatch(command('lost-cmd')), /unknown after disconnect/)
 })
 
-test('版本支持范围无交集 → protocol_incompatible，不进入事件消费', async () => {
+test('revision 地板 = 权威 view revision：取 view 期间缓存的旧事件必须丢弃（评审修订）', async () => {
+  const envelope = (revision: number) => ({
+    protocolVersion: '1.1', roomId: 'room-1', revision, turnId: 'turn-9', requestId: 'req-9',
+    type: 'model.thinking.delta', payload: thinkingEvent('req-9', revision), createdAt: new Date(0).toISOString(),
+  })
+  const remote = scriptedRemote({
+    health: { protocolVersion: '1.1', minSupportedProtocolVersion: '1.0', maxSupportedProtocolVersion: '1.1' },
+    // SSE 先于 view 建立：9/10/11 都在取 view 前入队（view revision = 10）
+    events: [envelope(9), envelope(10), envelope(11)],
+    view: { protocolVersion: '1.1', revision: 10 },
+  })
+  const connection = new RemoteCoreConnection({ baseUrl: 'http://floor.test', session: 's', fetch: remote.fetchImpl })
+  const messages: CoreConnectionMessage[] = []
+  const unsubscribe = connection.subscribe(message => messages.push(message))
+  await connection.reconnect()
+  await new Promise(resolve => setTimeout(resolve, 30))
+  const events = messages.filter((message): message is Extract<CoreConnectionMessage, { type: 'core.event' }> => message.type === 'core.event')
+  assert.deepEqual(events.map(message => message.envelope?.revision), [10, 11],
+    'revision 9 低于权威 view revision 10，必须丢弃；10/11 才可继续')
+  unsubscribe()
+})
+
+test('版本支持范围无交集 → protocol_incompatible，不进入事件消费且不自动重试', async () => {
   const remote = scriptedRemote({
     health: { protocolVersion: '1.2', minSupportedProtocolVersion: '1.2', maxSupportedProtocolVersion: '1.2' },
   })
   const connection = new RemoteCoreConnection({ baseUrl: 'http://future.test', session: 's', fetch: remote.fetchImpl })
   const messages: CoreConnectionMessage[] = []
   const unsubscribe = connection.subscribe(message => messages.push(message))
-  await assert.rejects(connection.reconnect(), /protocol_incompatible/)
+  await assert.rejects(connection.reconnect(), /支持范围/)
   const errors = messages.filter(message => message.type === 'connection.error') as Array<{ type: string; code?: string; message: string }>
   assert.equal(errors[0]?.code, 'protocol_incompatible')
   assert.match(errors[0]?.message ?? '', /\[1\.2, 1\.2\]/)
   assert.ok(!remote.seenUrls.some(url => url.endsWith('/api/core/events')), '版本不兼容时不得订阅事件流')
+  // 确定性失败不重连：等待超过重连退避窗口后 health 探测次数不得增长
+  const healthCalls = remote.seenUrls.filter(url => url.endsWith('/api/core/health')).length
+  await new Promise(resolve => setTimeout(resolve, 800))
+  assert.equal(remote.seenUrls.filter(url => url.endsWith('/api/core/health')).length, healthCalls, 'protocol_incompatible 后不得继续重连')
   unsubscribe()
 })
 
@@ -354,4 +380,26 @@ test('浏览器 CoreClient：1.1 receipt、envelope 解包与 resync 后 revisio
   assert.deepEqual(events.map(message => (message.envelope as { revision: number }).revision), [4], 'revision 3 低于 resync 地板被丢弃')
   assert.equal((events[0].event as { requestId: string }).requestId, 'req-9', 'envelope 解包后仍投递原始 CoreEvent')
   unsubscribe()
+})
+
+test('浏览器 CoreClient：版本支持范围无交集 → protocol_incompatible，不订阅不重试（评审修订）', async () => {
+  const seen: string[] = []
+  const fetchImpl = async (input: string): Promise<Response> => {
+    seen.push(input)
+    if (input.endsWith('/health')) return Response.json({ protocolVersion: '1.2', minSupportedProtocolVersion: '1.2', maxSupportedProtocolVersion: '1.2' })
+    return new Response(null, { status: 404 })
+  }
+  const client = new CoreClient({ viewPath: 'http://future.test/view', eventsPath: 'http://future.test/events', commandPath: 'http://future.test/commands', healthPath: 'http://future.test/health', cancelPath: 'http://future.test/cancel', capabilitiesPath: 'http://future.test/capabilities', fetchImpl })
+  const received: Array<Record<string, unknown>> = []
+  client.subscribe(message => received.push(message))
+  await new Promise(resolve => setTimeout(resolve, 600))
+  const errors = received.filter(message => message.type === 'connection.error') as Array<{ code?: string; message: string }>
+  assert.equal(errors[0]?.code, 'protocol_incompatible', '浏览器端必须报告版本无交集')
+  assert.match(errors[0]?.message ?? '', /\[1\.2, 1\.2\]/)
+  assert.ok(!seen.some(url => url.endsWith('/events')), '不得订阅事件流')
+  assert.ok(!seen.some(url => url.endsWith('/view')), '不得拉取权威 view')
+  const healthCalls = seen.filter(url => url.endsWith('/health')).length
+  await new Promise(resolve => setTimeout(resolve, 700))
+  assert.equal(seen.filter(url => url.endsWith('/health')).length, healthCalls, '不进入重连循环')
+  client.close()
 })

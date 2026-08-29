@@ -26,6 +26,22 @@ class SseDataParser {
   }
 }
 
+/** 语义化版本比较（与 src/core/protocol.ts compareVersions 同语义）：逐数字段比较。 */
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(Number)
+  const pb = String(b).split('.').map(Number)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const delta = (pa[i] || 0) - (pb[i] || 0)
+    if (delta !== 0) return delta
+  }
+  return 0
+}
+
+/** 与 TS supportsProtocolVersion 同语义：client 版本是否落在 server 声明的支持范围内。 */
+function versionInRange(version, min, max) {
+  return compareVersions(version, min) >= 0 && compareVersions(version, max) <= 0
+}
+
 /** 1.1 envelope 判别：protocolVersion+roomId+payload 三元组不会出现在 raw CoreEvent 上。 */
 function isEnvelope(value) {
   return Boolean(value) && typeof value === 'object' && 'payload' in value && 'protocolVersion' in value && 'roomId' in value
@@ -203,6 +219,11 @@ export class CoreClient {
       return view
     } catch (error) {
       try { await eventStream?.cancel() } catch {}
+      if (error && error.code === 'protocol_incompatible') {
+        // 版本无交集是确定性失败：通知 UI 并停止，不进入重连循环。
+        this.#notify({ type: 'connection.error', code: error.code, message: error.message })
+        throw error
+      }
       if (generation === this.generation && !controller.signal.aborted) this.#retry(generation, attempt + 1)
       throw error
     }
@@ -213,8 +234,18 @@ export class CoreClient {
       const response = await this.fetchImpl(this.healthPath, { headers: this.headers({ accept: 'application/json' }) })
       if (!response.ok) { this.negotiatedVersion = '1.0'; return }
       const health = await response.json()
-      this.negotiatedVersion = health && health.protocolVersion === '1.0' ? '1.0' : '1.1'
-    } catch {
+      const serverVersion = typeof health.protocolVersion === 'string' ? health.protocolVersion : '1.0'
+      // 与 TS 侧同一套范围判定（评审实锤：只判 protocolVersion 会让 [1.2,1.2] server 被当 1.1 继续跑）。
+      const min = typeof health.minSupportedProtocolVersion === 'string' ? health.minSupportedProtocolVersion : serverVersion
+      const max = typeof health.maxSupportedProtocolVersion === 'string' ? health.maxSupportedProtocolVersion : serverVersion
+      if (!versionInRange(CORE_PROTOCOL_VERSION, min, max)) {
+        const error = new Error(`协议版本无交集：client ${CORE_PROTOCOL_VERSION} 不在 server 支持范围 [${min}, ${max}] 内，升级方向见 server health。`)
+        error.code = 'protocol_incompatible'
+        throw error
+      }
+      this.negotiatedVersion = serverVersion === '1.0' ? '1.0' : '1.1'
+    } catch (error) {
+      if (error && error.code === 'protocol_incompatible') throw error
       this.negotiatedVersion = '1.0'
     }
   }
