@@ -167,7 +167,7 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
       url: url.pathname + (url.search ? url.search : ''),
       headers,
       body,
-      signal: AbortSignal.timeout(0), // 与旧行为一致：不设超时；页面断开由 HTTP 层 close 处理
+      signal: createRequestAbortSignal(request),
     }
   }
 
@@ -183,24 +183,6 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
     }
   }
 
-  private health(): CoreHealth {
-    const provided = this.requireCore().getHealth?.()
-    if (provided) return provided
-    // 通用桌面 server 未实现 getHealth 时的诚实下限：版本与支持范围真实，bundle/plugin 哈希留空。
-    return {
-      protocolVersion: CORE_PROTOCOL_VERSION,
-      minSupportedProtocolVersion: MIN_SUPPORTED_PROTOCOL_VERSION,
-      maxSupportedProtocolVersion: MAX_SUPPORTED_PROTOCOL_VERSION,
-      bridgeVersion: 'stagecraft.http-human',
-      coreBundleVersion: 'unspecified',
-      coreBundleHash: '',
-      pluginSetHash: '',
-      stateSchemaVersion: '',
-      status: 'ready',
-      startedAt: new Date().toISOString(),
-    }
-  }
-
   private clientProtocol(request: IncomingMessage): '1.1' | '1.0' {
     const declared = String(request.headers['x-core-protocol-version'] ?? '').trim()
     return declared === CORE_PROTOCOL_VERSION ? '1.1' : '1.0'
@@ -210,4 +192,21 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
     if (!this.core) throw new Error('HTTP human plugin is not installed.')
     return this.core
   }
+}
+
+/**
+ * 页面断开取消传播信号（评审 W5 R2 §4.3）：
+ * 由底层 socket 的 close 驱动——客户端断开连接（无论请求是否完成）即 abort，
+ * 区别于 AbortSignal.timeout(0) 的 0ms 立即 abort 误用。
+ * portable handler 接入长任务（SSE/模型流）时消费此 signal 实现请求级取消；
+ * 正常完成路径下 handler 已结束，abort 无副作用。
+ */
+export function createRequestAbortSignal(request: IncomingMessage): AbortSignal {
+  const controller = new AbortController()
+  const socket = request.socket
+  const abort = (): void => controller.abort()
+  socket?.once('close', abort)
+  const cleanup = (): void => { socket?.off('close', abort) }
+  controller.signal.addEventListener('abort', cleanup, { once: true })
+  return controller.signal
 }

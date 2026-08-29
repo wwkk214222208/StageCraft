@@ -234,3 +234,49 @@ test('W4 合流契约：buildPortableCoverage 覆盖清单与 registry handlerId
   assert.ok(unhandled.some(registration => registration.handlerId === 'room.snapshot'), 'room.snapshot 必须列入未挂载清单')
   assert.ok(unhandled.some(registration => registration.handlerId === 'turn.start'), 'turn.start 必须列入未挂载清单')
 })
+
+test('AbortSignal 取消传播：正常请求不 abort，客户端中断后 abort（评审 W5 R2 §4.3）', async () => {
+  const { createRequestAbortSignal } = await import('../src/core/http-human-plugin.ts')
+  // 起真实 node:http server，把每个请求的 signal 记录到数组
+  const signals: AbortSignal[] = []
+  const server = createServer((request) => {
+    signals.push(createRequestAbortSignal(request))
+    // 不响应，保持连接打开（让客户端可中断）
+  })
+  server.listen(0, '127.0.0.1')
+  const address = await new Promise<{ port: number }>((resolve, reject) => {
+    const deadline = Date.now() + 5000
+    const tick = (): void => {
+      const value = server.address()
+      if (value && typeof value === 'object') resolve(value as { port: number })
+      else if (Date.now() > deadline) reject(new Error('server did not start'))
+      else setTimeout(tick, 5)
+    }
+    tick()
+  })
+
+  // 1) 连接建立：signal 未 abort（请求完整到达，服务端不响应保持打开）
+  const { connect } = await import('node:net')
+  const socket = connect(address.port, '127.0.0.1')
+  await new Promise<void>((resolve, reject) => {
+    socket.once('connect', resolve)
+    socket.once('error', reject)
+  })
+  socket.write('GET /api/core/view HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n')
+  await new Promise(resolve => setTimeout(resolve, 100))
+  const interruptedSignal = signals[0]
+  assert.ok(interruptedSignal, '请求必须产生 signal')
+  assert.equal(interruptedSignal.aborted, false, '连接建立时 signal 未 abort')
+
+  // 2) 客户端断开（socket destroy）：signal 必须有界 abort（页面断开取消传播）
+  socket.destroy()
+  const deadline = Date.now() + 3000
+  while (!interruptedSignal.aborted && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  assert.equal(interruptedSignal.aborted, true, '客户端断开后 signal 必须 abort（页面断开取消传播）')
+
+  // 强制关闭所有连接后关闭 server（裸 TCP 连接不会被 server.close 自动等待）
+  server.closeAllConnections?.()
+  await new Promise<void>(resolve => { server.close(() => resolve()) })
+})
