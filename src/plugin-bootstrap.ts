@@ -136,6 +136,11 @@ export interface BootstrapResult {
 /**
  * 逐插件装载（§6.3）：任一失败只隔离该插件并继续；失败插件是必要插件时由调用方
  * 依据 report.degraded 决定 Core 进入 degraded/failed——主进程管理器始终可用。
+ *
+ * 评审修订（CP-W1 后短周期）：
+ *  - provides 冲突只在"启用意图"集合内计算——被禁用的插件不参与，避免误伤正常插件；
+ *  - 安装前逐条校验依赖满足：缺失 / 被禁用 / 被隔离 / 装载失败的依赖都会阻断依赖者（stage 'dependency'）；
+ *  - 装载顺序仍按依赖拓扑，成环时全部隔离。
  */
 export function bootstrapPlugins(input: BootstrapInput): BootstrapResult {
   const now = input.now ?? (() => new Date().toISOString())
@@ -143,21 +148,26 @@ export function bootstrapPlugins(input: BootstrapInput): BootstrapResult {
   const enabled: string[] = []
   const disabled: string[] = []
   const disposables: Array<{ dispose: () => void }> = []
-  const conflicts = new Set(checkProvidesConflicts(input.manifests).flatMap(conflict => [`${conflict.ownerA}:${conflict.id}`, `${conflict.ownerB}:${conflict.id}`]))
+  const desiredOff = (id: string): boolean => input.desiredEnabled?.[id] === false
+
+  const active = input.manifests.filter(manifest => !desiredOff(manifest.id))
+  for (const manifest of input.manifests) if (desiredOff(manifest.id)) disabled.push(manifest.id)
+  const conflicts = new Set(checkProvidesConflicts(active).flatMap(conflict => [`${conflict.ownerA}:${conflict.id}`, `${conflict.ownerB}:${conflict.id}`]))
+  const byId = new Map(active.map(manifest => [manifest.id, manifest]))
 
   let ordered: PluginManifest[]
   try {
-    ordered = resolveLoadOrder(input.manifests)
+    ordered = resolveLoadOrder(active)
   } catch (error) {
     // 环：无法确定顺序，全部隔离（stage 'dependency'），不装载任何插件。
-    for (const manifest of input.manifests) {
+    for (const manifest of active) {
       quarantined.push(record(manifest, error instanceof Error ? error.message : String(error), 'dependency', now()))
     }
     return { report: { enabled, disabled, quarantined, degraded: true }, disposables }
   }
 
+  const installed = new Set<string>()
   for (const manifest of ordered) {
-    if (input.desiredEnabled?.[manifest.id] === false) { disabled.push(manifest.id); continue }
     const manifestErrors = validateManifest(manifest)
     if (manifestErrors.length) {
       quarantined.push(record(manifest, manifestErrors.join('；'), 'manifest', now()))
@@ -172,15 +182,35 @@ export function bootstrapPlugins(input: BootstrapInput): BootstrapResult {
       quarantined.push(record(manifest, 'provides 与其他插件冲突', 'dependency', now()))
       continue
     }
+    const unmet = unmetDependency(manifest, { byId, installed, quarantinedIds: new Set(quarantined.map(item => item.pluginId)), disabledSet: new Set(disabled) })
+    if (unmet) {
+      quarantined.push(record(manifest, unmet, 'dependency', now()))
+      continue
+    }
     try {
       const disposable = input.install(manifest)
       if (disposable) disposables.push(disposable)
+      installed.add(manifest.id)
       enabled.push(manifest.id)
     } catch (error) {
       quarantined.push(record(manifest, error instanceof Error ? error.message : String(error), 'install', now()))
     }
   }
   return { report: { enabled, disabled, quarantined, degraded: quarantined.length > 0 }, disposables }
+
+  /** 依赖满足检查：返回第一个未满足原因（null = 满足）。 */
+  function unmetDependency(
+    manifest: PluginManifest,
+    context: { byId: Map<string, PluginManifest>; installed: Set<string>; quarantinedIds: Set<string>; disabledSet: Set<string> },
+  ): string | null {
+    for (const dependencyId of manifest.requires?.plugins ?? []) {
+      if (context.disabledSet.has(dependencyId)) return `依赖被禁用：${dependencyId}`
+      if (!context.byId.has(dependencyId)) return `依赖缺失：${dependencyId} 不在候选集内`
+      if (context.quarantinedIds.has(dependencyId)) return `依赖未装载成功（被隔离或 install 失败）：${dependencyId}`
+      if (!context.installed.has(dependencyId)) return `依赖未装载成功：${dependencyId}`
+    }
+    return null
+  }
 
   function record(manifest: PluginManifest, reason: string, stage: QuarantineRecord['stage'], at: string): QuarantineRecord {
     return { pluginId: manifest.id, manifestVersion: manifest.version, manifestHash: manifestHash(manifest), reason, stage, at }
@@ -201,13 +231,17 @@ export function buildPluginLaunchPlan(input: LaunchPlanInput): PluginLaunchPlan 
   const quarantined = new Set(input.quarantinedIds ?? [])
   const plugins = [...input.manifests]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map(manifest => ({
-      id: manifest.id,
-      version: manifest.version,
-      manifestHash: manifestHash(manifest),
-      enabled: input.desiredEnabled?.[manifest.id] !== false && !quarantined.has(manifest.id),
-      config: input.config?.[manifest.id],
-    }))
+    .map(manifest => {
+      // config 未配置时省略键：保证 JSON 持久化（PluginConfigStore）与内存形状一致。
+      const plugin: { id: string; version: string; manifestHash: string; enabled: boolean; config?: unknown } = {
+        id: manifest.id,
+        version: manifest.version,
+        manifestHash: manifestHash(manifest),
+        enabled: input.desiredEnabled?.[manifest.id] !== false && !quarantined.has(manifest.id),
+      }
+      if (input.config?.[manifest.id] !== undefined) plugin.config = input.config[manifest.id]
+      return plugin
+    })
   const pluginSetHash = stableHash(stableStringify(plugins.map(plugin => [plugin.id, plugin.version, plugin.manifestHash, plugin.enabled])))
   return Object.freeze({
     protocolVersion: CORE_PROTOCOL_VERSION,
@@ -224,8 +258,10 @@ export function computePluginSetHash(plan: PluginLaunchPlan): string {
 
 /**
  * 存档依赖判定（§7.4）：全部必需插件存在且版本兼容 → ok；
- * 仅可选缺失 → degraded（只读/明确降级）；必需缺失或 schema 不兼容 → blocked（禁止新剧情）。
- * 版本兼容：主版本相同即可（同主版本内的 drift 允许，manifestHash 仅记录不强制相等）。
+ * 仅可选缺失 → degraded（只读/明确降级）；必需缺失或版本/schema 不兼容 → blocked（禁止新剧情）。
+ *
+ * 评审修订：版本必须比较——主版本不同不兼容；当前版本低于存档版本（降级装载）不兼容；
+ * 存档声明了 stateSchemaVersion 而当前 manifest 未声明 → 无法证明兼容，按不兼容处理。
  */
 export function validateArchiveDependencies(
   snapshot: readonly PluginDependencySnapshot[],
@@ -241,8 +277,16 @@ export function validateArchiveDependencies(
       (entry.required === false ? optionalMissing : missing).push(entry.id)
       continue
     }
+    if (!isVersionCompatible(entry.version, manifest.version)) {
+      incompatible.push(`${entry.id}: 存档 ${entry.version} 与当前 ${manifest.version} 不兼容（主版本不同或为降级装载）`)
+      continue
+    }
+    if (entry.stateSchemaVersion && !manifest.stateSchemaVersion) {
+      incompatible.push(`${entry.id}: 存档声明 stateSchema ${entry.stateSchemaVersion}，当前插件未声明 schema（无法证明兼容）`)
+      continue
+    }
     if (entry.stateSchemaVersion && manifest.stateSchemaVersion && entry.stateSchemaVersion !== manifest.stateSchemaVersion) {
-      incompatible.push(`${entry.id}: 存档 ${entry.stateSchemaVersion} ≠ 当前 ${manifest.stateSchemaVersion}`)
+      incompatible.push(`${entry.id}: 存档 schema ${entry.stateSchemaVersion} ≠ 当前 ${manifest.stateSchemaVersion}`)
     }
   }
   if (missing.length || incompatible.length) {
@@ -250,11 +294,27 @@ export function validateArchiveDependencies(
       verdict: 'blocked',
       missing,
       incompatible,
-      reason: `缺必需插件 [${missing.join(', ')}]；schema 不兼容 [${incompatible.join(', ')}]。禁止产生新剧情，进入恢复/只读模式。`,
+      reason: `缺必需插件 [${missing.join(', ')}]；版本/schema 不兼容 [${incompatible.join('；')}]。禁止产生新剧情，进入恢复/只读模式。`,
     }
   }
   if (optionalMissing.length) {
     return { verdict: 'degraded', missing: optionalMissing, reason: `可选插件缺失 [${optionalMissing.join(', ')}]，允许只读或明确降级。` }
   }
   return { verdict: 'ok' }
+}
+
+/** 语义化版本兼容：主版本相同且当前 >= 存档（组件级比较）。无法解析时视为不兼容。 */
+export function isVersionCompatible(archiveVersion: string, currentVersion: string): boolean {
+  const archive = parseSemver(archiveVersion)
+  const current = parseSemver(currentVersion)
+  if (!archive || !current) return false
+  if (archive.major !== current.major) return false
+  if (current.minor !== archive.minor) return current.minor > archive.minor
+  return current.patch >= archive.patch
+}
+
+function parseSemver(version: string): { major: number; minor: number; patch: number } | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version)
+  if (!match) return null
+  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) }
 }

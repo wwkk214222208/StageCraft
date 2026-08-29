@@ -161,6 +161,79 @@ test('launch plan 形状符合 §2.4 契约（供 Java/数据面 fixture 复用�
     Object.keys(plan).sort(),
     ['pluginSetHash', 'plugins', 'protocolVersion', 'stateSchemaVersion'],
   )
-  assert.deepEqual(Object.keys(plan.plugins[0]).sort(), ['config', 'enabled', 'id', 'manifestHash', 'version'])
-  assert.equal(plan.plugins[0].config, undefined)
+  assert.deepEqual(Object.keys(plan.plugins[0]).sort(), ['enabled', 'id', 'manifestHash', 'version'], 'config 未配置时省略键（与 JSON 持久化形状一致）')
+
+  const withConfig = buildPluginLaunchPlan({ manifests: [manifest()], stateSchemaVersion: 's1', config: { 'stagecraft.base': { threshold: 3 } } })
+  assert.deepEqual(withConfig.plugins[0].config, { threshold: 3 })
+})
+
+test('反例（评审修订）：依赖缺失的插件不得安装，必须 dependency 隔离', () => {
+  const result = bootstrapPlugins({
+    manifests: [manifest({ id: 'stagecraft.app', requires: { plugins: ['stagecraft.missing'] } })],
+    install: () => assert.fail('依赖缺失时不得触发 install'),
+  })
+  assert.deepEqual(result.report.enabled, [])
+  const record = result.report.quarantined[0]
+  assert.equal(record.stage, 'dependency')
+  assert.match(record.reason, /依赖缺失：stagecraft.missing/)
+})
+
+test('反例（评审修订）：依赖被禁用 / 被隔离 / install 失败，依赖者都不得安装', () => {
+  const disabled = bootstrapPlugins({
+    manifests: [
+      manifest({ id: 'stagecraft.dep' }),
+      manifest({ id: 'stagecraft.app', requires: { plugins: ['stagecraft.dep'] } }),
+    ],
+    desiredEnabled: { 'stagecraft.dep': false },
+    install: candidate => { assert.notEqual(candidate.id, 'stagecraft.app', '依赖被禁用时不得安装依赖者'); return undefined },
+  })
+  assert.deepEqual(disabled.report.enabled, [])
+  assert.match(disabled.report.quarantined[0].reason, /依赖被禁用/)
+
+  const failed = bootstrapPlugins({
+    manifests: [
+      manifest({ id: 'stagecraft.dep' }),
+      manifest({ id: 'stagecraft.app', requires: { plugins: ['stagecraft.dep'] } }),
+    ],
+    install: candidate => { if (candidate.id === 'stagecraft.dep') throw new Error('install 失败'); return undefined },
+  })
+  assert.deepEqual(failed.report.enabled, [])
+  const record = failed.report.quarantined.find(item => item.pluginId === 'stagecraft.app')
+  assert.match(record?.reason ?? '', /依赖未装载成功（被隔离或 install 失败）：stagecraft.dep/)
+
+  const quarantined = bootstrapPlugins({
+    manifests: [
+      manifest({ id: 'stagecraft.dep', version: 'bad-version' }),
+      manifest({ id: 'stagecraft.app', requires: { plugins: ['stagecraft.dep'] } }),
+    ],
+    install: candidate => { if (candidate.id === 'stagecraft.dep') return undefined; return assert.fail('不可达') },
+  })
+  assert.deepEqual(quarantined.report.enabled, [], 'manifest 校验失败被隔离的依赖同样阻断依赖者')
+})
+
+test('反例（评审修订）：被禁用插件不参与 provides 冲突，正常插件不受误伤', () => {
+  const result = bootstrapPlugins({
+    manifests: [
+      manifest({ id: 'stagecraft.enabled', provides: { stateModules: ['shared'] } }),
+      manifest({ id: 'stagecraft.disabled', provides: { stateModules: ['shared'] } }),
+    ],
+    desiredEnabled: { 'stagecraft.disabled': false },
+    install: () => undefined,
+  })
+  assert.deepEqual(result.report.enabled, ['stagecraft.enabled'], '禁用方声明冲突不得隔离启用方')
+  assert.deepEqual(result.report.quarantined, [])
+})
+
+test('反例（评审修订）：存档版本必须比较——主版本不同 / 降级装载 / schema 未声明都判 blocked', () => {
+  const current = [manifest({ id: 'stagecraft.core', version: '1.2.0', stateSchemaVersion: 's1' })]
+  assert.equal(validateArchiveDependencies([{ id: 'stagecraft.core', version: '1.0.0', manifestHash: 'h' }], current).verdict, 'ok')
+  assert.equal(validateArchiveDependencies([{ id: 'stagecraft.core', version: '1.2.0', manifestHash: 'h' }], current).verdict, 'ok', '完全同版本兼容')
+  assert.equal(validateArchiveDependencies([{ id: 'stagecraft.core', version: '2.0.0', manifestHash: 'h' }], current).verdict, 'blocked', '主版本不同不兼容')
+  assert.equal(validateArchiveDependencies([{ id: 'stagecraft.core', version: '1.5.0', manifestHash: 'h' }], current).verdict, 'blocked', '存档高于当前（降级装载）不兼容')
+  assert.equal(
+    validateArchiveDependencies([{ id: 'stagecraft.core', version: '1.0.0', manifestHash: 'h', stateSchemaVersion: 's9' }], [manifest({ id: 'stagecraft.core', version: '1.2.0' })]).verdict,
+    'blocked',
+    '存档声明 schema 而当前未声明 → 无法证明兼容',
+  )
+  assert.equal(validateArchiveDependencies([{ id: 'stagecraft.core', version: '1.0.0', manifestHash: 'h' }], [manifest({ id: 'stagecraft.core', version: '1.2.0' })]).verdict, 'ok', '存档未声明 schema 时不追加约束')
 })
