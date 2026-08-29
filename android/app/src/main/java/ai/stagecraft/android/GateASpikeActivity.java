@@ -164,7 +164,7 @@ public class GateASpikeActivity extends Activity {
             remoteEntryOpened = true;
             Intent remote = new Intent(this, MainActivity.class);
             remote.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            remote.putExtra("mode", "remote");
+            remote.putExtra("gatea_entry", "remote-entry");
             startActivity(remote);
         });
         recoveryPanel.addView(recoveryRemoteEntryButton);
