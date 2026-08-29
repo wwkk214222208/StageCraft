@@ -490,7 +490,7 @@ public class GateASpikeActivity extends Activity {
         String goneFileContent = readRendererGoneEvidence();
         boolean renderGoneConfirmed = goneFileContent != null && goneFileContent.contains("renderer_gone");
         JSONObject evidence = new JSONObject()
-            .put("method", "page commit-OOM（替代测法：renderer 为 isolated UID，应用/shell kill 均 EPERM；需架构 AI 追认）")
+            .put("method", "WebViewRenderProcess.terminate()（API 29+ 官方路径；替代测法需追认，isolated UID 下应用/shell kill 均 EPERM 实测；fallback 页内 commit-OOM）")
             .put("dispatchedResponse", raw.substring(0, Math.min(140, raw.length())))
             .put("serviceRenderGoneEvidence", goneFileContent == null ? "missing" : goneFileContent)
             .put("renderProcessGoneAt", rendererGoneStatusAt == null ? "not-observed" : rendererGoneStatusAt)
