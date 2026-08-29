@@ -17,11 +17,41 @@ import { setPromptStorage } from '../prompts.ts'
 import { createAndroidPromptStorage } from './android-prompt-storage.ts'
 import { CoreProtocolPortableHandler, handlePortableApi, type ApiRequest, type ApiResponse } from './api-handler.ts'
 import { CoreBusinessPortableHandler, CORE_BUSINESS_ROUTES, type CoreFacade } from './core-business-handlers.ts'
+import { validateManifest, manifestHash } from '../plugin-bootstrap.ts'
+import type { PluginManifest, QuarantineRecord } from '../plugin-contract.ts'
 
 export const ANDROID_CORE_BUNDLE_VERSION = '1.1.0'
 export const ANDROID_CORE_BRIDGE_VERSION = '1'
 export const PROVIDER_SECRET_KEY = 'local.provider.default'
 export const LOCAL_ROOM_ID = 'android-local-room'
+
+/**
+ * W6：Android 内置插件候选集（构建期确定；与桌面 manifest 契约同源）。
+ * 组合根装配（android-composition）的 4 类内置插件：solution/llm/state/human。
+ * manifest 由 plugin-bootstrap.ts 的校验规则核对（manifestHash 与 plan 比对）。
+ */
+export const BUILTIN_PLUGIN_MANIFESTS: readonly PluginManifest[] = Object.freeze([
+  {
+    id: 'stagecraft.solution', version: '1.0.0', kind: 'solution',
+    title: 'StageCraft Solution（Chat/Director/Management）',
+    description: '内置聊天/导演/管理解决方案插件',
+  },
+  {
+    id: 'stagecraft.llm.android', version: '1.0.0', kind: 'llm',
+    title: 'Android Native LLM Router',
+    description: 'Android 原生模型路由（凭据在 Java Keystore）',
+  },
+  {
+    id: 'stagecraft.state.android', version: '1.0.0', kind: 'repository',
+    title: 'Android State Repository',
+    description: 'Android SQLite 状态仓库',
+  },
+  {
+    id: 'stagecraft.human.http', version: '1.0.0', kind: 'human',
+    title: 'Core Protocol Human Adapter',
+    description: 'Core 协议人机交互适配（HTTP/SSE）',
+  },
+])
 
 type Json = Record<string, unknown>
 type ResultValue = Record<string, unknown>
@@ -379,6 +409,44 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     return { status: response.status, body: '' }
   }
 
+  // ── W6：PluginLaunchPlan 消费与隔离回报（阶段 5；D2 管理层独立于 Core）──
+  // Core 组合根接收主进程的不可变 PluginLaunchPlan（§2.4），校验 enabled 插件的 manifest
+  // 身份（manifestHash），隔离失败记录；隔离结果经消息流（connection 消息）回报主进程，
+  // 由 PluginManager 持久化。运行期不热替换（改配置 → 主进程重启 Core）。
+  let appliedPlanHash = ''
+  const applyLaunchPlan = (planJson: string): void => {
+    try {
+      const plan = JSON.parse(planJson) as { protocolVersion?: string; pluginSetHash?: string; plugins?: Array<{ id: string; version: string; manifestHash: string; enabled: boolean }> }
+      if (!plan || plan.protocolVersion !== '1.1') {
+        emit({ type: 'plugin-report', ok: false, error: 'launch plan 协议版本不匹配' })
+        return
+      }
+      const quarantine: QuarantineRecord[] = []
+      for (const plugin of plan.plugins ?? []) {
+        if (!plugin.enabled) continue
+        // 内置插件候选集的 manifest 校验（W3 深度校验唯一实现；此处只核对身份与清单形状）
+        const candidate = BUILTIN_PLUGIN_MANIFESTS.find(manifest => manifest.id === plugin.id)
+        if (!candidate) {
+          quarantine.push({ pluginId: plugin.id, manifestVersion: plugin.version, manifestHash: plugin.manifestHash, reason: `插件不在 Android 构建候选集内：${plugin.id}`, stage: 'manifest', at: new Date().toISOString() })
+          continue
+        }
+        const errors = validateManifest(candidate)
+        if (errors.length > 0) {
+          quarantine.push({ pluginId: plugin.id, manifestVersion: plugin.version, manifestHash: plugin.manifestHash, reason: `manifest 校验失败：${errors.join('；')}`, stage: 'manifest', at: new Date().toISOString() })
+          continue
+        }
+        if (manifestHash(candidate) !== plugin.manifestHash) {
+          quarantine.push({ pluginId: plugin.id, manifestVersion: plugin.version, manifestHash: plugin.manifestHash, reason: `manifest 哈希不匹配：构建 ${manifestHash(candidate)} ≠ plan ${plugin.manifestHash}`, stage: 'manifest', at: new Date().toISOString() })
+          continue
+        }
+      }
+      appliedPlanHash = plan.pluginSetHash ?? ''
+      emit({ type: 'plugin-report', ok: true, pluginSetHash: appliedPlanHash, quarantine })
+    } catch (error) {
+      emit({ type: 'plugin-report', ok: false, error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
   const localCore = Object.assign({
     bundleVersion: ANDROID_CORE_BUNDLE_VERSION,
     bridgeVersion: ANDROID_CORE_BRIDGE_VERSION,
@@ -393,6 +461,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     dispose: (): void => { composition?.dispose(); composition = undefined; sink = undefined },
     /** W4 合流：协议端点分发（core-host-bridge 调用）。 */
     handlePortableRequest,
+    /** W6：接受 PluginLaunchPlan 并回报隔离记录（主进程经桥下发）。 */
+    applyLaunchPlan,
   }, facade)
   global.StageCraftLocalCore = Object.freeze(localCore)
 

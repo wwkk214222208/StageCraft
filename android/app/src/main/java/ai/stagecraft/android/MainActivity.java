@@ -127,6 +127,14 @@ public final class MainActivity extends Activity {
         coreConnection = new CoreConnection(this, new CoreConnection.Listener() {
             @Override public void onEndpointReady(JSONObject endpoint) {
                 handleEndpointReady(endpoint);
+                // Core 恢复：若当前在恢复页（配对页），自动回到本地完整 UI
+                runOnUiThread(() -> {
+                    String url = webView == null ? "" : String.valueOf(webView.getUrl());
+                    if (url.contains("index.html") && url.contains("mode=remote") && gateway != null) {
+                        GateALog.i("core recovered; returning to local UI");
+                        showLocalUi();
+                    }
+                });
             }
 
             @Override public void onStatus(JSONObject summary) {
@@ -137,7 +145,21 @@ public final class MainActivity extends Activity {
             @Override public void onCoreDisconnected() {
                 coreReady = false;
                 GateALog.w("core disconnected; recovery path available");
-                // 页面由 CoreClient 的重连逻辑驱动；主进程保持绑定自动重建（BIND_AUTO_CREATE）
+                // W6 恢复联动：Core 断连后延迟探测——BIND_AUTO_CREATE 通常自动重建并快速握手；
+                // 若 3 秒内未恢复，且页面当前在本地 UI（非恢复页），自动导航恢复页
+                // （配对页不依赖 Core：远程模式/配对/诊断导出可用）。
+                new Thread(() -> {
+                    try { Thread.sleep(3_000); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                    runOnUiThread(() -> {
+                        if (coreReady || webView == null) return;
+                        String url = String.valueOf(webView.getUrl());
+                        boolean onRecovery = url.contains("mode=remote") || url.contains("index.html");
+                        if (!onRecovery) {
+                            GateALog.w("core still unavailable; navigating to recovery page");
+                            showPairingPage();
+                        }
+                    });
+                }, "core-recovery-nav").start();
             }
         });
         // APK defaults to the packaged full Web UI. Remote pairing remains available
@@ -230,8 +252,42 @@ public final class MainActivity extends Activity {
             JSONObject plan = pluginManager == null ? null : pluginManager.buildLaunchPlan();
             if (plan == null) plan = buildDefaultLaunchPlan();
             if (coreConnection != null) coreConnection.acceptLaunchPlan(plan);
+            // W6：异步读取 Core health 的 quarantine（组合根 plugin-report 回报 → health）→ PluginManager
+            fetchQuarantineFromCore();
         } catch (Exception error) {
             GateALog.w("endpoint ready handling failed: " + error);
+        }
+    }
+
+    /** W6：经 gateway 读取 Core health 的插件隔离记录（非阻塞；失败静默）。 */
+    private void fetchQuarantineFromCore() {
+        final CoreGatewayServer gatewayRef = gateway;
+        if (gatewayRef == null || pluginManager == null) return;
+        new Thread(() -> {
+            try {
+                java.net.HttpURLConnection connection = (java.net.HttpURLConnection) new java.net.URL(gatewayRef.baseUrl() + "/api/core/health").openConnection();
+                connection.setConnectTimeout(3000);
+                connection.setReadTimeout(5000);
+                if (connection.getResponseCode() != 200) return;
+                String body = readAll(connection.getInputStream());
+                org.json.JSONObject health = new org.json.JSONObject(body);
+                org.json.JSONArray quarantine = health.optJSONArray("quarantine");
+                if (quarantine != null && pluginManager != null) {
+                    pluginManager.updateQuarantine(quarantine);
+                    GateALog.i("core quarantine updated: " + quarantine.length() + " plugins");
+                }
+            } catch (Exception error) {
+                GateALog.i("quarantine fetch skipped: " + error.getClass().getSimpleName());
+            }
+        }, "core-quarantine-fetch").start();
+    }
+
+    private static String readAll(java.io.InputStream input) throws Exception {
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(input, java.nio.charset.StandardCharsets.UTF_8))) {
+            StringBuilder builder = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) builder.append(line).append('\n');
+            return builder.toString();
         }
     }
 

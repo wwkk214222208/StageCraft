@@ -171,6 +171,21 @@
       })
     },
 
+    /**
+     * W6：接收主进程 PluginLaunchPlan（经桥下发）→ 组合根校验 → plugin-report 回报隔离记录。
+     */
+    applyLaunchPlan: function (planJson) {
+      if (!localCore || typeof localCore.applyLaunchPlan !== 'function') {
+        if (window.CoreHostBridgePort) {
+          window.CoreHostBridgePort.send({
+            type: 'plugin-report', ok: false, error: 'local core is not started',
+          })
+        }
+        return
+      }
+      localCore.applyLaunchPlan(planJson)
+    },
+
     /** 供 CoreService currentView() 调用：返回权威 CoreView 文本。 */
     view: function () {
       if (!localCore) return null
@@ -246,6 +261,11 @@
       candidate.start(function (messageText) {
         let message
         try { message = JSON.parse(messageText) } catch (error) { return }
+        // W6：plugin-report（launch plan 隔离记录）原样转发给宿主，不包 core-event
+        if (message && message.type === 'plugin-report' && window.CoreHostBridgePort) {
+          window.CoreHostBridgePort.send(message)
+          return
+        }
         const envelope = toEnvelope(message)
         if (envelope && window.CoreHostBridgePort) {
           window.CoreHostBridgePort.send({ type: 'core-event', event: envelope })

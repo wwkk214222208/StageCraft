@@ -48,6 +48,8 @@ public final class CoreService extends Service {
     private String nonce = "";
     private int corePid;
     private JSONObject launchPlan = new JSONObject();
+    /** W6：组合根回报的插件隔离记录（plugin-report 桥消息）。 */
+    private volatile org.json.JSONArray pluginQuarantine;
 
     /** W4 合流：pending 协议请求表（requestId → 等待 forwardApi 结果的消费者）。 */
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.function.Consumer<String>> pendingApi = new java.util.concurrent.ConcurrentHashMap<>();
@@ -258,6 +260,19 @@ public final class CoreService extends Service {
                         }
                     }
                 }
+                case "plugin-report" -> {
+                    // W6：组合根 launch plan 隔离记录回报 → 存 health（主进程经数据面读取）
+                    pluginQuarantine = message.optJSONArray("quarantine");
+                    GateALog.i("plugin-report ok=" + message.optBoolean("ok", false)
+                        + " quarantine=" + (pluginQuarantine == null ? 0 : pluginQuarantine.length()));
+                    // 有隔离记录 → degraded（计划 §6.3：失败插件使 Core 降级，管理器仍可用）
+                    if (pluginQuarantine != null && pluginQuarantine.length() > 0) {
+                        stateMachine.onFailure("plugin_quarantined");
+                    }
+                    if (dataServer != null) {
+                        dataServer.setHealthJson(buildHealth(null).toString());
+                    }
+                }
                 case "log" -> GateALog.i("core-host: " + message.optString("text"));
                 default -> GateALog.w("unknown bridge message type: " + type);
             }
@@ -283,6 +298,8 @@ public final class CoreService extends Service {
             health.put("startedAt", startedAt);
             health.put("binderMaxPayloadBytes", controlBinder.maxPayloadBytes());
             if (launchPlan.length() > 0) health.put("launchPlan", launchPlan);
+            // W6：插件隔离记录（组合根 plugin-report 回报；主进程 PluginManager 读取）
+            if (pluginQuarantine != null) health.put("quarantine", pluginQuarantine);
             if (measure != null) health.put("measure", measure);
             return health;
         } catch (Exception error) {
@@ -431,6 +448,15 @@ public final class CoreService extends Service {
             launchPlan = plan;
             pluginSetHash = plan.optString("pluginSetHash", "unknown");
             stateSchemaVersion = plan.optString("stateSchemaVersion", "unknown");
+            // W6：经桥把 plan 下发给 Core WebView 组合根（校验 + 隔离回报 plugin-report）
+            String planJson = plan.toString();
+            main.post(() -> {
+                if (coreWebView != null) {
+                    coreWebView.evaluateJavascript(
+                        "window.CoreHostBridge && window.CoreHostBridge.applyLaunchPlan(" + JSONObject.quote(planJson) + ")",
+                        null);
+                }
+            });
             // 若已 ready/degraded 则刷新 health（插件集身份进入数据面）
             CoreLifecycle.State state = stateMachine.state();
             if ((state == CoreLifecycle.State.READY || state == CoreLifecycle.State.DEGRADED) && dataServer != null) {
