@@ -33,6 +33,9 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
 
     @Override public Object invokeSync(String operation, JSONObject input) throws Exception {
         if (operation == null || operation.length() > 64 || input == null) throw new IllegalArgumentException("Invalid native operation.");
+        // Gate B：真实分派层 allowlist 执行（legacy-main-core 迁移例外封闭集合；Gate D 翻转后 core-native 在此拒绝）
+        String guardRejection = NativeOperationGuardHolder.get(this.context).checkGenericDispatch(operation);
+        if (guardRejection != null) throw new IllegalArgumentException("Native operation rejected: " + guardRejection);
         if ("core-state.commit".equals(operation)) {
             repository.saveCoreState(JsonSafety.requiredString(input, "roomId", 256), input.optLong("revision", -1), JsonSafety.requiredObject(input, "state"), JsonSafety.requiredArray(input, "events"), JsonSafety.requiredArray(input, "workflows"));
             return new JSONObject().put("ok", true);

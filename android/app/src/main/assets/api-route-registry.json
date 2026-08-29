@@ -1,5 +1,5 @@
 {
-  "registryVersion": "1.0.0-w1-r",
+  "registryVersion": "1.0.0-gateb",
   "generatedFrom": "src/api-route-registry.ts",
   "matchSemantics": {
     "method": "exact",
@@ -14,6 +14,9 @@
       "owner": "core",
       "capability": "core.protocol",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": "CoreHealth@1.1",
       "handlerId": "core.health",
@@ -30,6 +33,9 @@
       "owner": "core",
       "capability": "core.protocol",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": "CoreViewSnapshot@1",
       "handlerId": "core.view",
@@ -46,6 +52,9 @@
       "owner": "core",
       "capability": "core.protocol",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": "HumanCommand@1",
       "responseSchema": "CommandReceipt@1.1",
       "handlerId": "core.commands",
@@ -62,6 +71,9 @@
       "owner": "core",
       "capability": "core.protocol",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "core.events",
@@ -88,6 +100,9 @@
       "owner": "core",
       "capability": "core.protocol",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": "CancelRequest@1",
       "responseSchema": null,
       "handlerId": "core.cancel",
@@ -104,6 +119,9 @@
       "owner": "core",
       "capability": "core.protocol",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": "CoreCapabilityList@1",
       "handlerId": "core.capabilities",
@@ -120,6 +138,9 @@
       "owner": "core",
       "capability": "ui.panels",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": "UiActionRequest@1",
       "responseSchema": "UiActionResult@1",
       "handlerId": "core.ui.action",
@@ -136,6 +157,9 @@
       "owner": "core",
       "capability": "room.read",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": "PublicRoomSnapshot@1",
       "handlerId": "room.snapshot",
@@ -152,6 +176,9 @@
       "owner": "core",
       "capability": "room.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": "RoomConfigRequest@1",
       "responseSchema": null,
       "handlerId": "room.config",
@@ -168,6 +195,9 @@
       "owner": "core",
       "capability": "room.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "room.scene",
@@ -184,6 +214,9 @@
       "owner": "core",
       "capability": "room.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "room.lore",
@@ -200,6 +233,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": "TurnRequest@1",
       "responseSchema": null,
       "handlerId": "turn.start",
@@ -216,6 +252,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "turn.cancel",
@@ -232,6 +271,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "workflow.approve",
@@ -248,6 +290,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "workflow.consult",
@@ -264,6 +309,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "workflow.consult.finish",
@@ -280,6 +328,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "workflow.redraft",
@@ -296,6 +347,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "workflow.reactions.reconsider",
@@ -312,6 +366,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "workflow.world-change.approve",
@@ -328,6 +385,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "workflow.world-change.reject",
@@ -344,6 +404,9 @@
       "owner": "core",
       "capability": "room.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "state.rollback",
@@ -360,6 +423,9 @@
       "owner": "core",
       "capability": "room.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "state.branch",
@@ -376,6 +442,9 @@
       "owner": "core",
       "capability": "room.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "state.scene-revision",
@@ -392,6 +461,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "chat.speak",
@@ -408,6 +480,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "chat.speak-all",
@@ -424,6 +499,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "chat.retry",
@@ -440,6 +518,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "chat.approve-speech",
@@ -456,6 +537,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "chat.reject-speech",
@@ -472,6 +556,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "chat.director-chat",
@@ -488,6 +575,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "chat.director-decide",
@@ -504,6 +594,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "director.proceed",
@@ -520,6 +613,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "director.retry",
@@ -536,6 +632,9 @@
       "owner": "core",
       "capability": "room.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "director.setting",
@@ -552,6 +651,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.create",
@@ -568,6 +670,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.delete",
@@ -584,6 +689,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.avatar",
@@ -600,6 +708,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.presence",
@@ -616,6 +727,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.reorder",
@@ -632,6 +746,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.state",
@@ -648,6 +765,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.intervene",
@@ -664,6 +784,9 @@
       "owner": "core",
       "capability": "room.command",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.thinking",
@@ -680,6 +803,9 @@
       "owner": "core",
       "capability": "role.read",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": "RoleMemories@1",
       "handlerId": "role.memories.list",
@@ -696,6 +822,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.memories.upsert",
@@ -712,6 +841,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.memories.reorder",
@@ -728,6 +860,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.memories.retract",
@@ -744,6 +879,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.memories.supersede",
@@ -760,6 +898,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.memories.update",
@@ -776,6 +917,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "player.character",
@@ -792,6 +936,9 @@
       "owner": "core",
       "capability": "role.write",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "player.avatar",
@@ -808,6 +955,9 @@
       "owner": "core",
       "capability": "provider.config",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": "ProviderMetaView@1",
       "handlerId": "provider.list",
@@ -824,6 +974,9 @@
       "owner": "core",
       "capability": "provider.config",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "provider.save",
@@ -840,6 +993,9 @@
       "owner": "core",
       "capability": "provider.config",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "provider.delete",
@@ -856,6 +1012,9 @@
       "owner": "core",
       "capability": "provider.config",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "provider.discover",
@@ -872,6 +1031,9 @@
       "owner": "core",
       "capability": "provider.config",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "provider.default-role",
@@ -888,6 +1050,9 @@
       "owner": "core",
       "capability": "provider.config",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "provider.director",
@@ -904,6 +1069,9 @@
       "owner": "core",
       "capability": "provider.config",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "provider.director-thinking",
@@ -920,6 +1088,9 @@
       "owner": "core",
       "capability": "billing.runtime",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "billing.summary",
@@ -936,6 +1107,9 @@
       "owner": "core",
       "capability": "billing.runtime",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "billing.prices.get",
@@ -952,6 +1126,9 @@
       "owner": "core",
       "capability": "billing.runtime",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "billing.prices.put",
@@ -968,6 +1145,9 @@
       "owner": "core",
       "capability": "billing.runtime",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "billing.reset",
@@ -984,6 +1164,9 @@
       "owner": "core",
       "capability": "billing.runtime",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "billing.usage",
@@ -1000,6 +1183,9 @@
       "owner": "core",
       "capability": "story.library",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.list",
@@ -1016,6 +1202,9 @@
       "owner": "core",
       "capability": "story.library",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.create",
@@ -1032,6 +1221,9 @@
       "owner": "core",
       "capability": "story.library",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.delete",
@@ -1048,6 +1240,9 @@
       "owner": "core",
       "capability": "story.library",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.get",
@@ -1064,6 +1259,9 @@
       "owner": "core",
       "capability": "story.library",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.save",
@@ -1080,6 +1278,9 @@
       "owner": "core",
       "capability": "story.library",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.save-as",
@@ -1096,6 +1297,9 @@
       "owner": "core",
       "capability": "story.library",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.import",
@@ -1112,6 +1316,9 @@
       "owner": "core",
       "capability": "story.library",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.export",
@@ -1128,6 +1335,9 @@
       "owner": "core",
       "capability": "story.library",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.sync-role",
@@ -1144,6 +1354,9 @@
       "owner": "core",
       "capability": "story.library",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.sync-roles",
@@ -1160,6 +1373,9 @@
       "owner": "core",
       "capability": "prompt.presets",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.presets.list",
@@ -1176,6 +1392,9 @@
       "owner": "core",
       "capability": "prompt.presets",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.presets.put",
@@ -1192,6 +1411,9 @@
       "owner": "core",
       "capability": "prompt.presets",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.presets.delete",
@@ -1208,6 +1430,9 @@
       "owner": "deprecated",
       "capability": "prompt.presets",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.presets.post",
@@ -1224,6 +1449,9 @@
       "owner": "core",
       "capability": "prompt.presets",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.presets.export",
@@ -1240,6 +1468,9 @@
       "owner": "core",
       "capability": "prompt.presets",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.private-toggles.get",
@@ -1256,6 +1487,9 @@
       "owner": "core",
       "capability": "prompt.presets",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.private-toggles.put",
@@ -1272,6 +1506,9 @@
       "owner": "core",
       "capability": "prompt.presets",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.import-st",
@@ -1288,6 +1525,9 @@
       "owner": "core",
       "capability": "archive.port",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "archive.export",
@@ -1304,6 +1544,9 @@
       "owner": "core",
       "capability": "archive.port",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "archive.list",
@@ -1320,6 +1563,9 @@
       "owner": "core",
       "capability": "archive.port",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "archive.save",
@@ -1336,6 +1582,9 @@
       "owner": "core",
       "capability": "archive.port",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "archive.load",
@@ -1352,6 +1601,9 @@
       "owner": "core",
       "capability": "archive.port",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "archive.delete",
@@ -1368,6 +1620,9 @@
       "owner": "core",
       "capability": "archive.port",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "archive.import",
@@ -1384,6 +1639,9 @@
       "owner": "core",
       "capability": "creator.workbench",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "creator.preview",
@@ -1400,6 +1658,9 @@
       "owner": "core",
       "capability": "creator.workbench",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "creator.apply",
@@ -1416,6 +1677,9 @@
       "owner": "core",
       "capability": "creator.workbench",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "creator.revert",
@@ -1432,6 +1696,9 @@
       "owner": "core",
       "capability": "creator.workbench",
       "auth": "none",
+      "authPolicy": {
+        "kind": "core-nonce"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "creator.st-cards.import",
@@ -1448,6 +1715,9 @@
       "owner": "main-host",
       "capability": "remote.pairing",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.remote.pairing-code",
@@ -1464,6 +1734,9 @@
       "owner": "main-host",
       "capability": "remote.pairing",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.remote.revoke",
@@ -1480,6 +1753,9 @@
       "owner": "main-host",
       "capability": "remote.sync",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.remote.sync.get",
@@ -1496,6 +1772,9 @@
       "owner": "main-host",
       "capability": "remote.sync",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.remote.sync.put",
@@ -1512,6 +1791,9 @@
       "owner": "main-host",
       "capability": "host.version",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": "VersionInfo@1",
       "handlerId": "host.version",
@@ -1528,6 +1810,9 @@
       "owner": "main-host",
       "capability": "host.update",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.update.check",
@@ -1544,6 +1829,9 @@
       "owner": "main-host",
       "capability": "host.update",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.update.download",
@@ -1560,6 +1848,9 @@
       "owner": "main-host",
       "capability": "host.lifecycle",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.restart",
@@ -1576,6 +1867,9 @@
       "owner": "desktop-only",
       "capability": "agent.dsh",
       "auth": "none",
+      "authPolicy": {
+        "kind": "remote-paired"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.capability",
@@ -1592,6 +1886,9 @@
       "owner": "desktop-only",
       "capability": "agent.dsh",
       "auth": "none",
+      "authPolicy": {
+        "kind": "remote-paired"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.session.get",
@@ -1608,6 +1905,9 @@
       "owner": "desktop-only",
       "capability": "agent.dsh",
       "auth": "none",
+      "authPolicy": {
+        "kind": "remote-paired"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.session.post",
@@ -1624,6 +1924,9 @@
       "owner": "desktop-only",
       "capability": "agent.dsh",
       "auth": "none",
+      "authPolicy": {
+        "kind": "remote-paired"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.session.delete",
@@ -1640,6 +1943,9 @@
       "owner": "desktop-only",
       "capability": "agent.dsh",
       "auth": "none",
+      "authPolicy": {
+        "kind": "remote-paired"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.archive",
@@ -1656,6 +1962,9 @@
       "owner": "desktop-only",
       "capability": "agent.dsh",
       "auth": "none",
+      "authPolicy": {
+        "kind": "remote-paired"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.history",
@@ -1672,6 +1981,9 @@
       "owner": "desktop-only",
       "capability": "agent.dsh",
       "auth": "none",
+      "authPolicy": {
+        "kind": "remote-paired"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.message",
@@ -1688,6 +2000,9 @@
       "owner": "desktop-only",
       "capability": "agent.dsh",
       "auth": "none",
+      "authPolicy": {
+        "kind": "remote-paired"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.model",
@@ -1704,6 +2019,9 @@
       "owner": "desktop-only",
       "capability": "agent.dsh",
       "auth": "none",
+      "authPolicy": {
+        "kind": "remote-paired"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.models",
@@ -1720,6 +2038,9 @@
       "owner": "desktop-only",
       "capability": "agent.dsh",
       "auth": "none",
+      "authPolicy": {
+        "kind": "remote-paired"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.context",
@@ -1736,6 +2057,9 @@
       "owner": "deprecated",
       "capability": "legacy.sse",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "legacy.stream",
@@ -1761,6 +2085,9 @@
       "owner": "deprecated",
       "capability": "legacy.sse",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "legacy.events",
@@ -1786,6 +2113,9 @@
       "owner": "deprecated",
       "capability": "legacy.sse",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "legacy.thinking-events",
@@ -1811,6 +2141,9 @@
       "owner": "deprecated",
       "capability": "legacy.sse",
       "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "legacy.debug-events",

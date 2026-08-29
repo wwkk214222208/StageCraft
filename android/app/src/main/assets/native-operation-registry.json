@@ -1,0 +1,171 @@
+{
+  "registryVersion": "1.0.0-gateb",
+  "mainHost": [
+    "localCoreAllowed",
+    "ready",
+    "pair",
+    "reconnect",
+    "disconnect",
+    "refresh",
+    "dispatch",
+    "loadMedia",
+    "chooseStoryArchive",
+    "chooseCharacterCard",
+    "exportDocument",
+    "syncStatus",
+    "syncPair",
+    "syncRemoteFetch",
+    "updateDownloadAndInstall",
+    "clearSession",
+    "invokeSync",
+    "invokeAsync"
+  ],
+  "coreNative": [
+    "asset.read",
+    "asset.write",
+    "asset.remove",
+    "secret.get",
+    "secret.set",
+    "secret.remove",
+    "core-state.commit",
+    "core-state.restore",
+    "stagecraft.room.get",
+    "stagecraft.repository",
+    "stories.list",
+    "story.read",
+    "story.create",
+    "story.delete",
+    "story.save",
+    "story.saveAs",
+    "preset.list",
+    "preset.save",
+    "preset.delete",
+    "preset.active-scope.set",
+    "archive.list",
+    "archive.load",
+    "archive.save",
+    "archive.delete",
+    "model.request",
+    "model.cancel"
+  ],
+  "legacyMainCoreException": [
+    "asset.read",
+    "asset.write",
+    "asset.remove",
+    "secret.get",
+    "secret.set",
+    "secret.remove",
+    "core-state.commit",
+    "core-state.restore",
+    "stagecraft.room.get",
+    "stagecraft.repository",
+    "stories.list",
+    "story.read",
+    "story.create",
+    "story.delete",
+    "story.save",
+    "story.saveAs",
+    "preset.list",
+    "preset.save",
+    "preset.delete",
+    "preset.active-scope.set",
+    "archive.list",
+    "archive.load",
+    "archive.save",
+    "archive.delete",
+    "model.request",
+    "model.cancel"
+  ],
+  "interfaces": [
+    {
+      "name": "localCoreAllowed",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "ready",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "pair",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "reconnect",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "disconnect",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "refresh",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "dispatch",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "loadMedia",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "chooseStoryArchive",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "chooseCharacterCard",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "exportDocument",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "syncStatus",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "syncPair",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "syncRemoteFetch",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "updateDownloadAndInstall",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "clearSession",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "invokeSync",
+      "owner": "main-host",
+      "legacyExposure": "legacy-main-core"
+    },
+    {
+      "name": "invokeAsync",
+      "owner": "main-host",
+      "legacyExposure": "legacy-main-core"
+    }
+  ]
+}

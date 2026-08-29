@@ -1,0 +1,168 @@
+{
+  "fixtureVersion": "1.0.0-gatec",
+  "protocolVersion": "1.1",
+  "minSupportedProtocolVersion": "1.0",
+  "maxSupportedProtocolVersion": "1.1",
+  "versionNegotiation": [
+    {
+      "clientVersion": "1.1",
+      "serverMin": "1.0",
+      "serverMax": "1.1",
+      "expectedSupported": true
+    },
+    {
+      "clientVersion": "1.0",
+      "serverMin": "1.0",
+      "serverMax": "1.1",
+      "expectedSupported": true
+    },
+    {
+      "clientVersion": "1.0",
+      "serverMin": "1.2",
+      "serverMax": "1.2",
+      "expectedSupported": false
+    },
+    {
+      "clientVersion": "1.1",
+      "serverMin": "1.2",
+      "serverMax": "1.2",
+      "expectedSupported": false
+    },
+    {
+      "clientVersion": "1.2",
+      "serverMin": "1.0",
+      "serverMax": "1.1",
+      "expectedSupported": false
+    },
+    {
+      "clientVersion": "0.9",
+      "serverMin": "1.0",
+      "serverMax": "1.1",
+      "expectedSupported": false
+    },
+    {
+      "clientVersion": "2.0",
+      "serverMin": "1.0",
+      "serverMax": "2.0",
+      "expectedSupported": true
+    },
+    {
+      "clientVersion": "1.1",
+      "serverMin": "1.1",
+      "serverMax": "1.1",
+      "expectedSupported": true
+    }
+  ],
+  "envelopes": [
+    {
+      "protocolVersion": "1.1",
+      "roomId": "fixture-room",
+      "revision": 4,
+      "type": "state.changed",
+      "payload": {
+        "type": "state.changed",
+        "revision": 4,
+        "transition": {
+          "revision": 4,
+          "events": [],
+          "changes": []
+        }
+      },
+      "createdAt": "2026-08-29T00:00:00.000Z"
+    },
+    {
+      "protocolVersion": "1.1",
+      "roomId": "fixture-room",
+      "revision": 7,
+      "requestId": "fx-1",
+      "type": "model.thinking.delta",
+      "payload": {
+        "type": "model.thinking.delta",
+        "revision": 7,
+        "requestId": "fx-1",
+        "text": "思"
+      },
+      "createdAt": "2026-08-29T00:00:00.000Z"
+    },
+    {
+      "protocolVersion": "1.1",
+      "roomId": "fixture-room",
+      "revision": 2,
+      "requestId": "fx-2",
+      "type": "error",
+      "payload": {
+        "type": "error",
+        "revision": 2,
+        "message": "boom",
+        "requestId": "fx-2"
+      },
+      "createdAt": "2026-08-29T00:00:00.000Z"
+    }
+  ],
+  "rawEvents": [
+    {
+      "type": "state.changed",
+      "revision": 4,
+      "transition": {
+        "revision": 4,
+        "events": [],
+        "changes": []
+      }
+    },
+    {
+      "type": "model.thinking.delta",
+      "revision": 7,
+      "requestId": "fx-1",
+      "text": "思"
+    },
+    {
+      "type": "error",
+      "revision": 2,
+      "message": "boom",
+      "requestId": "fx-2"
+    }
+  ],
+  "sseFrames": [
+    "data: {\"protocolVersion\":\"1.1\",\"roomId\":\"fixture-room\",\"revision\":4,\"type\":\"state.changed\",\"payload\":{\"type\":\"state.changed\",\"revision\":4,\"transition\":{\"revision\":4,\"events\":[],\"changes\":[]}},\"createdAt\":\"2026-08-29T00:00:00.000Z\"}\n\n",
+    "data: {\"protocolVersion\":\"1.1\",\"roomId\":\"fixture-room\",\"revision\":7,\"requestId\":\"fx-1\",\"type\":\"model.thinking.delta\",\"payload\":{\"type\":\"model.thinking.delta\",\"revision\":7,\"requestId\":\"fx-1\",\"text\":\"思\"},\"createdAt\":\"2026-08-29T00:00:00.000Z\"}\n\n",
+    "data: {\"protocolVersion\":\"1.1\",\"roomId\":\"fixture-room\",\"revision\":2,\"requestId\":\"fx-2\",\"type\":\"error\",\"payload\":{\"type\":\"error\",\"revision\":2,\"message\":\"boom\",\"requestId\":\"fx-2\"},\"createdAt\":\"2026-08-29T00:00:00.000Z\"}\n\n"
+  ],
+  "receipts": [
+    {
+      "requestId": "r1",
+      "status": "accepted",
+      "revision": 8,
+      "view": {
+        "protocolVersion": "1.1",
+        "revision": 8
+      }
+    },
+    {
+      "requestId": "r2",
+      "status": "rejected",
+      "error": {
+        "code": "command_failed",
+        "message": "boom"
+      }
+    },
+    {
+      "requestId": "r3",
+      "status": "unknown-after-disconnect",
+      "error": {
+        "code": "connection_lost",
+        "message": "reset"
+      }
+    }
+  ],
+  "boundaries": {
+    "maxBodyBytes": 65536,
+    "sseQueueLimit": 256,
+    "bridgeTimeoutMs": 20000,
+    "binderHardLimitBytes": 65536,
+    "unsupportedCapabilityError": {
+      "code": "unsupported_capability",
+      "message": "not supported on this surface"
+    }
+  },
+  "sha256": "4d1f07bf0e5fbeb4806be388def0c21608f8e9cc9e9c19a2959ecfeb650a4426"
+}
