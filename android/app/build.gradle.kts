@@ -103,7 +103,9 @@ val packageAndroidAssets by tasks.registering(Sync::class) {
     into(generatedRenderer)
     // Keep the small native pairing renderer at the asset root, and package the
     // complete public Web UI under web/ so local mode can reuse its module graph.
-    include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json", "version.json", "core-host.html", "prompts/**", "stories/**", "web/**")
+    // 根级 JSON 资产（api-route-registry/protocol-fixtures/native-operation-registry/plugin-manifest）
+    // 必须随 APK 打包——:core 进程与主进程 gateway 依赖它们做 registry 分派与 launch plan。
+    include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json", "version.json", "core-host.html", "*.json", "prompts/**", "stories/**", "web/**")
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
 val verifyEmbeddedCoreAssets by tasks.registering {

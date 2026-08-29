@@ -74,8 +74,11 @@ const SYNC_OPERATIONS = new Set([
 
 /** WebView 入口：安装本地组合根与富 API 门面。 */
 export function installLocalCore(global: Record<string, unknown> = globalThis as unknown as Record<string, unknown>): void {
-  const native = (global.StageCraftNative ?? {}) as Record<string, unknown>
-  if (global.StageCraftNative === undefined || typeof native.invokeSync !== 'function' || typeof native.invokeAsync !== 'function') {
+  // 主 WebView 用 StageCraftNative（MainActivity）；Core 进程用 CoreNative（CoreService，
+  // Gate B：独立命名只暴露 core-native）。两者形状相同（invokeSync/invokeAsync）。
+  const native = (global.StageCraftNative ?? global.CoreNative ?? {}) as Record<string, unknown>
+  if ((global.StageCraftNative === undefined && global.CoreNative === undefined)
+      || typeof native.invokeSync !== 'function' || typeof native.invokeAsync !== 'function') {
     throw new Error('Android local Core requires the native operations bridge (invokeSync + invokeAsync).')
   }
   const invokeSync = (operation: string, input: Json = {}): unknown => {
@@ -489,6 +492,9 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   }
 }
 
-const nativeAtLoad = typeof globalThis !== 'undefined' ? (globalThis as { StageCraftNative?: Record<string, unknown> }).StageCraftNative : undefined
-// 仅当原生桥提供 invokeAsync 时安装本地核心；旧客户端（无异步桥）保留既有表面由 android-core.ts 提供。
+const nativeAtLoad = typeof globalThis !== 'undefined'
+  ? ((globalThis as { StageCraftNative?: Record<string, unknown> }).StageCraftNative ?? (globalThis as { CoreNative?: Record<string, unknown> }).CoreNative)
+  : undefined
+// 仅当原生桥提供 invokeAsync 时安装本地核心（主 WebView=StageCraftNative / Core 进程=CoreNative）；
+// 旧客户端（无异步桥）保留既有表面由 android-core.ts 提供。
 if (nativeAtLoad && typeof nativeAtLoad.invokeAsync === 'function') installLocalCore()

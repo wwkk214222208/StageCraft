@@ -40,17 +40,30 @@ public final class CoreGatewayInstrumentationTest {
         return status + " " + body;
     }
 
+    /** 在主线程取 WebView URL（WebView 方法必须在主线程调用）。 */
+    private static String webViewUrl(final MainActivity activity) throws Exception {
+        final String[] url = new String[1];
+        final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        activity.runOnUiThread(() -> {
+            try {
+                url[0] = activity.testingWebView().getUrl();
+            } catch (Exception ignored) { }
+            latch.countDown();
+        });
+        latch.await(2, java.util.concurrent.TimeUnit.SECONDS);
+        return url[0];
+    }
+
     @Test public void gatewayServesStaticLocalHtml() throws Exception {
         MainActivity activity = activityRule.getActivity();
-        // gateway 端口从 MainActivity 暴露（package-private accessor 不可用则跳过——静态面由既有测试覆盖）
-        // 这里验证页面 origin 的 local.html 加载（与 MainActivityWebViewTest 互补）
+        // gateway 端口从 MainActivity 暴露；验证页面 origin 的 local.html 加载
         long deadline = System.currentTimeMillis() + 10_000L;
         while (System.currentTimeMillis() < deadline) {
-            String url = activity.testingWebView().getUrl();
+            String url = webViewUrl(activity);
             if (url != null && url.contains("/web/local.html")) break;
             Thread.sleep(100L);
         }
-        String url = activity.testingWebView().getUrl();
+        String url = webViewUrl(activity);
         assertNotNull("页面必须加载", url);
         assertTrue("页面必须经 gateway/环回 origin 加载", url.contains("127.0.0.1") || url.contains("appassets"));
     }

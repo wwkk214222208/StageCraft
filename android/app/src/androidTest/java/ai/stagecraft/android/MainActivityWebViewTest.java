@@ -18,16 +18,26 @@ public final class MainActivityWebViewTest {
 
     @Test public void localWebViewHasChromeClientAndLoadsPackagedEntry() throws Exception {
         MainActivity activity = activityRule.getActivity();
-        WebView webView = activity.testingWebView();
-        assertNotNull("MainActivity must create a WebView", webView);
-        assertNotNull("WebView dialogs require a WebChromeClient", activity.testingWebChromeClient());
+        // WebView 方法必须在主线程调用
+        final WebView[] view = new WebView[1];
+        final android.webkit.WebChromeClient[] chrome = new android.webkit.WebChromeClient[1];
+        activity.runOnUiThread(() -> {
+            view[0] = activity.testingWebView();
+            chrome[0] = activity.testingWebChromeClient();
+        });
+        Thread.sleep(500L);
+        assertNotNull("MainActivity must create a WebView", view[0]);
+        assertNotNull("WebView dialogs require a WebChromeClient", chrome[0]);
 
         long deadline = System.currentTimeMillis() + 10_000L;
         while (System.currentTimeMillis() < deadline) {
-            String url = webView.getUrl();
-            if (url != null && url.endsWith("/web/local.html")) return;
+            final String[] url = new String[1];
+            activity.runOnUiThread(() -> url[0] = view[0].getUrl());
+            if (url[0] != null && url[0].endsWith("/web/local.html")) return;
             Thread.sleep(100L);
         }
-        assertTrue("Activity must load the packaged local.html entry", webView.getUrl() != null && webView.getUrl().contains("/web/local.html"));
+        final String[] finalUrl = new String[1];
+        activity.runOnUiThread(() -> finalUrl[0] = view[0].getUrl());
+        assertTrue("Activity must load the packaged local.html entry", finalUrl[0] != null && finalUrl[0].contains("/web/local.html"));
     }
 }

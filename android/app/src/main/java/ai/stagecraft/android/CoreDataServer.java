@@ -288,7 +288,20 @@ public final class CoreDataServer {
                 RouteRegistry.Route registered = registry.match(method, path);
                 if (registered != null) {
                     if ("core".equals(registered.owner)) {
-                        respond(socket, 503, "application/json", "{\"error\":{\"code\":\"handler_not_mounted\",\"message\":\"core handler not mounted yet\",\"handlerId\":\"" + registered.handlerId + "\"}}");
+                        // W6-1：core owner 业务路由（非协议端点）→ 转发给 forwardApi，
+                        // 由 Core WebView 组合根的 CoreBusinessPortableHandler 处理（registry 驱动）；
+                        // 仅 forwarder 未就绪时返回稳定 handler_not_mounted（W5-5 语义保留为降级）。
+                        if (forwarder == null) {
+                            respond(socket, 503, "application/json", "{\"error\":{\"code\":\"handler_not_mounted\",\"message\":\"core handler not mounted yet\",\"handlerId\":\"" + registered.handlerId + "\"}}");
+                            return;
+                        }
+                        // 读 body 并转发（GET 无 body；POST body 已由前置分支消费的不在此）
+                        String businessBody = readBody(reader, headers);
+                        if (businessBody == null) {
+                            respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
+                            return;
+                        }
+                        forwardApiAndRespond(socket, method, path, headers, businessBody, forwarder);
                         return;
                     }
                     if ("deprecated".equals(registered.owner)) {

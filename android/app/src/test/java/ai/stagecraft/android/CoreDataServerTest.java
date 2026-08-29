@@ -329,9 +329,9 @@ public final class CoreDataServerTest {
         }
     }
 
-    @Test public void unmountedCoreRouteReturnsStableHandlerNotMounted() throws Exception {
+    @Test public void coreBusinessRouteWithoutForwarderReturnsStableHandlerNotMounted() throws Exception {
         CoreDataServer server = startServer("secret");
-        // 注入 registry：POST /api/turn 是 core owner（未挂载）
+        // 注入 registry：POST /api/turn 是 core owner；未注入 forwarder → handler_not_mounted
         server.setRouteRegistry(RouteRegistry.parse(
             "{\"registryVersion\":\"test\",\"routes\":["
                 + "{\"order\":0,\"method\":\"POST\",\"pattern\":\"/api/turn\",\"owner\":\"core\",\"capability\":\"room.command\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"stable-unsupported\",\"auth\":\"none\",\"errorCode\":\"handler_not_mounted\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"turn.start\"}"
@@ -355,6 +355,32 @@ public final class CoreDataServerTest {
             assertTrue("expected handler_not_mounted, got: " + response, response.contains("handler_not_mounted"));
             assertTrue("expected handlerId turn.start, got: " + response, response.contains("turn.start"));
             connection.disconnect();
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void coreBusinessRouteWithForwarderIsForwarded() throws Exception {
+        CoreDataServer server = startServer("secret");
+        final String[] receivedPath = new String[1];
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"GET\",\"pattern\":\"/api/room\",\"owner\":\"core\",\"capability\":\"room.read\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"room.snapshot\"}"
+                + "]}" , null));
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApi(String method, String path, java.util.Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                receivedPath[0] = path;
+                resultConsumer.accept("{\"status\":200,\"body\":\"{\\\"revision\\\":7}\"}");
+            }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            String response = get("http://127.0.0.1:" + server.getPort() + "/api/room", "secret");
+            assertTrue("业务路由必须转发并回执: " + response, response.startsWith("200 "));
+            assertTrue(response.contains("\"revision\":7"));
+            assertEquals("/api/room", receivedPath[0]);
         } finally {
             server.stop();
         }
