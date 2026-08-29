@@ -57,6 +57,15 @@ public final class CoreDataServer {
         void cancel(String requestId);
     }
 
+    /**
+     * W5-R1-1：命令门禁（§4.1）——只有 ready/degraded 才允许命令类请求（commands/cancel/ui-action）。
+     * 由 CoreService 注入（委托 CoreServiceStateMachine.canSubmitCommands()）；测试可注入切换。
+     */
+    public interface CommandGate {
+        boolean canSubmitCommands();
+        CommandGate ALWAYS_OPEN = () -> true;
+    }
+
     public interface Logger {
         void i(String message);
         void w(String message);
@@ -74,6 +83,7 @@ public final class CoreDataServer {
     private volatile String healthJson = "{}";
     private volatile CommandForwarder commandForwarder;
     private volatile RouteRegistry routeRegistry;
+    private volatile CommandGate commandGate = CommandGate.ALWAYS_OPEN;
     private final AtomicLong connections = new AtomicLong();
     private final AtomicLong rejected = new AtomicLong();
     private final CopyOnWriteArrayList<Subscriber> subscribers = new CopyOnWriteArrayList<>();
@@ -97,6 +107,8 @@ public final class CoreDataServer {
 
     public void setHealthJson(String json) { this.healthJson = json == null ? "{}" : json; }
     public void setCommandForwarder(CommandForwarder forwarder) { this.commandForwarder = forwarder; }
+    /** W5-R1-1：注入命令门禁（CoreService 委托 CoreServiceStateMachine.canSubmitCommands）。 */
+    public void setCommandGate(CommandGate gate) { this.commandGate = gate == null ? CommandGate.ALWAYS_OPEN : gate; }
     /** W5-5：注入 ApiRouteRegistry（构建资产）；未挂载的 core owner 路由返回稳定 handler_not_mounted。 */
     public void setRouteRegistry(RouteRegistry registry) { this.routeRegistry = registry; }
     public int getPort() { return port; }
@@ -187,6 +199,15 @@ public final class CoreDataServer {
                 || ("/api/core/ui/action".equals(path) && "POST".equals(method));
             if (needsForwarder && forwarder == null) {
                 respond(socket, 503, "application/json", "{\"error\":{\"code\":\"core_not_ready\",\"message\":\"core bridge is not ready\"}}");
+                return;
+            }
+            // W5-R1-1 命令门禁：commands/cancel/ui-action 只有 ready/degraded 才放行；
+            // starting/handshaking/crashed 等状态返回冻结契约等价错误 core_not_ready。
+            boolean needsCommandGate = ("/api/core/commands".equals(path) && "POST".equals(method))
+                || ("/api/core/cancel".equals(path) && "POST".equals(method))
+                || ("/api/core/ui/action".equals(path) && "POST".equals(method));
+            if (needsCommandGate && !commandGate.canSubmitCommands()) {
+                respond(socket, 503, "application/json", "{\"error\":{\"code\":\"core_not_ready\",\"message\":\"core is not ready to accept commands (state gate closed)\"}}");
                 return;
             }
             if ("/api/core/view".equals(path) && "GET".equals(method)) {

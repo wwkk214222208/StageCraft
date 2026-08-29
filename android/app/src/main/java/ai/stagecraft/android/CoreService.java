@@ -48,28 +48,36 @@ public final class CoreService extends Service {
     private int corePid;
     private JSONObject launchPlan = new JSONObject();
 
-    /** Q8 最小 AIDL 契约：getEndpoint / getStatusSummary / registerCallback / requestStop。 */
-    private final ICoreControl.Stub control = new ICoreControl.Stub() {
-        @Override public String getEndpoint() {
+    /** W5-R1-2：Binder 控制面纯 Java 执行体（Stub 只做一行委托；JVM 可测）。 */
+    private final CoreControlBinder controlBinder = new CoreControlBinder(
+        // 端点提供者：ready/degraded 且 dataServer 就绪时返回端点 JSON
+        () -> {
             if (dataServer == null || dataServer.getPort() < 0) return null;
             CoreLifecycle.State state = stateMachine.state();
             if (state != CoreLifecycle.State.READY && state != CoreLifecycle.State.DEGRADED) return null;
             try {
-                return enforceBinderLimit(new JSONObject()
+                return new JSONObject()
                     .put("port", dataServer.getPort())
                     .put("nonce", nonce)
                     .put("pid", corePid)
-                    .toString());
-            } catch (IllegalStateException limit) {
-                throw limit;
+                    .toString();
             } catch (Exception error) {
                 return null;
             }
+        },
+        // 摘要提供者：状态机生成控制面摘要
+        () -> stateMachine.summary(String.valueOf(corePid), startedAt, protocolVersion));
+
+    /** Q8 最小 AIDL 契约：getEndpoint / getStatusSummary / registerCallback / requestStop。 */
+    private final ICoreControl.Stub control = new ICoreControl.Stub() {
+        @Override public String getEndpoint() {
+            // 一行委托：全部逻辑在 CoreControlBinder（W5-R1-2：Stub 可运行 seam 与测试同路径）
+            return controlBinder.getEndpoint();
         }
 
         @Override public String getStatusSummary() {
-            // 显式限定外层方法：本匿名类无同名方法时解析为外层，但保险起见限定 CoreService.this
-            return enforceBinderLimit(CoreService.this.getStatusSummary().toString());
+            // 一行委托：不递归（CoreControlBinder 无自调用）
+            return controlBinder.getStatusSummary();
         }
 
         @Override public void registerCallback(ICoreControlCallback callback) {
@@ -95,19 +103,9 @@ public final class CoreService extends Service {
     };
 
     private final RemoteCallbackList<ICoreControlCallback> callbacks = new RemoteCallbackList<>();
-    /** Binder 发送侧观测到的最大单条字节（Q8：硬上限 64KiB）。 */
-    private volatile int maxBinderPayloadBytes = 0;
-
-    /** 发送侧 64KiB 硬断言 + 最大单条观测记录。 */
-    private String enforceBinderLimit(String payload) {
-        int bytes = payload.getBytes(StandardCharsets.UTF_8).length;
-        if (bytes > maxBinderPayloadBytes) maxBinderPayloadBytes = bytes;
-        if (bytes > 64 * 1024) throw new IllegalStateException("Binder payload exceeds 64KiB hard limit: " + bytes);
-        return payload;
-    }
 
     private void broadcastStatus() {
-        String summary = enforceBinderLimit(getStatusSummary().toString());
+        String summary = controlBinder.getStatusSummary();
         int count = callbacks.beginBroadcast();
         try {
             for (int index = 0; index < count; index++) {
@@ -119,7 +117,7 @@ public final class CoreService extends Service {
     }
 
     private void broadcastEndpoint(String endpointRaw) {
-        String endpoint = enforceBinderLimit(endpointRaw);
+        String endpoint = controlBinder.enforceBinderLimit(endpointRaw);
         int count = callbacks.beginBroadcast();
         try {
             for (int index = 0; index < count; index++) {
@@ -158,6 +156,8 @@ public final class CoreService extends Service {
             // W5-5：注入 ApiRouteRegistry（构建资产）——未挂载的 core 路由返回稳定 handler_not_mounted
             RouteRegistry registry = loadRouteRegistry();
             if (registry != null) dataServer.setRouteRegistry(registry);
+            // W5-R1-1：命令门禁——只有 ready/degraded 才允许命令类请求（与状态机同一状态源）
+            dataServer.setCommandGate(stateMachine::canSubmitCommands);
             dataServer.setCommandForwarder(new CoreDataServer.CommandForwarder() {
                 @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
                     forwardCommand(bodyJson, resultConsumer);
@@ -260,7 +260,7 @@ public final class CoreService extends Service {
             health.put("status", stateMachine.state().wire);
             health.put("pid", corePid);
             health.put("startedAt", startedAt);
-            health.put("binderMaxPayloadBytes", maxBinderPayloadBytes);
+            health.put("binderMaxPayloadBytes", controlBinder.maxPayloadBytes());
             if (launchPlan.length() > 0) health.put("launchPlan", launchPlan);
             if (measure != null) health.put("measure", measure);
             return health;

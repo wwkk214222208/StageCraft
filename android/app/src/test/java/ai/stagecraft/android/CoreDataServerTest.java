@@ -381,6 +381,120 @@ public final class CoreDataServerTest {
         }
     }
 
+    @Test public void commandGateClosesInStartingState() throws Exception {
+        CoreDataServer server = startServer("secret");
+        final boolean[] gateOpen = new boolean[] { false }; // starting：门禁关闭
+        server.setCommandGate(() -> gateOpen[0]);
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                resultConsumer.accept("{\"status\":\"accepted\"}");
+            }
+            @Override public String view() { return "{}"; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            // starting 状态：命令被门禁拒绝（503 core_not_ready）
+            HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/core/commands").openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("x-core-nonce", "secret");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setDoOutput(true);
+            byte[] body = "{\"id\":\"c1\",\"type\":\"submit-text\"}".getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = connection.getOutputStream()) { output.write(body); }
+            assertEquals(503, connection.getResponseCode());
+            connection.disconnect();
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void commandGateOpensInReadyState() throws Exception {
+        CoreDataServer server = startServer("secret");
+        final boolean[] gateOpen = new boolean[] { true }; // ready：门禁开放
+        server.setCommandGate(() -> gateOpen[0]);
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                resultConsumer.accept("{\"requestId\":\"r1\",\"status\":\"accepted\"}");
+            }
+            @Override public String view() { return "{}"; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/core/commands").openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("x-core-nonce", "secret");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setDoOutput(true);
+            byte[] body = "{\"id\":\"c1\",\"type\":\"submit-text\"}".getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = connection.getOutputStream()) { output.write(body); }
+            assertEquals(200, connection.getResponseCode());
+            String response = readAll(connection.getInputStream());
+            assertTrue(response.contains("\"status\":\"accepted\""));
+            connection.disconnect();
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void commandGateReclosesAfterCrash() throws Exception {
+        CoreDataServer server = startServer("secret");
+        final boolean[] gateOpen = new boolean[] { true }; // 初始 ready
+        server.setCommandGate(() -> gateOpen[0]);
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                resultConsumer.accept("{\"status\":\"accepted\"}");
+            }
+            @Override public String view() { return "{}"; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            // ready：放行
+            HttpURLConnection open = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/core/commands").openConnection();
+            open.setRequestMethod("POST");
+            open.setRequestProperty("x-core-nonce", "secret");
+            open.setRequestProperty("Content-Type", "application/json");
+            open.setDoOutput(true);
+            byte[] body = "{\"id\":\"c1\"}".getBytes(StandardCharsets.UTF_8);
+            open.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = open.getOutputStream()) { output.write(body); }
+            assertEquals(200, open.getResponseCode());
+            open.disconnect();
+            // 状态切换为 crashed：门禁立即生效，同一服务器拒绝新命令
+            gateOpen[0] = false;
+            HttpURLConnection closed = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/core/commands").openConnection();
+            closed.setRequestMethod("POST");
+            closed.setRequestProperty("x-core-nonce", "secret");
+            closed.setRequestProperty("Content-Type", "application/json");
+            closed.setDoOutput(true);
+            closed.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = closed.getOutputStream()) { output.write(body); }
+            assertEquals(503, closed.getResponseCode());
+            closed.disconnect();
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void viewIsNotBlockedByCommandGate() throws Exception {
+        CoreDataServer server = startServer("secret");
+        server.setCommandGate(() -> false); // 门禁关闭
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public String view() { return "{\"revision\":3}"; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            // view 是只读查询（握手用），不受命令门禁限制
+            String response = get("http://127.0.0.1:" + server.getPort() + "/api/core/view", "secret");
+            assertTrue(response.startsWith("200 "));
+            assertTrue(response.contains("\"revision\":3"));
+        } finally {
+            server.stop();
+        }
+    }
+
     @Test public void cancelEndpointForwardsRequestId() throws Exception {
         CoreDataServer server = startServer("secret");
         final String[] cancelled = new String[1];

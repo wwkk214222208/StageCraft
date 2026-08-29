@@ -11,23 +11,48 @@ const read = (...segments: string[]) => readFileSync(path.join(ROOT, 'android', 
  * W5 源码锚点契约测试（与 android-gatea-contract.test.ts 同法）：
  * 防止 W5 关键整改被后续修改回退（评审 W5-1/W5-3/W5-2）。
  */
-test('W5-1：CoreService Binder getStatusSummary 必须显式限定外层方法（防递归回归）', () => {
+test('W5-R1-1：命令门禁必须接入数据面（CoreDataServer 检查 + CoreService 注入）', () => {
+  const server = read('java', 'ai', 'stagecraft', 'android', 'CoreDataServer.java')
+  assert.match(server, /interface CommandGate/, 'CoreDataServer 必须定义 CommandGate')
+  assert.match(server, /needsCommandGate && !commandGate\.canSubmitCommands\(\)/,
+    '命令类请求必须经 CommandGate 门禁（W5-R1-1）')
+  assert.match(server, /core is not ready to accept commands \(state gate closed\)/,
+    '门禁关闭时必须返回冻结契约等价错误 core_not_ready')
+  const service = read('java', 'ai', 'stagecraft', 'android', 'CoreService.java')
+  assert.match(service, /dataServer\.setCommandGate\(stateMachine::canSubmitCommands\)/,
+    'CoreService 必须注入状态机门禁到数据面（W5-R1-1）')
+})
+
+test('W5-R1-2：Binder Stub 必须一行委托 CoreControlBinder（可运行 seam）', () => {
   const source = read('java', 'ai', 'stagecraft', 'android', 'CoreService.java')
-  // 匿名 Stub 内必须显式 CoreService.this.getStatusSummary()，不得裸调自身
-  assert.match(source, /return enforceBinderLimit\(CoreService\.this\.getStatusSummary\(\)\.toString\(\)\);/,
-    'Stub.getStatusSummary 必须显式限定 CoreService.this，否则无限递归（W5-1 P0）')
-  // 取 Stub 匿名类区间（ICoreControl.Stub 定义到 RemoteCallbackList 之前）内的调用：
-  // 该区间内除 Stub 自身定义外，任何 getStatusSummary() 调用都必须带 CoreService.this 前缀
+  assert.match(source, /private final CoreControlBinder controlBinder/, 'CoreService 必须持有 CoreControlBinder')
+  assert.match(source, /@Override public String getStatusSummary\(\) \{\s*\n\s*\/\/ 一行委托[^\n]*\n\s*return controlBinder\.getStatusSummary\(\);/,
+    'Stub.getStatusSummary 必须一行委托 CoreControlBinder（W5-R1-2 可运行 seam）')
+  assert.match(source, /@Override public String getEndpoint\(\) \{[\s\S]*?return controlBinder\.getEndpoint\(\);/,
+    'Stub.getEndpoint 必须一行委托 CoreControlBinder')
+  const binder = read('java', 'ai', 'stagecraft', 'android', 'CoreControlBinder.java')
+  assert.match(binder, /BINDER_HARD_LIMIT_BYTES = 64 \* 1024/, '64KiB 硬上限必须在 CoreControlBinder')
+})
+
+test('W5-1：CoreService Binder getStatusSummary 无递归（Stub 委托 + 执行体无自调用）', () => {
+  const source = read('java', 'ai', 'stagecraft', 'android', 'CoreService.java')
+  // Stub 区间内 getStatusSummary() 只允许出现在委托行（return controlBinder.getStatusSummary();）
   const stubStart = source.indexOf('private final ICoreControl.Stub control')
   const stubEnd = source.indexOf('private final RemoteCallbackList', stubStart)
   assert.ok(stubStart >= 0 && stubEnd > stubStart, 'Stub 区间定位失败')
   const stubBody = source.slice(stubStart, stubEnd)
   const callsInStub = (stubBody.match(/getStatusSummary\(\)/g) ?? []).length
-  const qualifiedInStub = (stubBody.match(/CoreService\.this\.getStatusSummary\(\)/g) ?? []).length
+  const delegatedInStub = (stubBody.match(/controlBinder\.getStatusSummary\(\)/g) ?? []).length
   const stubDefinition = (stubBody.match(/@Override public String getStatusSummary\(\)/g) ?? []).length
-  const bareInStub = callsInStub - qualifiedInStub - stubDefinition
+  const bareInStub = callsInStub - delegatedInStub - stubDefinition
   assert.equal(bareInStub, 0,
-    `Stub 区间内裸 getStatusSummary() 调用 ${bareInStub} 处（总 ${callsInStub} - 限定 ${qualifiedInStub} - 定义 ${stubDefinition}）——W5-1 递归回归`)
+    `Stub 区间内裸 getStatusSummary() 调用 ${bareInStub} 处（总 ${callsInStub} - 委托 ${delegatedInStub} - 定义 ${stubDefinition}）——W5-1 递归回归`)
+  // 执行体 CoreControlBinder 不得自调用 getStatusSummary（防递归）
+  const binder = read('java', 'ai', 'stagecraft', 'android', 'CoreControlBinder.java')
+  const binderCalls = (binder.match(/getStatusSummary\(\)/g) ?? []).length
+  const binderDefinition = (binder.match(/public String getStatusSummary\(\)/g) ?? []).length
+  assert.equal(binderCalls, binderDefinition,
+    `CoreControlBinder 内 getStatusSummary() 只允许定义（${binderDefinition} 处），实际 ${binderCalls}——执行体自调用即递归`)
 })
 
 test('W5-3：CoreService 必须委托 CoreServiceStateMachine（状态机接入服务）', () => {
