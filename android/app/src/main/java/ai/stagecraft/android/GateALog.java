@@ -49,6 +49,18 @@ final class GateALog {
         appendTo(externalLogFile, line);
     }
 
+    /** 每轮序列开始时截断外部日志（单轮单日志证据，评审 P1）。 */
+    static void resetExternalLogs() {
+        for (File target : new File[]{logFile, externalLogFile}) {
+            if (target != null && target.exists()) {
+                String resetLine = "--- run reset " + System.currentTimeMillis() + " ---" + String.valueOf((char) 10);
+                try (FileOutputStream output = new FileOutputStream(target, false)) {
+                    output.write(resetLine.getBytes(StandardCharsets.UTF_8));
+                } catch (Exception ignored) { }
+            }
+        }
+    }
+
     private static void appendTo(File target, String line) {
         if (target == null) return;
         try (FileOutputStream output = new FileOutputStream(target, true)) {

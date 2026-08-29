@@ -53,6 +53,8 @@ public class GateASpikeActivity extends Activity {
     private volatile JSONObject endpoint;
     /** :core 上报 fail(renderer_gone) 的时刻（onRenderProcessGone 证据，评审第 4 条）。 */
     private volatile String rendererGoneStatusAt;
+    private volatile String runId;
+    private final java.util.concurrent.atomic.AtomicBoolean sequenceRunning = new java.util.concurrent.atomic.AtomicBoolean(false);
     private final Object endpointSignal = new Object();
     private long startedAtMillis;
 
@@ -190,27 +192,37 @@ public class GateASpikeActivity extends Activity {
     }
 
     private void runCheckSequence() {
+        // P0 隔离：并发序列会互相 kill/rebind Core、污染证据——同一时刻只允许一个序列
+        if (!sequenceRunning.compareAndSet(false, true)) {
+            log("sequence already running, new run rejected");
+            return;
+        }
         checks.clear();
-        // 防陈旧证据：序列开始即重置报告文件；若中途崩溃，残留文件不得冒充完整结果
+        runId = java.util.UUID.randomUUID().toString().substring(0, 8);
+        // 防陈旧证据：序列开始即重置报告文件 + 删除上一轮 renderer 证据 + 截断每轮日志
         try {
             File stale = new File(getExternalFilesDir(null), "gatea-report.json");
-            if (stale.exists()) {
-                try (java.io.FileOutputStream output = new java.io.FileOutputStream(stale)) {
-                    output.write("{\"status\":\"running\"}".getBytes(StandardCharsets.UTF_8));
-                }
+            try (java.io.FileOutputStream output = new java.io.FileOutputStream(stale)) {
+                output.write(("{\"status\":\"running\",\"runId\":\"" + runId + "\"}").getBytes(StandardCharsets.UTF_8));
             }
+            new File(getExternalFilesDir(null), "gatea-renderer-gone.txt").delete();
+            GateALog.resetExternalLogs();
         } catch (Exception ignored) { }
         new Thread(() -> {
-            runCheck("endpoint-ready", () -> awaitEndpoint(30_000));
-            // 逐项容错：单项失败不中断其余检查（Gate A 需要完整证据面）
-            runCheck("health-handshake", this::checkHealth);
-            runCheck("sse-incremental-delivery", this::checkSseRoundtrip);
-            runCheck("command-roundtrip", this::checkCommandRoundtrip);
-            runCheck("bridge-measurements", this::checkBridgeMeasurements);
-            runCheck("client-abort-propagation", this::checkClientAbort);
-            runCheck("core-kill-restart", this::checkCoreKillAndRestart);
-            runCheck("renderer-crash-recovery", this::checkRendererCrash);
-            finishReport();
+            try {
+                runCheck("endpoint-ready", () -> awaitEndpoint(30_000));
+                // 逐项容错：单项失败不中断其余检查（Gate A 需要完整证据面）
+                runCheck("health-handshake", this::checkHealth);
+                runCheck("sse-incremental-delivery", this::checkSseRoundtrip);
+                runCheck("command-roundtrip", this::checkCommandRoundtrip);
+                runCheck("bridge-measurements", this::checkBridgeMeasurements);
+                runCheck("client-abort-propagation", this::checkClientAbort);
+                runCheck("core-kill-restart", this::checkCoreKillAndRestart);
+                runCheck("renderer-crash-recovery", this::checkRendererCrash);
+                finishReport();
+            } finally {
+                sequenceRunning.set(false);
+            }
         }, "gatea-checks").start();
     }
 
@@ -417,13 +429,20 @@ public class GateASpikeActivity extends Activity {
             startActivity(mainIntent);
             Thread.sleep(2_500);
             mainActivityOk = true;
-            // 栈顶验证：本应用任务栈的顶部 Activity 必须是 MainActivity（评审第 3 条）
+            // 栈顶验证：全部任务中本应用顶部 Activity 必须是 MainActivity（重试至 5s，评审第 3 条）
             android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
-            if (manager != null) {
-                List<android.app.ActivityManager.RunningTaskInfo> tasks = manager.getRunningTasks(1);
-                if (!tasks.isEmpty() && tasks.get(0).topActivity != null) {
-                    mainActivityAtTop = MainActivity.class.getName().equals(tasks.get(0).topActivity.getClassName());
+            long topDeadline = System.currentTimeMillis() + 5_000;
+            while (!mainActivityAtTop && System.currentTimeMillis() < topDeadline && manager != null) {
+                List<android.app.ActivityManager.RunningTaskInfo> tasks = manager.getRunningTasks(10);
+                for (android.app.ActivityManager.RunningTaskInfo task : tasks) {
+                    if (task.topActivity != null && task.baseActivity != null
+                        && task.baseActivity.getPackageName().equals(getPackageName())
+                        && MainActivity.class.getName().equals(task.topActivity.getClassName())) {
+                        mainActivityAtTop = true;
+                        break;
+                    }
                 }
+                if (!mainActivityAtTop) Thread.sleep(200);
             }
             // 回到 spike 界面继续
             startActivity(new Intent(this, GateASpikeActivity.class));
@@ -431,7 +450,7 @@ public class GateASpikeActivity extends Activity {
             mainActivityOk = false;
         }
         long mainLaunchMs = System.currentTimeMillis() - mainLaunchStarted;
-        record("core-kill-restart", restarted && secondHandshake && boundedEnd && mainActivityOk, new JSONObject()
+        record("core-kill-restart", restarted && secondHandshake && boundedEnd && mainActivityOk && mainActivityAtTop, new JSONObject()
             .put("downstreamEndedWithinMs", streamEndedMs)
             .put("boundedEndAssert", "<=3000ms")
             .put("downstreamEnd", streamEnd)
@@ -487,12 +506,27 @@ public class GateASpikeActivity extends Activity {
             }
         }
         // 权威证据：:core 在 onRenderProcessGone 处理路径内同步落盘的文件（与 oneway 广播竞态无关）
+        // 校验（评审 P1）：PID 必须等于本轮旧端点 PID（防上一轮残留文件误判）；
+        // 时间必须晚于本轮 dispatch（旧文件在序列开始时已删除，此处为双保险）
         String goneFileContent = readRendererGoneEvidence();
-        boolean renderGoneConfirmed = goneFileContent != null && goneFileContent.contains("renderer_gone");
+        boolean renderGoneConfirmed = false;
+        String gonePid = null;
+        if (goneFileContent != null && goneFileContent.contains("renderer_gone")) {
+            try {
+                JSONObject gone = new JSONObject(goneFileContent);
+                gonePid = gone.optString("pid");
+                String oldPid = String.valueOf(oldEndpoint == null ? -1 : oldEndpoint.optInt("pid"));
+                boolean pidMatches = oldPid.equals(gonePid);
+                boolean afterDispatch = gone.optString("at").compareTo(new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").format(new java.util.Date(dispatchedAt))) >= 0;
+                renderGoneConfirmed = pidMatches && afterDispatch;
+            } catch (Exception ignored) { }
+        }
         JSONObject evidence = new JSONObject()
             .put("method", "WebViewRenderProcess.terminate()（API 29+ 官方路径；替代测法需追认，isolated UID 下应用/shell kill 均 EPERM 实测；fallback 页内 commit-OOM）")
             .put("dispatchedResponse", raw.substring(0, Math.min(140, raw.length())))
             .put("serviceRenderGoneEvidence", goneFileContent == null ? "missing" : goneFileContent)
+            .put("gonePidMatchesOldEndpoint", renderGoneConfirmed)
+            .put("gonePid", gonePid == null ? "missing" : gonePid)
             .put("renderProcessGoneAt", rendererGoneStatusAt == null ? "not-observed" : rendererGoneStatusAt)
             .put("oldPort", oldEndpoint == null ? -1 : oldEndpoint.optInt("port"))
             .put("newPort", newEndpoint == null ? -1 : newEndpoint.optInt("port"))
