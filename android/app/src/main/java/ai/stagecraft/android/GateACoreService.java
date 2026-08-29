@@ -76,6 +76,16 @@ public class GateACoreService extends Service {
         public void requestStop() {
             stopGracefully();
         }
+
+        @Override
+        public void acceptLaunchPlan(String planJson) {
+            // W5 spike：接受 launch plan（≤8KiB）；spike 仅记录，不装载插件
+            try {
+                if (planJson == null || planJson.length() > 8 * 1024) return;
+                org.json.JSONObject plan = new JSONObject(planJson);
+                GateALog.i("spike acceptLaunchPlan pluginSetHash=" + plan.optString("pluginSetHash"));
+            } catch (Exception ignored) { }
+        }
     };
 
     private final RemoteCallbackList<ICoreControlCallback> callbacks = new RemoteCallbackList<>();

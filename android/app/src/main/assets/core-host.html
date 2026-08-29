@@ -1,7 +1,8 @@
 <!doctype html>
-<!-- W0 Gate A spike：Core host 页面（计划 §5.2 / Q7）。
+<!-- W5：Core host 页面（计划 §5.2 / Q7）。
      只负责承载 Core 与进程内桥，不承担 UI；零外发业务 HTTP 请求；
-     禁止外部导航；不使用主 UI 的 localStorage/DOM/cookie。 -->
+     禁止外部导航；不使用主 UI 的 localStorage/DOM/cookie。
+     桥建立后启动 StageCraftLocalCore（真实组合根），事件经 WebMessagePort 回流。 -->
 <html lang="zh">
 <head>
   <meta charset="utf-8">
