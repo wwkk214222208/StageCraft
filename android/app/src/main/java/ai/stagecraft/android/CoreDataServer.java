@@ -73,6 +73,7 @@ public final class CoreDataServer {
     private int port = -1;
     private volatile String healthJson = "{}";
     private volatile CommandForwarder commandForwarder;
+    private volatile RouteRegistry routeRegistry;
     private final AtomicLong connections = new AtomicLong();
     private final AtomicLong rejected = new AtomicLong();
     private final CopyOnWriteArrayList<Subscriber> subscribers = new CopyOnWriteArrayList<>();
@@ -96,6 +97,8 @@ public final class CoreDataServer {
 
     public void setHealthJson(String json) { this.healthJson = json == null ? "{}" : json; }
     public void setCommandForwarder(CommandForwarder forwarder) { this.commandForwarder = forwarder; }
+    /** W5-5：注入 ApiRouteRegistry（构建资产）；未挂载的 core owner 路由返回稳定 handler_not_mounted。 */
+    public void setRouteRegistry(RouteRegistry registry) { this.routeRegistry = registry; }
     public int getPort() { return port; }
     public long getConnectionCount() { return connections.get(); }
     public long getRejectedCount() { return rejected.get(); }
@@ -176,17 +179,13 @@ public final class CoreDataServer {
                 respond(socket, 200, "application/json", capabilitiesJson());
                 return;
             }
-            // 未知路径/未知方法在 forwarder 检查之前返回 404（路径语义优先于就绪语义）
-            boolean knownPath = ("/api/core/view".equals(path) && "GET".equals(method))
+            // 需要 forwarder 的端点（view/commands/cancel/ui-action）：未就绪返回 503
+            CommandForwarder forwarder = commandForwarder;
+            boolean needsForwarder = ("/api/core/view".equals(path) && "GET".equals(method))
                 || ("/api/core/commands".equals(path) && "POST".equals(method))
                 || ("/api/core/cancel".equals(path) && "POST".equals(method))
                 || ("/api/core/ui/action".equals(path) && "POST".equals(method));
-            if (!knownPath) {
-                respond(socket, 404, "application/json", "{\"error\":{\"code\":\"not_found\",\"message\":\"unknown core data path\"}}");
-                return;
-            }
-            CommandForwarder forwarder = commandForwarder;
-            if (forwarder == null) {
+            if (needsForwarder && forwarder == null) {
                 respond(socket, 503, "application/json", "{\"error\":{\"code\":\"core_not_ready\",\"message\":\"core bridge is not ready\"}}");
                 return;
             }
@@ -200,6 +199,11 @@ public final class CoreDataServer {
                 return;
             }
             if ("/api/core/commands".equals(path) && "POST".equals(method)) {
+                String contentType = headers.get("content-type");
+                if (!isJsonContentType(contentType)) {
+                    respond(socket, 415, "application/json", "{\"error\":{\"code\":\"unsupported_media_type\",\"message\":\"commands requires application/json\"}}");
+                    return;
+                }
                 String body = readBody(reader, headers);
                 if (body == null) {
                     respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
@@ -219,6 +223,11 @@ public final class CoreDataServer {
                 return;
             }
             if ("/api/core/cancel".equals(path) && "POST".equals(method)) {
+                String contentType = headers.get("content-type");
+                if (!isJsonContentType(contentType)) {
+                    respond(socket, 415, "application/json", "{\"error\":{\"code\":\"unsupported_media_type\",\"message\":\"cancel requires application/json\"}}");
+                    return;
+                }
                 String body = readBody(reader, headers);
                 if (body == null) {
                     respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
@@ -241,6 +250,11 @@ public final class CoreDataServer {
             // 经 CommandForwarder 转发到 Core 组合根（UI action 由 Core 的 CoreExtensionPort 执行），
             // 不在此复制业务逻辑。
             if ("/api/core/ui/action".equals(path) && "POST".equals(method)) {
+                String contentType = headers.get("content-type");
+                if (!isJsonContentType(contentType)) {
+                    respond(socket, 415, "application/json", "{\"error\":{\"code\":\"unsupported_media_type\",\"message\":\"ui/action requires application/json\"}}");
+                    return;
+                }
                 String body = readBody(reader, headers);
                 if (body == null) {
                     respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
@@ -257,6 +271,28 @@ public final class CoreDataServer {
                     ? "{\"error\":{\"code\":\"bridge_no_result\",\"message\":\"core bridge returned no result\"}}"
                     : result[0]);
                 return;
+            }
+            // 未知路径/未知方法：先查 registry——登记为 core owner 但未挂载的路由返回稳定
+            // handler_not_mounted（含 handlerId），替代随机 404（计划 §1.4 / §3.5 稳定能力错误）。
+            // 注意：已实现端点（health/view/commands/events/cancel/capabilities/ui-action）在前面
+            // 分支已 return，不会走到这里。
+            RouteRegistry registry = routeRegistry;
+            if (registry != null) {
+                RouteRegistry.Route registered = registry.match(method, path);
+                if (registered != null) {
+                    if ("core".equals(registered.owner)) {
+                        respond(socket, 503, "application/json", "{\"error\":{\"code\":\"handler_not_mounted\",\"message\":\"core handler not mounted yet\",\"handlerId\":\"" + registered.handlerId + "\"}}");
+                        return;
+                    }
+                    if ("deprecated".equals(registered.owner)) {
+                        respond(socket, 410, "application/json", "{\"error\":{\"code\":\"route_deprecated\",\"message\":\"deprecated route is not served by CoreDataServer\"}}");
+                        return;
+                    }
+                    if ("desktop-only".equals(registered.owner)) {
+                        respond(socket, 503, "application/json", "{\"error\":{\"code\":\"unsupported_capability\",\"message\":\"capability is not supported on Android local core\"}}");
+                        return;
+                    }
+                }
             }
             respond(socket, 404, "application/json", "{\"error\":{\"code\":\"not_found\",\"message\":\"unknown core data path\"}}");
         } catch (InterruptedException latchWait) {
@@ -346,6 +382,15 @@ public final class CoreDataServer {
         }
     }
 
+    /** Gate C 语义：POST JSON 端点要求 content-type 为 application/json（缺失或非 JSON → 415）。 */
+    private static boolean isJsonContentType(String contentType) {
+        if (contentType == null) return false;
+        String normalized = contentType.trim().toLowerCase(Locale.ROOT);
+        int semicolon = normalized.indexOf(';');
+        if (semicolon >= 0) normalized = normalized.substring(0, semicolon).trim();
+        return "application/json".equals(normalized);
+    }
+
     /** 读取 POST body；超过上限返回 null（调用方回 413）。 */
     private String readBody(BufferedReader reader, Map<String, String> headers) throws IOException {
         long length = Long.parseLong(headers.getOrDefault("content-length", "0"));
@@ -383,7 +428,9 @@ public final class CoreDataServer {
             case 400 -> "Bad Request";
             case 401 -> "Unauthorized";
             case 404 -> "Not Found";
+            case 410 -> "Gone";
             case 413 -> "Payload Too Large";
+            case 415 -> "Unsupported Media Type";
             case 500 -> "Internal Server Error";
             case 503 -> "Service Unavailable";
             case 504 -> "Gateway Timeout";

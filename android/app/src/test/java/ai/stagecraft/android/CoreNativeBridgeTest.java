@@ -68,6 +68,7 @@ public final class CoreNativeBridgeTest {
                 try { callback.onResult(new JSONObject().put("ok", true)); }
                 catch (Exception error) { callback.onError(error.getMessage()); }
             }).start();
+            return null;
         });
         AtomicReference<String> result = new AtomicReference<>();
         AtomicBoolean error = new AtomicBoolean();
@@ -86,6 +87,7 @@ public final class CoreNativeBridgeTest {
         CoreNativeBridge bridge = new CoreNativeBridge(guard("model.request"), 100, System::currentTimeMillis);
         bridge.registerAsync("model.request", (operation, input, callback) -> {
             // 永不回调 → 超时
+            return null;
         });
         AtomicReference<String> error = new AtomicReference<>();
         java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
@@ -95,6 +97,24 @@ public final class CoreNativeBridgeTest {
         });
         assertTrue(latch.await(3, java.util.concurrent.TimeUnit.SECONDS));
         assertTrue(error.get() != null && error.get().contains("bridge_timeout"));
+    }
+
+    @Test public void asyncTimeoutInvokesCancelHandle() throws Exception {
+        CoreNativeBridge bridge = new CoreNativeBridge(guard("model.request"), 100, System::currentTimeMillis);
+        AtomicBoolean cancelled = new AtomicBoolean();
+        bridge.registerAsync("model.request", (operation, input, callback) -> {
+            // 永不回调；返回取消句柄——超时后必须被调用（评审非阻塞项 1）
+            return () -> cancelled.set(true);
+        });
+        AtomicReference<String> error = new AtomicReference<>();
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        bridge.invokeAsync("model.request", "{}", new CoreNativeBridge.Callback() {
+            @Override public void onResult(JSONObject value) { latch.countDown(); }
+            @Override public void onError(String message) { error.set(message); latch.countDown(); }
+        });
+        assertTrue(latch.await(3, java.util.concurrent.TimeUnit.SECONDS));
+        assertTrue(error.get() != null && error.get().contains("bridge_timeout"));
+        assertTrue("超时后取消句柄必须被调用", cancelled.get());
     }
 
     @Test public void asyncRejectsNonAsyncOperation() throws Exception {

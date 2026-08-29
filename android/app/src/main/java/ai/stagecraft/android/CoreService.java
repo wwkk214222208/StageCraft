@@ -36,8 +36,8 @@ public final class CoreService extends Service {
     private WebView coreWebView;
     private CoreDataServer dataServer;
     private String startedAt;
-    private String status = "starting";
-    private String failureCode;
+    /** W5-3：状态机 seam（§4.1）——CoreService 委托本类驱动生命周期与摘要。 */
+    private CoreServiceStateMachine stateMachine = new CoreServiceStateMachine();
     private String coreBundleVersion = "unknown";
     private String coreBundleHash = "";
     private String pluginSetHash = "unknown";
@@ -51,7 +51,9 @@ public final class CoreService extends Service {
     /** Q8 最小 AIDL 契约：getEndpoint / getStatusSummary / registerCallback / requestStop。 */
     private final ICoreControl.Stub control = new ICoreControl.Stub() {
         @Override public String getEndpoint() {
-            if (dataServer == null || dataServer.getPort() < 0 || !"ready".equals(status)) return null;
+            if (dataServer == null || dataServer.getPort() < 0) return null;
+            CoreLifecycle.State state = stateMachine.state();
+            if (state != CoreLifecycle.State.READY && state != CoreLifecycle.State.DEGRADED) return null;
             try {
                 return enforceBinderLimit(new JSONObject()
                     .put("port", dataServer.getPort())
@@ -66,7 +68,8 @@ public final class CoreService extends Service {
         }
 
         @Override public String getStatusSummary() {
-            return enforceBinderLimit(getStatusSummary().toString());
+            // 显式限定外层方法：本匿名类无同名方法时解析为外层，但保险起见限定 CoreService.this
+            return enforceBinderLimit(CoreService.this.getStatusSummary().toString());
         }
 
         @Override public void registerCallback(ICoreControlCallback callback) {
@@ -152,6 +155,9 @@ public final class CoreService extends Service {
             coreBundleHash = artifact.sha256();
             nonce = java.util.UUID.randomUUID().toString().replace("-", "");
             dataServer = new CoreDataServer(nonce);
+            // W5-5：注入 ApiRouteRegistry（构建资产）——未挂载的 core 路由返回稳定 handler_not_mounted
+            RouteRegistry registry = loadRouteRegistry();
+            if (registry != null) dataServer.setRouteRegistry(registry);
             dataServer.setCommandForwarder(new CoreDataServer.CommandForwarder() {
                 @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
                     forwardCommand(bodyJson, resultConsumer);
@@ -220,8 +226,10 @@ public final class CoreService extends Service {
             switch (type) {
                 case "core-ready" -> {
                     // 幂等状态迁移：重复 ready 不重复广播
-                    if ("ready".equals(status)) return;
-                    status = "ready";
+                    if (!stateMachine.onBridgeReady()) {
+                        GateALog.w("core-ready ignored in state " + stateMachine.state().wire);
+                        return;
+                    }
                     JSONObject health = buildHealth(message.optJSONObject("measure"));
                     dataServer.setHealthJson(health.toString());
                     publishEndpointReady();
@@ -249,7 +257,7 @@ public final class CoreService extends Service {
             health.put("coreBundleHash", verifiedArtifact == null ? "" : verifiedArtifact.sha256());
             health.put("pluginSetHash", pluginSetHash);
             health.put("stateSchemaVersion", stateSchemaVersion);
-            health.put("status", "ready");
+            health.put("status", stateMachine.state().wire);
             health.put("pid", corePid);
             health.put("startedAt", startedAt);
             health.put("binderMaxPayloadBytes", maxBinderPayloadBytes);
@@ -368,8 +376,9 @@ public final class CoreService extends Service {
             launchPlan = plan;
             pluginSetHash = plan.optString("pluginSetHash", "unknown");
             stateSchemaVersion = plan.optString("stateSchemaVersion", "unknown");
-            // 若已 ready 则刷新 health（插件集身份进入数据面）
-            if ("ready".equals(status) && dataServer != null) {
+            // 若已 ready/degraded 则刷新 health（插件集身份进入数据面）
+            CoreLifecycle.State state = stateMachine.state();
+            if ((state == CoreLifecycle.State.READY || state == CoreLifecycle.State.DEGRADED) && dataServer != null) {
                 dataServer.setHealthJson(buildHealth(null).toString());
             }
         } catch (Exception error) {
@@ -378,9 +387,7 @@ public final class CoreService extends Service {
     }
 
     private void fail(String code, String message) {
-        if ("failed".equals(status) && code.equals(failureCode)) return; // 幂等：重复失败通知不重复迁移
-        status = "failed";
-        failureCode = code;
+        stateMachine.onFailure(code);
         GateALog.w("core failed code=" + code + " message=" + message);
         if ("renderer_gone".equals(code)) {
             // renderer 证据独立落盘（评审：oneway 广播竞态导致主进程侧漏帧）——
@@ -403,29 +410,41 @@ public final class CoreService extends Service {
     }
 
     private JSONObject getStatusSummary() {
-        try {
-            return new JSONObject()
-                .put("status", status)
-                .put("pid", corePid)
-                .put("startedAt", startedAt)
-                .put("failureCode", failureCode == null ? JSONObject.NULL : failureCode)
-                .put("protocolVersion", protocolVersion);
-        } catch (Exception error) {
-            return new JSONObject();
-        }
+        return stateMachine.summary(String.valueOf(corePid), startedAt, protocolVersion);
     }
 
     private void stopGracefully() {
         if (!disposed.compareAndSet(false, true)) return;
-        status = "stopping";
+        stateMachine.onStopRequested();
         main.post(() -> {
             if (dataServer != null) dataServer.stop();
             if (coreWebView != null) {
                 coreWebView.destroy();
                 coreWebView = null;
             }
+            stateMachine.onStopped();
             stopSelf();
         });
+    }
+
+    /** W5-3 测试 seam：注入受控状态机（仅测试包使用；生产走 onCreate 默认 STARTING）。 */
+    void setStateMachineForTest(CoreServiceStateMachine stateMachine) {
+        if (stateMachine != null) this.stateMachine = stateMachine;
+    }
+
+    /** W5-3 测试 seam：当前状态（仅测试包使用）。 */
+    CoreLifecycle.State stateForTest() {
+        return stateMachine.state();
+    }
+
+    /** W5-3 测试 seam：驱动一次状态迁移（仅测试包使用；非法迁移抛 IllegalTransition）。 */
+    void transitionForTest(CoreLifecycle.State next) {
+        stateMachine.lifecycle().transition(next);
+    }
+
+    /** W5-3 测试 seam：控制面摘要（仅测试包使用）。 */
+    JSONObject summaryForTest() {
+        return stateMachine.summary(String.valueOf(corePid), startedAt, protocolVersion);
     }
 
     @Override public IBinder onBind(Intent intent) {
@@ -482,6 +501,19 @@ public final class CoreService extends Service {
     private CoreNativeBridge bridge;
     private AndroidCompositionOperations coreOperations;
 
+    /** 从 APK 资产加载 api-route-registry.json（构建期产物；加载失败返回 null，不阻断数据服务）。 */
+    private RouteRegistry loadRouteRegistry() {
+        try (java.io.InputStream input = getAssets().open("api-route-registry.json")) {
+            byte[] bytes = new byte[input.available()];
+            int read = input.read(bytes);
+            String json = new String(bytes, 0, Math.max(0, read), StandardCharsets.UTF_8);
+            return RouteRegistry.parse(json, null);
+        } catch (Exception error) {
+            GateALog.w("route registry load failed: " + error);
+            return null;
+        }
+    }
+
     /** 从 APK 资产加载 native-operation-registry.json 并构造桥（构建期产物，Java 侧不得手写白名单）。 */
     private CoreNativeBridge loadBridge() {
         CoreNativeBridge built;
@@ -516,14 +548,24 @@ public final class CoreService extends Service {
         }) {
             built.registerSync(operation, input -> coreOperations.invokeSync(operation, input));
         }
-        // 异步端口：模型请求 / 故事读取
-        built.registerAsync("model.request", (operation, input, callback) -> coreOperations.invoke(operation, input, new AndroidNativeOperations.Callback() {
-            @Override public void onResult(org.json.JSONObject result) { callback.onResult(result); }
-            @Override public void onError(String message) { callback.onError(message); }
-        }));
-        built.registerAsync("story.read", (operation, input, callback) -> coreOperations.invoke(operation, input, new AndroidNativeOperations.Callback() {
-            @Override public void onResult(org.json.JSONObject result) { callback.onResult(result); }
-            @Override public void onError(String message) { callback.onError(message); }
-        }));
+        // 异步端口：模型请求 / 故事读取（invoke 返回可取消句柄——模型请求超时可取消底层 transport）
+        built.registerAsync("model.request", (operation, input, callback) -> {
+            coreOperations.invoke(operation, input, new AndroidNativeOperations.Callback() {
+                @Override public void onResult(org.json.JSONObject result) { callback.onResult(result); }
+                @Override public void onError(String message) { callback.onError(message); }
+            });
+            return () -> {
+                try {
+                    coreOperations.invokeSync("model.cancel", new org.json.JSONObject().put("requestId", input.optString("requestId", "")));
+                } catch (Exception ignored) { }
+            };
+        });
+        built.registerAsync("story.read", (operation, input, callback) -> {
+            coreOperations.invoke(operation, input, new AndroidNativeOperations.Callback() {
+                @Override public void onResult(org.json.JSONObject result) { callback.onResult(result); }
+                @Override public void onError(String message) { callback.onError(message); }
+            });
+            return null;
+        });
     }
 }

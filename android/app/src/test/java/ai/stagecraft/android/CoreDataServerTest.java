@@ -148,6 +148,7 @@ public final class CoreDataServerTest {
             HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/core/commands").openConnection();
             connection.setRequestMethod("POST");
             connection.setRequestProperty("x-core-nonce", "secret");
+            connection.setRequestProperty("Content-Type", "application/json");
             connection.setDoOutput(true);
             byte[] body = new byte[CoreDataServer.MAX_BODY_BYTES + 1];
             java.util.Arrays.fill(body, (byte) 'x');
@@ -239,6 +240,142 @@ public final class CoreDataServerTest {
             } finally {
                 executor.shutdownNow();
             }
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void commandsWithoutJsonContentTypeReturns415() throws Exception {
+        CoreDataServer server = startServer("secret");
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/core/commands").openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("x-core-nonce", "secret");
+            connection.setRequestProperty("Content-Type", "text/plain");
+            connection.setDoOutput(true);
+            byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = connection.getOutputStream()) { output.write(body); }
+            assertEquals(415, connection.getResponseCode());
+            connection.disconnect();
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void commandsWithoutContentTypeReturns415() throws Exception {
+        CoreDataServer server = startServer("secret");
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/core/commands").openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("x-core-nonce", "secret");
+            connection.setDoOutput(true);
+            byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = connection.getOutputStream()) { output.write(body); }
+            assertEquals(415, connection.getResponseCode());
+            connection.disconnect();
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void cancelRequiresJsonContentType() throws Exception {
+        CoreDataServer server = startServer("secret");
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/core/cancel").openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("x-core-nonce", "secret");
+            connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            connection.setDoOutput(true);
+            byte[] body = "requestId=r1".getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = connection.getOutputStream()) { output.write(body); }
+            assertEquals(415, connection.getResponseCode());
+            connection.disconnect();
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void unmountedCoreRouteReturnsStableHandlerNotMounted() throws Exception {
+        CoreDataServer server = startServer("secret");
+        // 注入 registry：POST /api/turn 是 core owner（未挂载）
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"POST\",\"pattern\":\"/api/turn\",\"owner\":\"core\",\"capability\":\"room.command\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"handlerId\":\"turn.start\"}"
+                + "]}" , null));
+        try {
+            HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/turn").openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("x-core-nonce", "secret");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setDoOutput(true);
+            byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = connection.getOutputStream()) { output.write(body); }
+            assertEquals(503, connection.getResponseCode());
+            String response;
+            try { response = readAll(connection.getInputStream()); }
+            catch (Exception inputError) {
+                try { response = readAll(connection.getErrorStream()); }
+                catch (Exception errorStreamError) { response = ""; }
+            }
+            assertTrue("expected handler_not_mounted, got: " + response, response.contains("handler_not_mounted"));
+            assertTrue("expected handlerId turn.start, got: " + response, response.contains("turn.start"));
+            connection.disconnect();
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void desktopOnlyRouteReturnsUnsupportedCapability() throws Exception {
+        CoreDataServer server = startServer("secret");
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"GET\",\"pattern\":\"/api/agent/capability\",\"owner\":\"desktop-only\",\"capability\":\"agent.dsh\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"remote-paired\"},\"handlerId\":\"agent.capability\"}"
+                + "]}" , null));
+        try {
+            HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/agent/capability").openConnection();
+            connection.setRequestProperty("x-core-nonce", "secret");
+            connection.setConnectTimeout(5_000);
+            connection.setReadTimeout(5_000);
+            assertEquals(503, connection.getResponseCode());
+            String response;
+            try { response = readAll(connection.getInputStream()); }
+            catch (Exception inputError) {
+                try { response = readAll(connection.getErrorStream()); }
+                catch (Exception errorStreamError) { response = ""; }
+            }
+            assertTrue("expected unsupported_capability, got: " + response, response.contains("unsupported_capability"));
+            connection.disconnect();
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void unregisteredRouteReturns404() throws Exception {
+        CoreDataServer server = startServer("secret");
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":[]}", null));
+        try {
+            String response = get("http://127.0.0.1:" + server.getPort() + "/api/not-registered", "secret");
+            assertTrue(response.startsWith("404 "));
         } finally {
             server.stop();
         }

@@ -2,6 +2,7 @@ package ai.stagecraft.android;
 
 import org.json.JSONObject;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -29,9 +30,9 @@ public final class CoreNativeBridge {
         Object apply(JSONObject input) throws Exception;
     }
 
-    /** 异步操作（模型请求等流式回调）。 */
+    /** 异步操作（模型请求等流式回调）。invoke 返回可选的取消句柄（null = 不可取消）。 */
     public interface AsyncInvoker {
-        void invoke(String operation, JSONObject input, Callback callback);
+        Runnable invoke(String operation, JSONObject input, Callback callback);
     }
 
     public interface Callback {
@@ -87,7 +88,8 @@ public final class CoreNativeBridge {
             }
             Object result = handler.apply(input);
             String encoded = JsonSafety.toJsonText(result);
-            if (encoded.length() > MAX_OUTPUT_BYTES) return errorJson("Native output is too large.");
+            // 输出上限按 UTF-8 字节口径（评审非阻塞项 2：与协议 body 上限一致）
+            if (encoded.getBytes(StandardCharsets.UTF_8).length > MAX_OUTPUT_BYTES) return errorJson("Native output is too large.");
             return encoded;
         } catch (Exception error) {
             return errorJson(error.getMessage() == null ? "Native operation failed." : error.getMessage());
@@ -129,23 +131,33 @@ public final class CoreNativeBridge {
         JSONObject input;
         try { input = new JSONObject(inputJson); } catch (Exception error) { callback.onError("Invalid native input."); return ""; }
         final boolean[] done = new boolean[1];
-        invoker.invoke(operation, input, new Callback() {
+        final Runnable[] cancelHandle = new Runnable[1];
+        Runnable returned = invoker.invoke(operation, input, new Callback() {
             @Override public void onResult(JSONObject result) {
                 if (done[0]) return;
                 done[0] = true;
+                cancelHandle[0] = null; // 已结束，取消句柄失效
                 callback.onResult(result);
             }
 
             @Override public void onError(String message) {
                 if (done[0]) return;
                 done[0] = true;
+                cancelHandle[0] = null;
                 callback.onError(message);
             }
         });
-        // 超时护栏：首次回调未发生则报超时（幂等，已回调则忽略）。
+        cancelHandle[0] = returned;
+        // 超时护栏：首次回调未发生则报超时，并尝试取消底层 invoker（评审非阻塞项 1：
+        // request-scoped cancellation——超时后后台模型请求不得继续运行）。
         java.util.concurrent.CompletableFuture.delayedExecutor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS).execute(() -> {
             if (!done[0]) {
                 done[0] = true;
+                Runnable cancel = cancelHandle[0];
+                cancelHandle[0] = null;
+                if (cancel != null) {
+                    try { cancel.run(); } catch (Exception ignored) { }
+                }
                 callback.onError("bridge_timeout: " + operation + " did not respond within " + timeoutMs + "ms");
             }
         });
