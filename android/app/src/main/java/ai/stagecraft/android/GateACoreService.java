@@ -1,6 +1,5 @@
 package ai.stagecraft.android;
 
-import android.app.Application;
 import android.app.Service;
 import android.content.Intent;
 import android.net.Uri;
@@ -85,11 +84,12 @@ public class GateACoreService extends Service {
     public void onCreate() {
         super.onCreate();
         // 进程入口首行：:core 进程 WebView suffix（§5.1）。返回 false 表示已由更早入口初始化。
-        String processName = Application.getProcessName();
+        String processName = ProcessGuard.currentProcessName();
         boolean initializedHere = ProcessGuard.init(processName);
         corePid = Process.myPid();
         startedAt = java.time.Instant.now().toString();
         GateALog.i("core service onCreate pid=" + corePid + " process=" + processName + " suffixInit=" + initializedHere);
+        GateACrashGuard.install(this);
         main.post(this::boot);
     }
 
@@ -115,7 +115,8 @@ public class GateACoreService extends Service {
             setupWebMessageBridge();
             coreWebView.loadUrl(CoreHostAssetLoader.CORE_ORIGIN + "/assets/core-host.html");
             GateALog.i("core webview loading appassets core-host");
-        } catch (Exception error) {
+        } catch (Throwable error) {
+            // 捕获 Throwable：任何 Error（如 NoClassDefFoundError）不得杀掉 :core 进程进重启循环
             fail("boot_failed", error.getClass().getSimpleName() + ": " + error.getMessage());
         }
     }

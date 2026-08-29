@@ -1,5 +1,6 @@
 package ai.stagecraft.android;
 
+import android.app.Application;
 import android.webkit.WebView;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -26,10 +27,29 @@ public final class ProcessGuard {
     }
 
     /**
+     * 当前进程名：API 28+ 走 Application.getProcessName()；更早版本读 /proc/self/cmdline
+     * （公开接口，无限制）。getProcessName 是 API 28 引入——Lint 实锤的闪退根因之一。
+     */
+    public static String currentProcessName() {
+        if (android.os.Build.VERSION.SDK_INT >= 28) return Application.getProcessName();
+        try (java.io.DataInputStream input = new java.io.DataInputStream(new java.io.FileInputStream("/proc/self/cmdline"))) {
+            byte[] buffer = new byte[256];
+            int length = input.read(buffer);
+            if (length > 0) {
+                String name = new String(buffer, 0, length, java.nio.charset.StandardCharsets.UTF_8).trim();
+                return name.isEmpty() ? null : name;
+            }
+        } catch (Throwable ignored) { }
+        return null;
+    }
+
+    /**
      * 进程入口首行调用：:core 进程设置 WebView suffix，且只在第一次调用时生效。
-     * 返回本次调用是否执行了初始化（供测试与启动时序记录）。
+     * setDataDirectorySuffix 同样是 API 28 引入（P 才有多进程 WebView 数据目录冲突问题），
+     * API 26/27 无需也无法设置——直接跳过。
      */
     public static boolean init(String processName) {
+        if (android.os.Build.VERSION.SDK_INT < 28) return false;
         String suffix = suffixForProcess(processName);
         if (suffix == null) return false;
         if (!DONE.compareAndSet(false, true)) return false;

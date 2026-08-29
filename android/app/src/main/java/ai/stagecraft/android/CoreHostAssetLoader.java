@@ -45,8 +45,9 @@ public final class CoreHostAssetLoader extends WebViewClient {
             InputStream input = context.getAssets().open(assetPath);
             return new WebResourceResponse(mimeFor(assetPath), null, input);
         } catch (IOException error) {
-            return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found",
-                Map.of("content-type", "text/plain"), new ByteArrayInputStream("asset not found".getBytes()));
+            Map<String, String> headers = new java.util.HashMap<>();
+            headers.put("content-type", "text/plain");
+            return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", headers, new ByteArrayInputStream("asset not found".getBytes()));
         }
     }
 

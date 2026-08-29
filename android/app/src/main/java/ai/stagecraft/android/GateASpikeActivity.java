@@ -1,7 +1,6 @@
 package ai.stagecraft.android;
 
 import android.app.Activity;
-import android.app.Application;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -86,11 +85,14 @@ public class GateASpikeActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        ProcessGuard.init(Application.getProcessName());
+        GateACrashGuard.install(this);
+        ProcessGuard.init(ProcessGuard.currentProcessName());
         startedAtMillis = System.currentTimeMillis();
         buildUi();
         startGateway();
         bindCoreService();
+        // 打开即自动运行（与 GATEA-DEVICE-GUIDE 一致）；端点未就绪时序列内部等待
+        runCheckSequence();
     }
 
     private void buildUi() {
