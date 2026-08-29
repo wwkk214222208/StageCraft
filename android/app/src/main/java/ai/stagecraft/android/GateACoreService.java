@@ -146,9 +146,12 @@ public class GateACoreService extends Service {
             coreWebView.getSettings().setAllowContentAccess(false);
             coreWebView.getSettings().setDomStorageEnabled(false);
             coreWebView.setWebViewClient(new CoreHostAssetLoader(this, view -> {
-                // renderer 崩溃（Gate A 硬条件实测项）：标记 failed 并自杀，主进程 onBindingDied → rebind 全周期
+                // renderer 崩溃（Gate A 硬条件实测项）：标记 failed 后走 :core 进程内自杀钩子
+                // （GATE-A-LOW-PERMISSION §3 明文批准的替代测法）。stopSelf 不行——绑定仍在时
+                // 服务进 stopped 态，BIND_AUTO_CREATE 不会重建（真机实测）；进程自杀则绑定死亡
+                // 自动触发重建，与 kill-restart 同一条已验证恢复链。
                 fail("renderer_gone", "core webview renderer crashed");
-                stopGracefully();
+                Process.killProcess(Process.myPid());
             }, (view, url) -> {
                 if (bridgeReady.compareAndSet(false, true)) setupWebMessageBridge(); // 页面监听器就绪后下发端口
             }));
@@ -245,6 +248,23 @@ public class GateACoreService extends Service {
     /** POST /api/core/commands → 进程内桥（evaluateJavascript echo）→ 回执。Q1 量测点。 */
     private void forwardCommand(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
         long startedAtMillis = System.currentTimeMillis();
+        // crash-renderer：API 29+ 官方 terminate()（随后必然回调 onRenderProcessGone，构成证据链）
+        try {
+            if ("crash-renderer".equals(new JSONObject(bodyJson).optString("command"))
+                && android.os.Build.VERSION.SDK_INT >= 29 && coreWebView != null) {
+                android.webkit.WebViewRenderProcess renderProcess = coreWebView.getWebViewRenderProcess();
+                if (renderProcess != null) {
+                    renderProcess.terminate();
+                    resultConsumer.accept(new JSONObject()
+                        .put("requestId", new JSONObject(bodyJson).optString("requestId"))
+                        .put("status", "accepted")
+                        .put("method", "WebViewRenderProcess.terminate()").toString());
+                    return;
+                }
+            }
+        } catch (Exception error) {
+            GateALog.w("crash-renderer terminate path failed: " + error);
+        }
         coreWebView.evaluateJavascript(
             "window.CoreHostBridge && window.CoreHostBridge.dispatch(" + JSONObject.quote(bodyJson) + ")",
             resultJson -> {
