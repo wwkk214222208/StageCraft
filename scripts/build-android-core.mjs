@@ -11,7 +11,11 @@ const outputDir = requestedOutputDir || resolve(root, 'android/app/build/generat
 const output = resolve(outputDir, 'embedded-core.js')
 const manifestOutput = resolve(outputDir, 'embedded-core.json')
 const version = '1.1.0'
-const protocolVersion = '1.0'
+// 协议版本单一事实来源：src/core/protocol.ts（构建期提取；Java 侧 EmbeddedCoreArtifact 与之核对）。
+const protocolSource = await readFile(resolve(root, 'src/core/protocol.ts'), 'utf8')
+const protocolMatch = /^export const CORE_PROTOCOL_VERSION = '([^']+)'$/m.exec(protocolSource)
+if (!protocolMatch) throw new Error('src/core/protocol.ts 缺少 CORE_PROTOCOL_VERSION 常量（共享协议事实来源被破坏）。')
+const protocolVersion = protocolMatch[1]
 await mkdir(dirname(output), { recursive: true })
 
 /** 浏览器 bundle 里的 node 内建 stub：prompts.ts 的 fs 路径在 Android 本地运行时

@@ -238,7 +238,7 @@ test('Android media and PNG import remain native, bounded, authenticated, and pa
   assert.match(appGradle, /from\(rootProject\.projectDir\.parentFile\.resolve\("stories\/default"\)\) \{ into\("stories\/default"\) \}/)
   assert.match(appGradle, /stories\/default\/\*\.json/)
   assert.doesNotMatch(appGradle, /stories\/custom\/\*\.json/)
-  assert.match(appGradle, /include\("index\.html", "styles\.css", "renderer\.js", "embedded-core\.js", "embedded-core\.json", "version\.json", "prompts\/\*\*", "stories\/\*\*", "web\/\*\*"\)/)
+  assert.match(appGradle, /include\("index\.html", "styles\.css", "renderer\.js", "embedded-core\.js", "embedded-core\.json", "version\.json", "core-host\.html", "prompts\/\*\*", "stories\/\*\*", "web\/\*\*"\)/)
   assert.match(appGradle, /generateVersionInfo/)
   assert.match(appGradle, /versionName = releaseVersion/)
   assert.match(appGradle, /from\(generatedWebUi\) \{ into\("web"\); include\("\*\*\/\*"\) \}/)

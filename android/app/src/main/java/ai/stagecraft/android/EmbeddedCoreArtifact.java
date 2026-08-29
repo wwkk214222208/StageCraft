@@ -13,7 +13,7 @@ import java.security.MessageDigest;
 public final class EmbeddedCoreArtifact {
     public static final String ASSET = "embedded-core.js";
     public static final String MANIFEST = "embedded-core.json";
-    public static final String EXPECTED_PROTOCOL = "1.0";
+    public static final String EXPECTED_PROTOCOL = "1.1";
     public static final String EXPECTED_BRIDGE = "1";
     public static final String EXPECTED_BUNDLE = "1.1.0";
 

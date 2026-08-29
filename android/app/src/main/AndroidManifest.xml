@@ -19,5 +19,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- W0 Gate A spike（真机验证入口）；Gate A 通过后由 W6 收编或移除 -->
+        <activity
+            android:name=".GateASpikeActivity"
+            android:exported="true"
+            android:label="@string/gatea_label">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service
+            android:name=".GateACoreService"
+            android:exported="false"
+            android:process=":core" />
     </application>
 </manifest>

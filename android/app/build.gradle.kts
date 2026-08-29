@@ -44,7 +44,7 @@ val packageRemoteRenderer by tasks.registering(Copy::class) {
     doFirst {
         delete(generatedRendererSource.get().asFile.resolve("stories"))
     }
-    include("index.html", "styles.css", "renderer.js", "web/local-runtime-web-entry.js")
+    include("index.html", "styles.css", "renderer.js", "web/local-runtime-web-entry.js", "core-host.html", "web/core-host-bridge.js")
     include("*.json", "stories/*.json", "default/*.json", "stories/default/*.json", "*.assets/**", "default/*.assets/**", "stories/default/*.assets/**")
     // 打包布局契约：stories/default/*.json(+ .assets) 是 Android 侧只读内置资源；
     // 玩家私有剧本与提示词预设存入应用私有数据库，不进入 APK。
@@ -103,7 +103,7 @@ val packageAndroidAssets by tasks.registering(Sync::class) {
     into(generatedRenderer)
     // Keep the small native pairing renderer at the asset root, and package the
     // complete public Web UI under web/ so local mode can reuse its module graph.
-    include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json", "version.json", "prompts/**", "stories/**", "web/**")
+    include("index.html", "styles.css", "renderer.js", "embedded-core.js", "embedded-core.json", "version.json", "core-host.html", "prompts/**", "stories/**", "web/**")
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }
 val verifyEmbeddedCoreAssets by tasks.registering {
@@ -116,7 +116,7 @@ val verifyEmbeddedCoreAssets by tasks.registering {
         val manifest = groovy.json.JsonSlurper().parse(manifestFile) as Map<*, *>
         check(manifest["artifact"].toString() == "stagecraft-embedded-core") { "Invalid embedded Core artifact" }
         check(manifest["bundleVersion"].toString() == "1.1.0") { "Invalid embedded Core bundle version" }
-        check(manifest["protocolVersion"].toString() == "1.0") { "Invalid embedded Core protocol version" }
+        check(manifest["protocolVersion"].toString() == "1.1") { "Invalid embedded Core protocol version" }
         check(manifest["bridgeVersion"].toString() == "1") { "Invalid embedded Core bridge version" }
         check(manifest["bytes"].toString().toLong() == js.length()) { "Embedded Core byte count does not match" }
         val digest = MessageDigest.getInstance("SHA-256").digest(js.readBytes()).joinToString("") { "%02x".format(it) }
