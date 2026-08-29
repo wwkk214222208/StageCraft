@@ -26,17 +26,44 @@ export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 export type RouteAdjudication = 'accepted' | 'revised' | 'deferred'
 
 /**
- * 认证/代理策略（Gate B：不能以 auth:none 代替）：
- *  - local-open    ：本地明开放（main-host 本地回应 / deprecated 迁移 adapter / desktop-only 的本地稳定错误）
- *  - core-nonce    ：必须经 UI gateway 注入 nonce 代理到 CoreDataServer（远程模式下由配对凭据等价保护）
- *  - remote-paired ：仅在远程端声明对应 capability 且携带配对凭据时可代理（desktop-only 专属）
+ * 认证/代理策略（Gate B：不能以 auth:none 代替）。
+ *
+ * v1 三值 kind 保留用于兼容断言；Gate B 收口升级为机器可执行 dispatchPolicy：
+ * 每个 surface（android-local / android-remote）显式表达 action + auth + 稳定错误码，
+ * Java gateway 按此决策，不得只凭 owner 字符串或注释猜测。
+ *
+ * action 语义：
+ *  - proxy-core         ：注入 nonce 代理到 CoreDataServer（或远程配对凭据代理）
+ *  - host-handler       ：主进程宿主分派（W6 实现真实 handler；本轮返回稳定 host_handler_unavailable）
+ *  - stable-unsupported ：返回稳定 unsupported_capability（desktop-only 在 Android 本地 / 远程未配对）
+ *  - deprecated-adapter ：迁移期 adapter；返回稳定 deprecated 错误（随 W6 删除）
+ *
+ * auth 语义：core-nonce（本地 Core 代理）/ remote-paired（远程配对凭据）/ local（宿主本地）/ none。
  */
+export type DispatchAction = 'proxy-core' | 'host-handler' | 'stable-unsupported' | 'deprecated-adapter'
+export type DispatchAuth = 'core-nonce' | 'remote-paired' | 'local' | 'none'
+
+export interface SurfacePolicy {
+  action: DispatchAction
+  auth: DispatchAuth
+  /** 该 surface 决策产生的稳定错误码（action 为 stable-unsupported/deprecated-adapter 时必有）。 */
+  errorCode?: string
+}
+
+export interface DispatchPolicy {
+  androidLocal: SurfacePolicy
+  androidRemote: SurfacePolicy
+}
+
 export type AuthPolicy =
   | { kind: 'local-open' }
   | { kind: 'core-nonce' }
   | { kind: 'remote-paired' }
 
-/** 按 owner 派生认证/代理策略（单一事实来源，禁止逐路由手写漂移）。 */
+/**
+ * 按 owner 派生认证/代理策略（单一事实来源，禁止逐路由手写漂移）。
+ * 返回 v1 三值 kind + 机器可执行 dispatchPolicy（Gate B 收口）。
+ */
 export function authPolicyFor(owner: ApiOwner): AuthPolicy {
   switch (owner) {
     case 'core':
@@ -46,6 +73,36 @@ export function authPolicyFor(owner: ApiOwner): AuthPolicy {
     case 'main-host':
     case 'deprecated':
       return { kind: 'local-open' }
+  }
+}
+
+/** 机器可执行分派策略：surface(android-local/android-remote) → action + auth + 稳定错误码。 */
+export function dispatchPolicyFor(owner: ApiOwner): DispatchPolicy {
+  switch (owner) {
+    case 'core':
+      return {
+        androidLocal: { action: 'proxy-core', auth: 'core-nonce' },
+        androidRemote: { action: 'proxy-core', auth: 'remote-paired' },
+      }
+    case 'main-host':
+      return {
+        androidLocal: { action: 'host-handler', auth: 'local' },
+        androidRemote: { action: 'host-handler', auth: 'local' },
+      }
+    case 'desktop-only':
+      return {
+        androidLocal: { action: 'stable-unsupported', auth: 'none', errorCode: 'unsupported_capability' },
+        androidRemote: {
+          action: 'proxy-core', auth: 'remote-paired',
+          // 远程端声明对应 capability 且已配对才代理；否则稳定 unsupported
+          errorCode: 'unsupported_capability',
+        },
+      }
+    case 'deprecated':
+      return {
+        androidLocal: { action: 'deprecated-adapter', auth: 'local', errorCode: 'route_deprecated' },
+        androidRemote: { action: 'deprecated-adapter', auth: 'local', errorCode: 'route_deprecated' },
+      }
   }
 }
 
@@ -74,6 +131,8 @@ export interface ApiRoute {
   fixDeadline?: string
   /** 认证/代理策略：按 owner 派生（Gate B 显式化，见 authPolicyFor）。 */
   authPolicy?: AuthPolicy
+  /** 机器可执行分派策略：surface→action+auth（Gate B 收口，Java gateway 实际消费，见 dispatchPolicyFor）。 */
+  dispatchPolicy?: DispatchPolicy
 }
 
 const CORE_PROTOCOL_STREAM: ApiStreamContract = {
@@ -315,6 +374,7 @@ export function generateRegistryJson(): string {
       capability: route.capability,
       auth: route.auth,
       authPolicy: authPolicyFor(route.owner),
+      dispatchPolicy: dispatchPolicyFor(route.owner),
       requestSchema: route.requestSchema ?? null,
       responseSchema: route.responseSchema ?? null,
       handlerId: route.handlerId,

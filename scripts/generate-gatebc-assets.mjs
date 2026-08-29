@@ -64,6 +64,32 @@ const envelopes = events.map(event => ({
 }))
 const sseFrames = envelopes.map(envelope => `data: ${JSON.stringify(envelope)}` + NL2)
 
+// ── Gate C-1：heartbeat / resume / abort 共享协议 fixture（评审 C-1 P1）──
+// heartbeat：SSE 注释帧不产生业务事件、连接保持有效；周期边界 10s（CoreDataServer）/15s（HTTP adapter）
+const heartbeatSamples = [
+  { name: 'comment-only', wire: ': heartbeat' + NL2, expectedEvents: 0, keepsConnection: true },
+  { name: 'comment-between-data', wire: 'data: ' + JSON.stringify(envelopes[0]) + NL2 + ': heartbeat' + NL2, expectedEvents: 1, keepsConnection: true },
+]
+// resume：断线前权威 view revision=10；重连期间缓存事件（revision 9 必须丢弃、11 放行）；resync 后投递序列
+const resumeScenario = {
+  name: 'resync-then-incremental',
+  authoritativeViewRevision: 10,
+  bufferedDuringReconnect: [
+    { revision: 9, type: 'state.changed', shouldDeliver: false, reason: 'revision < authoritative floor' },
+    { revision: 11, type: 'state.changed', shouldDeliver: true, reason: 'revision >= authoritative floor' },
+    { revision: 12, type: 'model.thinking.delta', requestId: 'fx-3', shouldDeliver: true, reason: 'post-resync incremental' },
+  ],
+  finalDeliverableSequence: [11, 12],
+}
+// abort：页面/下游关闭后上游关闭与订阅释放；限时；不得继续投递
+const abortScenario = {
+  name: 'client-abort',
+  commandCancelIsSeparate: true, // 命令 cancel 与流 abort 是两套语义，不得混用
+  upstreamCloseWithinMs: 3000,
+  subscriberReleaseWithinMs: 3000,
+  noFurtherDelivery: true,
+}
+
 const fixtures = {
   fixtureVersion: '1.0.0-gatec',
   protocolVersion: CORE_PROTOCOL_VERSION,
@@ -73,6 +99,9 @@ const fixtures = {
   envelopes,
   rawEvents: events,
   sseFrames,
+  heartbeat: heartbeatSamples,
+  resume: resumeScenario,
+  abort: abortScenario,
   receipts: [
     { requestId: 'r1', status: 'accepted', revision: 8, view: { protocolVersion: '1.1', revision: 8 } },
     { requestId: 'r2', status: 'rejected', error: { code: 'command_failed', message: 'boom' } },

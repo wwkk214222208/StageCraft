@@ -87,13 +87,17 @@ public class GateBcClosureTest {
 
         JSONObject ambiguousRoot = new JSONObject();
         ambiguousRoot.put("registryVersion", "test");
+        JSONObject coreSurface = new JSONObject().put("action", "proxy-core").put("auth", "core-nonce");
+        JSONObject dispatch = new JSONObject().put("androidLocal", coreSurface).put("androidRemote", coreSurface);
         ambiguousRoot.put("routes", new JSONArray()
             .put(new JSONObject().put("order", 0).put("method", "POST").put("pattern", "/api/a/{}")
                 .put("owner", "core").put("capability", "c").put("handlerId", "h1")
-                .put("auth", "none").put("authPolicy", new JSONObject().put("kind", "core-nonce")))
+                .put("auth", "none").put("authPolicy", new JSONObject().put("kind", "core-nonce"))
+                .put("dispatchPolicy", dispatch))
             .put(new JSONObject().put("order", 1).put("method", "POST").put("pattern", "/api/a/{id}")
                 .put("owner", "core").put("capability", "c").put("auth", "none").put("handlerId", "h2")
-                .put("authPolicy", new JSONObject().put("kind", "core-nonce"))));
+                .put("authPolicy", new JSONObject().put("kind", "core-nonce"))
+                .put("dispatchPolicy", dispatch)));
         try {
             RouteRegistry.parse(ambiguousRoot.toString(), null);
             fail("同形状歧义 pattern 必须使 parse 失败");
@@ -105,6 +109,15 @@ public class GateBcClosureTest {
         try {
             RouteRegistry.parse(missingAuth.toString(), null);
             fail("缺少显式 authPolicy 必须使 parse 失败（Gate B）");
+        } catch (RouteRegistry.RegistryException expected) { }
+
+        // Gate B 收口：缺 dispatchPolicy 必须使 parse 失败（评审 B-3 P1）
+        JSONObject missingDispatch = new JSONObject(ambiguousRoot.toString());
+        JSONArray missingDispatchRoutes = missingDispatch.getJSONArray("routes");
+        missingDispatchRoutes.getJSONObject(1).remove("dispatchPolicy");
+        try {
+            RouteRegistry.parse(missingDispatch.toString(), null);
+            fail("缺少 dispatchPolicy 必须使 parse 失败（Gate B 收口）");
         } catch (RouteRegistry.RegistryException expected) { }
     }
 
@@ -127,19 +140,73 @@ public class GateBcClosureTest {
 
     @Test
     public void nativeOperationGuardEnforcesRealDispatch() throws Exception {
-        NativeOperationGuard guard = NativeOperationGuard.parse(readAsset("native-operation-registry.json"), false);
+        // 迁移期（legacyGenericDispatchEnabled=true）：已知 legacy 操作放行，未知拒绝
+        NativeOperationGuard guard = NativeOperationGuard.parse(readAsset("native-operation-registry.json"), true);
         System.out.println("[diag] legacy=" + guard.legacyMainCore());
         System.out.println("[diag] mainHost=" + guard.mainHost());
         String archiveRejection = guard.checkGenericDispatch("archive.list");
         if (archiveRejection != null) fail("archive.list rejected: " + archiveRejection);
         String modelRejection = guard.checkGenericDispatch("model.request");
         if (modelRejection != null) fail("model.request rejected: " + modelRejection);
+        assertNull("stagecraft.room.get 必须放行（迁移期默认）", guard.checkGenericDispatch("stagecraft.room.get"));
+        assertNull("stories.list 必须放行（迁移期默认）", guard.checkGenericDispatch("stories.list"));
         assertNotNull(guard.checkGenericDispatch("made.up.operation"), "未登记操作必须拒绝");
         assertNotNull(guard.checkCoreNative("pair"), "main-host 操作不得进入 core 侧");
         assertNull(guard.checkCoreNative("stagecraft.repository"));
 
-        NativeOperationGuard gateD = NativeOperationGuard.parse(readAsset("native-operation-registry.json"), true);
+        // Gate D：legacyGenericDispatchEnabled=false → core-native 从通用入口全部拒绝
+        NativeOperationGuard gateD = NativeOperationGuard.parse(readAsset("native-operation-registry.json"), false);
         assertNotNull(gateD.checkGenericDispatch("archive.list"), "Gate D 翻转后 legacy 例外必须拒绝");
+        assertNotNull(gateD.checkGenericDispatch("stagecraft.room.get"), "Gate D 后 core-native 必须拒绝");
+        assertNotNull(gateD.checkGenericDispatch("model.request"), "Gate D 后 model.request 必须拒绝");
+        assertNull("main-host 操作 Gate D 后仍放行", gateD.checkGenericDispatch("dispatch"));
+    }
+
+    // ── Gate B：Holder 生产默认路径 + 初始化后翻转（评审 B-1 P0）──
+
+    @Test
+    public void guardHolderDefaultAllowsLegacyAndFlipsAfterInit() throws Exception {
+        // 先重置 Holder 状态，保证测试独立
+        NativeOperationGuardHolder.setLegacyGenericDispatchEnabled(true);
+
+        // 生产默认（无 Context 路径）：从资产解析的 guard 必须放行已知 legacy 操作
+        // Holder 无 Context 时未初始化；直接验证 parse(true) 语义 + Holder 翻转行为
+        NativeOperationGuard defaultGuard = NativeOperationGuard.parse(readAsset("native-operation-registry.json"), true);
+        assertNull("默认必须放行 stagecraft.room.get", defaultGuard.checkGenericDispatch("stagecraft.room.get"));
+        assertNull("默认必须放行 archive.list", defaultGuard.checkGenericDispatch("archive.list"));
+        assertNotNull("默认必须拒绝未登记操作", defaultGuard.checkGenericDispatch("made.up.operation"));
+
+        // 翻转后（Gate D）：对已初始化实例立即生效（原子替换，非旁路布尔）
+        NativeOperationGuard flipped = defaultGuard.rebuild(false);
+        assertNotNull("翻转后 stagecraft.room.get 必须拒绝", flipped.checkGenericDispatch("stagecraft.room.get"));
+        assertNotNull("翻转后 archive.list 必须拒绝", flipped.checkGenericDispatch("archive.list"));
+        assertNull("翻转后 main-host 操作仍放行", flipped.checkGenericDispatch("dispatch"));
+
+        // 重复翻转幂等：false→false 仍拒绝
+        NativeOperationGuard flippedAgain = flipped.rebuild(false);
+        assertNotNull("重复翻转后仍拒绝", flippedAgain.checkGenericDispatch("archive.list"));
+    }
+
+    @Test
+    public void guardHolderFlipAffectsInitializedInstance() throws Exception {
+        String assetJson = readAsset("native-operation-registry.json");
+        // 经 Holder 初始化（注入资产 JSON，模拟生产 get(Context) 路径的解析结果）
+        NativeOperationGuardHolder.setLegacyGenericDispatchEnabled(true, assetJson);
+        NativeOperationGuard initialized = NativeOperationGuardHolder.get();
+        assertNull("Holder 默认必须放行已知 legacy 操作", initialized.checkGenericDispatch("archive.list"));
+        assertNull("Holder 默认必须放行 stagecraft.room.get", initialized.checkGenericDispatch("stagecraft.room.get"));
+        assertNotNull("Holder 必须拒绝未登记操作", initialized.checkGenericDispatch("made.up.operation"));
+
+        // 翻转：对已初始化实例立即生效（原子替换）
+        NativeOperationGuardHolder.setLegacyGenericDispatchEnabled(false, assetJson);
+        NativeOperationGuard afterFlip = NativeOperationGuardHolder.get();
+        assertNotNull("翻转后 archive.list 必须拒绝", afterFlip.checkGenericDispatch("archive.list"));
+        assertNotNull("翻转后 stagecraft.room.get 必须拒绝", afterFlip.checkGenericDispatch("stagecraft.room.get"));
+        assertNull("翻转后 main-host 操作仍放行", afterFlip.checkGenericDispatch("dispatch"));
+
+        // 重复翻转幂等
+        NativeOperationGuardHolder.setLegacyGenericDispatchEnabled(false, assetJson);
+        assertNotNull("重复翻转后仍拒绝", NativeOperationGuardHolder.get().checkGenericDispatch("archive.list"));
     }
 
     // ── Gate C：协议黄金样本对等 ──
@@ -206,6 +273,54 @@ public class GateBcClosureTest {
         JSONObject boundaries = fixtures().getJSONObject("boundaries");
         assertEquals(boundaries.getInt("maxBodyBytes"), GateACoreDataServer.MAX_BODY_BYTES);
         assertEquals(boundaries.getInt("bridgeTimeoutMs"), 20000);
+    }
+
+    // ── Gate C-1：heartbeat / resume / abort 共享 fixture 的 JVM 侧消费（评审 C-1 P1）──
+
+    @Test
+    public void heartbeatFixtureParsesOnJavaSide() throws Exception {
+        JSONArray heartbeat = fixtures().getJSONArray("heartbeat");
+        assertTrue("heartbeat 样本必须存在", heartbeat.length() >= 2);
+        for (int index = 0; index < heartbeat.length(); index++) {
+            JSONObject sample = heartbeat.getJSONObject(index);
+            SseParser parser = new SseParser();
+            java.util.List<String> messages = parser.accept(sample.getString("wire"));
+            assertEquals(sample.getInt("expectedEvents") + "（" + sample.getString("name") + "：注释帧不得产生业务事件）",
+                sample.getInt("expectedEvents"), messages.size());
+            for (String message : messages) {
+                assertTrue("data 帧必须是有效 envelope", CoreProtocolSupport.isValidEnvelope(new JSONObject(message)));
+            }
+        }
+    }
+
+    @Test
+    public void resumeFixtureRevisionFloorMatchesJavaSemantics() throws Exception {
+        JSONObject resume = fixtures().getJSONObject("resume");
+        int authoritativeRevision = resume.getInt("authoritativeViewRevision");
+        JSONArray buffered = resume.getJSONArray("bufferedDuringReconnect");
+        java.util.List<Integer> delivered = new java.util.ArrayList<>();
+        for (int index = 0; index < buffered.length(); index++) {
+            JSONObject item = buffered.getJSONObject(index);
+            int revision = item.getInt("revision");
+            // JVM 侧对等判定：revision >= 权威 view revision 才放行（TS shouldDeliverCoreEvent 同语义）
+            boolean deliver = revision >= authoritativeRevision;
+            assertEquals(item.getString("reason"), item.getBoolean("shouldDeliver"), deliver);
+            if (deliver) delivered.add(revision);
+        }
+        JSONArray expected = resume.getJSONArray("finalDeliverableSequence");
+        assertEquals("最终允许投递序列必须与 fixture 一致", expected.length(), delivered.size());
+        for (int index = 0; index < expected.length(); index++) {
+            assertEquals("投递序列位置 " + index, expected.getInt(index), delivered.get(index).intValue());
+        }
+    }
+
+    @Test
+    public void abortFixtureSemanticsAreExplicit() throws Exception {
+        JSONObject abort = fixtures().getJSONObject("abort");
+        assertEquals("命令 cancel 与流 abort 语义必须分离", true, abort.getBoolean("commandCancelIsSeparate"));
+        assertTrue("上游关闭必须有界时限", abort.getInt("upstreamCloseWithinMs") > 0);
+        assertTrue("订阅释放必须有界时限", abort.getInt("subscriberReleaseWithinMs") > 0);
+        assertEquals("abort 后不得继续投递", true, abort.getBoolean("noFurtherDelivery"));
     }
 
     @Test
@@ -378,6 +493,119 @@ public class GateBcClosureTest {
             assertTrue("超时必须在有界时间内（<3s），实际 " + elapsed + "ms", elapsed < 3000);
         } finally {
             server.stop();
+        }
+    }
+
+    // ── Gate B-2 / C-2：真实 gateway 消费 registry（评审 B-2 P1 / C-2 P1）──
+
+    private static final class GatewayFixture implements AutoCloseable {
+        final GateACoreDataServer core;
+        final GateAGatewayServer gateway;
+        final int gatewayPort;
+
+        GatewayFixture() throws Exception {
+            core = new GateACoreDataServer("test-nonce", DIRECT);
+            core.setHealthJson("{\"protocolVersion\":\"1.1\",\"status\":\"ready\"}");
+            core.setCommandForwarder((body, callback) -> callback.accept("{\"requestId\":\"rq\",\"status\":\"accepted\",\"revision\":8}"));
+            core.start();
+            RouteRegistry registry = RouteRegistry.parse(readAsset("api-route-registry.json"), null);
+            gateway = new GateAGatewayServer("test", registry);
+            gateway.start();
+            gateway.setCoreEndpoint(core.getPort(), "test-nonce");
+            gatewayPort = gateway.getPort();
+        }
+
+        @Override public void close() {
+            gateway.stop();
+            core.stop();
+        }
+    }
+
+    @Test
+    public void gatewayConsumesRegistryForFourOwnerDecisions() throws Exception {
+        try (GatewayFixture fixture = new GatewayFixture()) {
+            int port = fixture.gatewayPort;
+            // core → 代理（200 + 回执透传 + nonce 由 gateway 注入，Core 侧接受）
+            String coreResult = httpRequest(port, "POST", "/api/core/commands",
+                java.util.Map.of("content-type", "application/json"),
+                "{\"requestId\":\"rq\",\"type\":\"submit-text\",\"actor\":\"player\"}");
+            assertTrue("core 路由必须代理成功，实际: " + coreResult.split("\n")[0], coreResult.contains("200"));
+            assertTrue("core 代理必须透传回执", coreResult.contains("\"status\":\"accepted\""));
+            assertTrue("gateway 必须代理计数", fixture.gateway.getProxiedCount() >= 1);
+            // main-host → 宿主分派占位（稳定 host_handler_unavailable，不触碰 Core）
+            String hostResult = httpRequest(port, "GET", "/api/version", java.util.Map.of(), null);
+            assertTrue("main-host 必须稳定 501，实际: " + hostResult.split("\n")[0], hostResult.contains("501"));
+            assertTrue("main-host 必须带 host_handler_unavailable", hostResult.contains("host_handler_unavailable"));
+            // desktop-only → 稳定 unsupported_capability（C-2：真实 gateway 返回，非字符串常量）
+            String desktopResult = httpRequest(port, "POST", "/api/agent/context", java.util.Map.of("content-type", "application/json"), "{}");
+            assertTrue("desktop-only 必须稳定 501，实际: " + desktopResult.split("\n")[0], desktopResult.contains("501"));
+            assertTrue("desktop-only 必须带 unsupported_capability", desktopResult.contains("unsupported_capability"));
+            // deprecated → 稳定 410 route_deprecated
+            String deprecatedResult = httpRequest(port, "GET", "/api/stream", java.util.Map.of(), null);
+            assertTrue("deprecated 必须稳定 410，实际: " + deprecatedResult.split("\n")[0], deprecatedResult.contains("410"));
+            assertTrue("deprecated 必须带 route_deprecated", deprecatedResult.contains("route_deprecated"));
+            // 未知 method/path → 稳定 404（不代理，无 Core 副作用）
+            String unknown = httpRequest(port, "GET", "/api/definitely/not/registered", java.util.Map.of(), null);
+            assertTrue("未知路径必须稳定 404，实际: " + unknown.split("\n")[0], unknown.contains("404"));
+            assertTrue("未知路径必须带 route_not_registered", unknown.contains("route_not_registered"));
+            // 未登记 method（DELETE /api/room）→ 404
+            String wrongMethod = httpRequest(port, "DELETE", "/api/room", java.util.Map.of(), null);
+            assertTrue("未登记 method 必须 404", wrongMethod.contains("404"));
+            // 非 core 决策不得产生代理副作用
+            assertEquals("只有 core 路由产生代理", 1, fixture.gateway.getProxiedCount());
+            assertEquals("策略拒绝必须计数", 5, fixture.gateway.getRejectedByPolicyCount());
+        }
+    }
+
+    @Test
+    public void gatewayRegistryIdentityMatchesFixture() throws Exception {
+        // health 中的 registry 身份来自 gateway 实际持有的同一份资产（B-2 第 4 条）
+        try (GatewayFixture fixture = new GatewayFixture()) {
+            RouteRegistry registry = RouteRegistry.parse(readAsset("api-route-registry.json"), null);
+            JSONObject boundaries = fixtures().getJSONObject("boundaries");
+            assertEquals("gateway 持有 registry 版本必须与 fixture 一致",
+                boundaries.getString("registryVersion"), registry.registryVersion());
+            assertEquals("gateway 持有 registry sha256 必须与 fixture 一致",
+                boundaries.getString("registrySha256"), registry.sha256());
+        }
+    }
+
+    // ── Gate C-3：gateway 级 abort 传播（评审 C-3 P1）──
+
+    @Test
+    public void gatewayAbortPropagatesToCoreSubscriberWithinBound() throws Exception {
+        try (GatewayFixture fixture = new GatewayFixture()) {
+            int port = fixture.gatewayPort;
+            // 客户端经 gateway 订阅 Core SSE
+            Socket client = new Socket(InetAddress.getByName("127.0.0.1"), port);
+            client.setSoTimeout(3000);
+            OutputStream output = client.getOutputStream();
+            output.write(("GET /api/core/events HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream(), StandardCharsets.UTF_8));
+            // 等 SSE 头 + 订阅确认行（经 gateway 透传）
+            String statusLine = reader.readLine();
+            assertTrue("gateway SSE 必须 200，实际: " + statusLine, statusLine != null && statusLine.contains("200"));
+            String line;
+            while ((line = reader.readLine()) != null && !line.isEmpty()) { /* 消费头 */ }
+            String confirm = reader.readLine();
+            assertTrue("必须收到订阅确认行（经 gateway）", confirm != null && confirm.startsWith(": connected"));
+            // Core 侧 subscriber 已建立
+            assertEquals("Core subscriber 必须建立", 1, fixture.core.getSubscriberCount());
+
+            // 客户端 abort：关闭 socket
+            long started = System.currentTimeMillis();
+            client.close();
+            // 有界时间内：gateway 检测到客户端断开 → 关闭上游 → Core subscriber 释放
+            long deadline = System.currentTimeMillis() + 3000;
+            while (fixture.core.getSubscriberCount() > 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(20);
+            }
+            long elapsed = System.currentTimeMillis() - started;
+            assertEquals("客户端 abort 后 Core subscriber 必须在有界时间内释放（实际 " + elapsed + "ms）",
+                0, fixture.core.getSubscriberCount());
+            assertTrue("gateway 必须计数客户端断开（实际 " + elapsed + "ms）", elapsed < 3000);
+            assertTrue("gateway upstreamClosedByClient 必须计数", fixture.gateway.getUpstreamClosedByClientCount() >= 1);
         }
     }
 }

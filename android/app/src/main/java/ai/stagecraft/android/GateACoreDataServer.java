@@ -236,6 +236,7 @@ public final class GateACoreDataServer {
             output.write(": connected\n\n".getBytes(StandardCharsets.US_ASCII));
             output.flush();
             long lastHeartbeat = System.currentTimeMillis();
+            long lastProbe = System.currentTimeMillis();
             while (!overflowClosed.get()) {
                 String event = queue.poll();
                 if (event != null) {
@@ -249,6 +250,12 @@ public final class GateACoreDataServer {
                     output.flush();
                     lastHeartbeat = now;
                 }
+                // 客户端（gateway）断开探测：空闲期周期性读 socket，FIN → EOF → 退出释放 subscriber
+                // （评审 C-3：不得依赖 10s 心跳才感知断开，须在 fixture 时限内有界释放）
+                if (now - lastProbe >= 500) {
+                    if (isSseClientGone(socket)) break;
+                    lastProbe = now;
+                }
                 Thread.sleep(20);
             }
         } catch (InterruptedException stopSignal) {
@@ -258,6 +265,19 @@ public final class GateACoreDataServer {
         } finally {
             subscribers.remove(subscriber);
             try { socket.close(); } catch (IOException ignored) { }
+        }
+    }
+
+    /** SSE 客户端断开探测：读其输入流，EOF(-1) 表示 FIN；带超时避免阻塞。 */
+    private static boolean isSseClientGone(Socket socket) {
+        try {
+            socket.setSoTimeout(200);
+            int probe = socket.getInputStream().read();
+            return probe < 0;
+        } catch (java.net.SocketTimeoutException alive) {
+            return false; // 客户端仍连接（无数据）
+        } catch (IOException closed) {
+            return true; // 连接已重置/关闭
         }
     }
 

@@ -36,8 +36,9 @@ public final class RouteRegistry {
         public final String handlerId;
         public final String auth;           // 遗留字段（v1 全为 none），保留以核对
         public final JSONObject authPolicy; // {kind: local-open | core-nonce | remote-paired}
+        public final JSONObject dispatchPolicy; // {androidLocal: {action, auth, errorCode?}, androidRemote: {...}}（Gate B 收口）
         Route(int order, String method, String pattern, String owner, String capability,
-              String handlerId, String auth, JSONObject authPolicy) {
+              String handlerId, String auth, JSONObject authPolicy, JSONObject dispatchPolicy) {
             this.order = order;
             this.method = method;
             this.pattern = pattern;
@@ -46,6 +47,7 @@ public final class RouteRegistry {
             this.handlerId = handlerId;
             this.auth = auth;
             this.authPolicy = authPolicy;
+            this.dispatchPolicy = dispatchPolicy;
         }
     }
 
@@ -63,6 +65,10 @@ public final class RouteRegistry {
         new HashSet<>(java.util.Arrays.asList("local-open", "core-nonce", "remote-paired"));
     private static final Set<String> VALID_OWNERS =
         new HashSet<>(java.util.Arrays.asList("core", "main-host", "desktop-only", "deprecated"));
+    private static final Set<String> VALID_ACTIONS =
+        new HashSet<>(java.util.Arrays.asList("proxy-core", "host-handler", "stable-unsupported", "deprecated-adapter"));
+    private static final Set<String> VALID_DISPATCH_AUTHS =
+        new HashSet<>(java.util.Arrays.asList("core-nonce", "remote-paired", "local", "none"));
 
     private final String registryVersion;
     private final String sha256;
@@ -107,12 +113,19 @@ public final class RouteRegistry {
             if (authPolicy == null || !VALID_AUTH_KINDS.contains(authPolicy.optString("kind"))) {
                 throw new RegistryException("route " + key + " 缺少显式 authPolicy（Gate B）");
             }
+            // Gate B 收口：machine-readable dispatchPolicy 必须存在且两个 surface 都合法
+            JSONObject dispatchPolicy = route.optJSONObject("dispatchPolicy");
+            if (dispatchPolicy == null) {
+                throw new RegistryException("route " + key + " 缺少 dispatchPolicy（Gate B 收口）");
+            }
+            validateSurfacePolicy(key, dispatchPolicy.optJSONObject("androidLocal"), "androidLocal");
+            validateSurfacePolicy(key, dispatchPolicy.optJSONObject("androidRemote"), "androidRemote");
             if (!VALID_OWNERS.contains(owner)) throw new RegistryException("route " + key + " owner 非法: " + owner);
             if (route.optString("capability", "").isEmpty() || route.optString("handlerId", "").isEmpty()) {
                 throw new RegistryException("route " + key + " 缺少 capability/handlerId");
             }
             Route parsed = new Route(route.optInt("order", index), method, pattern, owner,
-                route.optString("capability"), route.optString("handlerId"), route.optString("auth", "none"), authPolicy);
+                route.optString("capability"), route.optString("handlerId"), route.optString("auth", "none"), authPolicy, dispatchPolicy);
             byKey.put(key, parsed);
             routes.add(parsed);
             // 同形状歧义检测：参数段名不同但形状相同（匹配行为无法区分）
@@ -125,8 +138,23 @@ public final class RouteRegistry {
         return new RouteRegistry(version, sha256Hex(json), routes, byKey);
     }
 
-    static String shapeKey(String pattern) {
-        StringBuilder builder = new StringBuilder();
+    /** surface 策略合法性：action/auth 必须属于枚举；stable-unsupported/deprecated-adapter 必须带 errorCode。 */
+    private static void validateSurfacePolicy(String key, JSONObject surface, String surfaceName) {
+        if (surface == null) throw new RegistryException("route " + key + " 缺少 dispatchPolicy." + surfaceName + "（Gate B 收口）");
+        String action = surface.optString("action", "");
+        if (!VALID_ACTIONS.contains(action)) {
+            throw new RegistryException("route " + key + " dispatchPolicy." + surfaceName + " action 非法: " + action);
+        }
+        String auth = surface.optString("auth", "");
+        if (!VALID_DISPATCH_AUTHS.contains(auth)) {
+            throw new RegistryException("route " + key + " dispatchPolicy." + surfaceName + " auth 非法: " + auth);
+        }
+        if (("stable-unsupported".equals(action) || "deprecated-adapter".equals(action)) && surface.optString("errorCode", "").isEmpty()) {
+            throw new RegistryException("route " + key + " dispatchPolicy." + surfaceName + " 稳定错误策略必须带 errorCode");
+        }
+    }
+
+    static String shapeKey(String pattern) {        StringBuilder builder = new StringBuilder();
         for (String segment : pattern.split("/")) {
             if (segment.isEmpty()) continue;
             builder.append(segment.startsWith("{") ? "{param}" : segment).append('/');

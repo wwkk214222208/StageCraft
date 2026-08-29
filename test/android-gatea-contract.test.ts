@@ -64,6 +64,23 @@ test('Gateway：字节流透传、取消传播、nonce 只由 gateway 注入', (
   assert.match(gateway, /URI\.create\(parts\[1\]\)\.getPath\(\)/, '只按路径代理，不改写 payload')
 })
 
+test('Gateway：Gate B 收口——registry 消费、owner 决策、content-type 透传、断开探测', () => {
+  const gateway = read('java', 'ai', 'stagecraft', 'android', 'GateAGatewayServer.java')
+  assert.match(gateway, /RouteRegistry registry/, 'gateway 必须持有 registry')
+  assert.match(gateway, /registry\.match\(request\.method, request\.path\)/, '请求必须按 registry 匹配产生决策')
+  assert.match(gateway, /route_not_registered/, '未登记 method/path 稳定拒绝')
+  assert.match(gateway, /unsupported_capability/, 'desktop-only 稳定 unsupported_capability')
+  assert.match(gateway, /route_deprecated/, 'deprecated 稳定 route_deprecated')
+  assert.match(gateway, /host_handler_unavailable/, 'main-host 进入宿主分派占位')
+  assert.match(gateway, /dispatchPolicy/, '按 dispatchPolicy 决策（machine-readable，非注释）')
+  assert.match(gateway, /content-type/, 'content-type 必须透传（Core 数据服务 415 校验依赖）')
+  assert.match(gateway, /isClientGone/, 'SSE 空闲期必须探测客户端断开（评审 C-3）')
+  const server = read('java', 'ai', 'stagecraft', 'android', 'GateACoreDataServer.java')
+  assert.match(server, /isSseClientGone/, 'Core 侧 SSE 写循环必须探测客户端断开（有界释放 subscriber）')
+  const activity = read('java', 'ai', 'stagecraft', 'android', 'GateASpikeActivity.java')
+  assert.match(activity, /RouteRegistry\.parse/, 'gateway 启动必须加载同一构建期 registry 资产')
+})
+
 test('Binder 发送侧 64KiB 断言 + 客户端 linkToDeath + 幂等重绑（评审第 1 条）', () => {
   const service = read('java', 'ai', 'stagecraft', 'android', 'GateACoreService.java')
   assert.match(service, /enforceBinderLimit/, '发送侧 64KiB 硬断言存在')

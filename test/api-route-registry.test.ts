@@ -133,17 +133,35 @@ test('匹配语义：method 精确、静态优先于参数、更具体优先（Q
 test('registry JSON 产物确定性生成、结构完整且与构建资产一致（Q6/CP-W1）', () => {
   const first = generateRegistryJson()
   assert.equal(first, generateRegistryJson(), '两次生成必须逐字节一致')
-  const parsed = JSON.parse(first) as { registryVersion: string; routes: Array<{ order: number; method: string; pattern: string; owner: string; handlerId: string; capability: string; stream: unknown; note: string | null; adjudication: string | null; authPolicy: { kind: string } | null }> }
+  const parsed = JSON.parse(first) as { registryVersion: string; routes: Array<{ order: number; method: string; pattern: string; owner: string; handlerId: string; capability: string; stream: unknown; note: string | null; adjudication: string | null; authPolicy: { kind: string } | null; dispatchPolicy: { androidLocal: { action: string; auth: string; errorCode?: string }; androidRemote: { action: string; auth: string; errorCode?: string } } | null }> }
   assert.equal(parsed.routes.length, API_ROUTES.length)
   for (const [index, route] of parsed.routes.entries()) {
     assert.equal(route.order, index, '生成序必须稳定')
     assert.ok(['core', 'main-host', 'desktop-only', 'deprecated'].includes(route.owner))
     assert.ok(route.capability && route.handlerId)
     assert.ok(route.authPolicy && ['local-open', 'core-nonce', 'remote-paired'].includes(route.authPolicy.kind), 'authPolicy 必须显式派生（Gate B：不能全部 auth:none）')
+    // Gate B 收口：machine-readable dispatchPolicy 必须存在且两个 surface 合法（评审 B-3 P1）
+    assert.ok(route.dispatchPolicy, `${route.method} ${route.pattern} 缺少 dispatchPolicy（Gate B 收口）`)
+    assert.ok(route.dispatchPolicy!.androidLocal && route.dispatchPolicy!.androidRemote, `${route.method} ${route.pattern} dispatchPolicy 必须覆盖 androidLocal/androidRemote`)
+    const surfaces = [route.dispatchPolicy!.androidLocal, route.dispatchPolicy!.androidRemote]
+    for (const surface of surfaces) {
+      assert.ok(['proxy-core', 'host-handler', 'stable-unsupported', 'deprecated-adapter'].includes(surface.action), `${route.method} ${route.pattern} action 非法`)
+      assert.ok(['core-nonce', 'remote-paired', 'local', 'none'].includes(surface.auth), `${route.method} ${route.pattern} auth 非法`)
+      if (surface.action === 'stable-unsupported' || surface.action === 'deprecated-adapter') {
+        assert.ok(surface.errorCode, `${route.method} ${route.pattern} 稳定错误策略必须带 errorCode`)
+      }
+    }
   }
   const kindByOwner = (owner: string) => new Set(parsed.routes.filter(r => r.owner === owner).map(r => r.authPolicy!.kind))
   assert.deepEqual([...kindByOwner('core')], ['core-nonce'])
   assert.deepEqual([...kindByOwner('main-host')], ['local-open'])
+  // dispatchPolicy 按 owner 派生（评审 B-3：说明文字不是 gateway policy）
+  const actionByOwner = (owner: string, surface: 'androidLocal' | 'androidRemote') =>
+    new Set(parsed.routes.filter(r => r.owner === owner).map(r => r.dispatchPolicy![surface].action))
+  assert.deepEqual([...actionByOwner('core', 'androidLocal')], ['proxy-core'])
+  assert.deepEqual([...actionByOwner('main-host', 'androidLocal')], ['host-handler'])
+  assert.deepEqual([...actionByOwner('desktop-only', 'androidLocal')], ['stable-unsupported'])
+  assert.deepEqual([...actionByOwner('deprecated', 'androidLocal')], ['deprecated-adapter'])
   const sseRoutes = parsed.routes.filter(route => route.stream)
   assert.ok(sseRoutes.some(route => route.pattern === '/api/core/events'), 'core SSE 必须登记流契约')
 
