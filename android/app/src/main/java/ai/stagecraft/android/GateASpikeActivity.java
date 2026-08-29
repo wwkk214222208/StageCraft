@@ -81,6 +81,10 @@ public class GateASpikeActivity extends Activity {
                         if (summaryJson != null && summaryJson.contains("renderer_gone")) {
                             rendererGoneStatusAt = java.time.LocalTime.now().toString();
                         }
+                        // 恢复视图由 Core 故障状态自动驱动（评审 R5：不得由测试手动 show）
+                        if (summaryJson != null && (summaryJson.contains("renderer_gone") || summaryJson.contains("\"status\":\"failed\""))) {
+                            runOnUiThread(() -> showRecoveryView());
+                        }
                         log("status: " + summaryJson);
                     }
 
@@ -525,19 +529,23 @@ public class GateASpikeActivity extends Activity {
     /** 恢复链验证（评审：恢复页可见/远程入口可用/Core 重启重连）。所有视图交互均在 UI 线程。 */
     private void checkRecoveryChain() throws Exception {
         awaitEndpoint(30_000);
-        // 1. 杀 :core → 恢复视图必须可见且状态明确
+        // 1. 杀 :core → 恢复视图必须由故障状态自动驱动出现（评审 R5：不得手动 show）
         JSONObject dead = endpoint;
         android.os.Process.killProcess(dead.optInt("pid"));
-        showRecoveryView();
-        Thread.sleep(1_200);
+        long showDeadline = System.currentTimeMillis() + 10_000;
         final boolean[] panelVisible = new boolean[1];
         final String[] statusText = new String[1];
-        runOnUiThread(() -> {
-            panelVisible[0] = recoveryPanel.getVisibility() == View.VISIBLE;
-            statusText[0] = recoveryStatusText.getText().toString();
-        });
+        while (System.currentTimeMillis() < showDeadline && !panelVisible[0]) {
+            runOnUiThread(() -> {
+                panelVisible[0] = recoveryPanel.getVisibility() == View.VISIBLE;
+                statusText[0] = recoveryStatusText.getText().toString();
+            });
+            Thread.sleep(200);
+        }
         Thread.sleep(200);
-        // 2. 远程入口可操作：UI 线程点击 → MainActivity(mode=remote) 打开并到栈顶
+        // 2. 远程入口可操作：UI 线程点击 → MainActivity(mode=remote) 打开、实际加载远程页并到栈顶
+        //    （评审 R5：仅栈顶不足以证明——同时校验文件日志中 mode=remote 的 WebView 加载记录）
+        long remoteEntryStart = System.currentTimeMillis();
         runOnUiThread(() -> recoveryRemoteEntryButton.performClick());
         long deadline = System.currentTimeMillis() + 8_000;
         boolean remoteEntryAtTop = false;
@@ -554,6 +562,12 @@ public class GateASpikeActivity extends Activity {
                 }
             }
             if (!remoteEntryAtTop) Thread.sleep(200);
+        }
+        long pageDeadline = System.currentTimeMillis() + 5_000;
+        boolean remotePageLoaded = false;
+        while (System.currentTimeMillis() < pageDeadline && !remotePageLoaded) {
+            if (readMainProcessLog().contains("/index.html?mode=remote")) remotePageLoaded = true;
+            else Thread.sleep(200);
         }
         // 3. 回到恢复视图 → 点击重新启动 Core → Core 重启 → 页面重连（ready）
         runOnUiThread(() -> {
@@ -580,13 +594,14 @@ public class GateASpikeActivity extends Activity {
             Thread.sleep(300);
         }
         hideRecoveryView();
-        boolean pass = panelVisible[0] && statusText[0].contains("Core 不可用") && remoteEntryAtTop && coreRestartedAgain;
+        boolean pass = panelVisible[0] && statusText[0].contains("Core 不可用") && remoteEntryAtTop && remotePageLoaded && coreRestartedAgain;
         record("recovery-chain", pass, new JSONObject()
             .put("recoveryViewVisible", panelVisible[0])
             .put("statusTextShown", statusText[0].contains("Core 不可用"))
             .put("remoteEntryAtTop", remoteEntryAtTop)
+            .put("remotePageLoaded", remotePageLoaded)
             .put("coreRestartedAndReconnected", coreRestartedAgain)
-            .put("note", "恢复页正式 UI 为 W6 交付；本项验证 spike 级恢复链路（状态可见/重启可操作/远程入口可导航/重连就绪）"));
+            .put("note", "恢复页正式 UI 为 W6 交付；本项验证 spike 级恢复链路（状态可见/重启可操作/远程入口实际加载远程页/重连就绪）"));
     }
 
     /**
@@ -663,6 +678,23 @@ public class GateASpikeActivity extends Activity {
             .put("restarted", restarted)
             .put("secondHandshakeReady", secondHandshake);
         record("renderer-crash-recovery", restarted && secondHandshake && renderGoneConfirmed, evidence);
+    }
+
+    /** 读取主进程文件日志（验证远程页实际加载，评审 R5）。 */
+    private String readMainProcessLog() {
+        try {
+            File log = new File(getFilesDir(), "gatea-log-" + getPackageName() + ".txt");
+            if (!log.exists()) return "";
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(log))) {
+                StringBuilder builder = new StringBuilder();
+                char[] buffer = new char[65536];
+                int read;
+                while ((read = reader.read(buffer)) >= 0) builder.append(buffer, 0, read);
+                return builder.toString();
+            }
+        } catch (Exception error) {
+            return "";
+        }
     }
 
     /** 读取 :core 落盘的 renderer-gone 证据文件（与主进程 oneway 竞态无关）。 */

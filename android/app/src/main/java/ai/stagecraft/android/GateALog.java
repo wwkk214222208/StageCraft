@@ -17,6 +17,7 @@ final class GateALog {
 
     private static volatile File logFile;
     private static volatile File externalLogFile;
+    private static volatile File externalDir;
 
     private GateALog() {}
 
@@ -25,7 +26,10 @@ final class GateALog {
         String suffix = GateACrashGuard.processName().replace(':', '_');
         logFile = new File(context.getFilesDir(), "gatea-log-" + suffix + ".txt");
         File external = context.getExternalFilesDir(null);
-        if (external != null) externalLogFile = new File(external, "gatea-log-" + suffix + ".txt");
+        if (external != null) {
+            externalDir = external;
+            externalLogFile = new File(external, "gatea-log-" + suffix + ".txt");
+        }
     }
 
     static void i(String message) {
@@ -51,15 +55,16 @@ final class GateALog {
 
     /**
      * 每轮序列开始时重置日志（评审 R5：必须覆盖 :core 进程的日志文件）。
-     * reset 由主进程调用，但两个进程的日志文件名都可由主进程名派生：
+     * 两个进程的日志文件名都可由主进程名派生：
      *   ai.stagecraft.android          （主进程）
      *   ai.stagecraft.android:core     （:core 进程 → 文件名中 : 替换为 _）
-     * 外部存储双写文件与内部文件一并重置。
+     * 外部存储（R6 修正：必须用 getExternalFilesDir，此前误用内部目录导致外部证据未重置）
+     * 与内部文件一并重置；写入 run-reset 分隔行。
      */
     static void resetExternalLogs() {
         String mainName = GateACrashGuard.processName();
         java.util.List<String> processNames = java.util.Arrays.asList(mainName, mainName + ":core");
-        File external = logFile == null ? null : logFile.getParentFile();
+        File external = externalDir;
         for (String processName : processNames) {
             String suffix = processName.replace(':', '_');
             if (external != null) truncate(new File(external, "gatea-log-" + suffix + ".txt"));

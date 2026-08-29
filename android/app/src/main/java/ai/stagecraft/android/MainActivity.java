@@ -83,7 +83,15 @@ public final class MainActivity extends Activity {
         setContentView(webView);
         // APK defaults to the packaged full Web UI. Remote pairing remains available
         // through the existing native bridge and can be exposed by a redesigned UI later.
-        showLocalUi();
+        // Deep link：携带 OPEN_REMOTE_ENTRY extra 的启动（如 Core 不可用时的恢复页"远程模式入口"）
+        // 直接打开远程/配对页，而非默认本地完整 UI。
+        if ("remote-entry".equals(getIntent().getStringExtra("gatea_entry"))) {
+            showPairingPage();
+        } else {
+            showLocalUi();
+        }
+        GateALog.init(this);
+        GateALog.i("main activity ready (entry=" + getIntent().getStringExtra("gatea_entry") + ")");
     }
 
     /** Package-visible test hook; does not expose the WebView outside the app package. */
@@ -95,6 +103,7 @@ public final class MainActivity extends Activity {
         String localUrl = localServer == null
             ? StageCraftWebViewClient.LOCAL_ORIGIN + "/web/local.html"
             : localServer.urlFor("/web/local.html");
+        GateALog.i("main webview load: " + localUrl);
         webView.loadUrl(localUrl);
     }
 
@@ -106,6 +115,7 @@ public final class MainActivity extends Activity {
 
     /** 会话失效 / 清除后：回到本地配对页（远程模式）。 */
     void showPairingPage() {
+        GateALog.i("main webview load: " + StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html?mode=remote");
         webView.loadUrl(StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html?mode=remote");
     }
 
