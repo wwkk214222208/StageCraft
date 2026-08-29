@@ -95,6 +95,7 @@ public final class GateAGatewayServer {
                 writeResponse(client, 503, "application/json", "{\"error\":{\"code\":\"core_not_ready\",\"message\":\"core endpoint is not ready\"}}");
                 return;
             }
+            long[] downstreamBytes = new long[1]; // 已向页面写出的字节数：>0 后不得再注入 502（防响应协议损坏）
             try {
                 upstream = SocketFactory.getDefault().createSocket(InetAddress.getByName("127.0.0.1"), currentCorePort);
                 activeUpstreams.put(connectionId, upstream);
@@ -102,15 +103,18 @@ public final class GateAGatewayServer {
                 // 请求体（POST）转发
                 if (request.contentLength > 0) pipeFixed(request.bodyStream, upstream.getOutputStream(), request.contentLength);
                 if (request.isSse()) {
-                    pipeStreaming(upstream.getInputStream(), client.getOutputStream(), connectionId, true);
+                    pipeStreaming(upstream.getInputStream(), client.getOutputStream(), connectionId, true, downstreamBytes);
                 } else {
-                    pipeResponseAndClose(upstream, client);
+                    pipeResponseAndClose(upstream, client, downstreamBytes);
                 }
                 proxied.incrementAndGet();
             } catch (IOException upstreamFailure) {
-                // 上游失败且尚未写出字节 → 明确 502（评审第 5 条）；SSE 已发头则只能有界断流
-                writeResponse(client, 502, "application/json",
-                    "{\"error\":{\"code\":\"core_unreachable\",\"message\":\"core data plane unreachable (killed or restarting)\"}}");
+                // 仅当尚未向页面写出任何字节时注入明确 502（评审第 5 条+第 6 条次要项：
+                // 部分透传后失败再写 502 会损坏响应协议，只能有界断流）
+                if (downstreamBytes[0] == 0) {
+                    writeResponse(client, 502, "application/json",
+                        "{\"error\":{\"code\":\"core_unreachable\",\"message\":\"core data plane unreachable (killed or restarting)\"}}");
+                }
                 throw upstreamFailure;
             }
         } catch (IOException error) {
@@ -124,13 +128,14 @@ public final class GateAGatewayServer {
     }
 
     /** SSE：逐块透传（读一块写一块立刻 flush）；客户端断开 → 关上游（取消传播）。 */
-    private void pipeStreaming(InputStream upstreamInput, OutputStream downstream, long connectionId, boolean sse) throws IOException {
+    private void pipeStreaming(InputStream upstreamInput, OutputStream downstream, long connectionId, boolean sse, long[] downstreamBytes) throws IOException {
         byte[] buffer = new byte[PIPE_BUFFER];
         try {
             int read;
             while ((read = upstreamInput.read(buffer)) >= 0) {
                 downstream.write(buffer, 0, read);
                 downstream.flush(); // 逐块 flush 是"逐条送达"的关键，不得整包缓冲
+                downstreamBytes[0] += read;
             }
             downstreamClosedByUpstream.incrementAndGet();
             GateALog.i(hostTag + " upstream closed stream normally conn=" + connectionId);
@@ -142,13 +147,14 @@ public final class GateAGatewayServer {
     }
 
     /** 有限响应：透传上游状态行/头/体后关闭（JSON 请求用）。 */
-    private void pipeResponseAndClose(Socket upstream, Socket client) throws IOException {
+    private void pipeResponseAndClose(Socket upstream, Socket client, long[] downstreamBytes) throws IOException {
         InputStream input = upstream.getInputStream();
         OutputStream downstream = client.getOutputStream();
         byte[] buffer = new byte[PIPE_BUFFER];
         int read;
         while ((read = input.read(buffer)) >= 0) {
             downstream.write(buffer, 0, read);
+            downstreamBytes[0] += read;
         }
         downstream.flush();
         downstreamClosedByUpstream.incrementAndGet();

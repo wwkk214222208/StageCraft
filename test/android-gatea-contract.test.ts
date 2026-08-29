@@ -79,8 +79,12 @@ test('数据服务与 gateway：超时护栏 / 溢出关闭信号 / 明确 502�
   assert.match(server, /responded\.await\(20/, 'latch 必须带超时（防连接线程泄漏）')
   assert.match(server, /504/, '桥超时返回明确错误')
   assert.match(server, /overflowClosed/, 'SSE 溢出通知写循环关闭连接')
+  assert.match(server, /: connected/, '订阅确认行（消除 setTimeout(0) 竞态）')
   const gateway = read('java', 'ai', 'stagecraft', 'android', 'GateAGatewayServer.java')
   assert.match(gateway, /502/, '上游失败且未写出字节时返回明确 502')
+  assert.match(gateway, /downstreamBytes\[0\] == 0/, '502 仅在零字节写出时注入（防响应协议损坏）')
+  const alog = read('java', 'ai', 'stagecraft', 'android', 'GateALog.java')
+  assert.match(alog, /gatea-log-/, '日志必须落盘（华为 logcat 抑制的替代证据通道）')
 })
 
 test('Binder 控制面：Q8 最小契约经 AIDL 冻结（真机实测修复 BinderProxy 强转）', () => {
@@ -95,8 +99,13 @@ test('Binder 控制面：Q8 最小契约经 AIDL 冻结（真机实测修复 Bin
   assert.match(service, /ICoreControl\.Stub/, '服务端实现 AIDL Stub')
   assert.match(service, /RemoteCallbackList/, '跨进程回调列表（死亡自动清理）')
   assert.match(service, /failureCode/, '崩溃原因进入状态摘要')
+  assert.match(service, /enforceBinderLimit\(GateACoreService\.this\.getStatusSummary\(\)\.toString\(\)\)/, 'getStatusSummary 出口同样过 64KiB 断言（评审：并非所有出口都有断言）')
   const activity = read('java', 'ai', 'stagecraft', 'android', 'GateASpikeActivity.java')
   assert.match(activity, /ICoreControl\.Stub\.asInterface/, '跨进程必须 asInterface（真机实锤：强转 BinderProxy 崩溃）')
+  assert.match(activity, /rebindPending[.]set[(]false[)]/, 'rebindPending 必须在绑定完成后清零（评审：清零过早有重复重绑窗口）')
+  assert.match(activity, /rendererGoneStatusAt/, 'onRenderProcessGone 时刻必须被捕获为证据')
+  assert.match(activity, /rawEvents/, 'SSE 原始事件内容随报告存档')
+  assert.doesNotMatch(activity, /findRendererPid/, 'isolated UID 下进程枚举不可用（真机实测），不得保留死代码路径')
 })
 
 test('进程内桥：独立命名 CoreNative，不得复用 StageCraftNative（Q1/Q9）', () => {

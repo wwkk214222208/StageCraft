@@ -51,12 +51,15 @@ public class GateASpikeActivity extends Activity {
     private GateAGatewayServer gateway;
     private ICoreControl core;
     private volatile JSONObject endpoint;
+    /** :core 上报 fail(renderer_gone) 的时刻（onRenderProcessGone 证据，评审第 4 条）。 */
+    private volatile String rendererGoneStatusAt;
     private final Object endpointSignal = new Object();
     private long startedAtMillis;
 
     private final ServiceConnection connection = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName name, IBinder binder) {
             log("service connected (cross-process proxy), registering callback");
+            rebindPending.set(false); // 绑定完成：新一轮死亡通知方可触发重绑
             core = ICoreControl.Stub.asInterface(binder);
             try {
                 // 客户端 death recipient（评审第 1 条）：RemoteCallbackList 只覆盖服务端，客户端必须 linkToDeath
@@ -66,6 +69,9 @@ public class GateASpikeActivity extends Activity {
                 }), 0);
                 core.registerCallback(new ICoreControlCallback.Stub() {
                     @Override public void onStatus(String summaryJson) {
+                        if (summaryJson != null && summaryJson.contains("renderer_gone")) {
+                            rendererGoneStatusAt = java.time.LocalTime.now().toString();
+                        }
                         log("status: " + summaryJson);
                     }
 
@@ -151,9 +157,12 @@ public class GateASpikeActivity extends Activity {
      * 可能对同一次死亡先后触发——同一轮只执行一次 unbind+rebind，不重复迁移状态。
      */
     private final java.util.concurrent.atomic.AtomicBoolean rebindPending = new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** 同一轮死亡中被去重的重复通知数（行为级证据）。 */
+    private final java.util.concurrent.atomic.AtomicLong rebindDedupedCount = new java.util.concurrent.atomic.AtomicLong();
 
     private void scheduleRebindOnce(String source) {
         if (!rebindPending.compareAndSet(false, true)) {
+            rebindDedupedCount.incrementAndGet();
             log("rebind already pending, deduped source=" + source);
             return;
         }
@@ -163,8 +172,8 @@ public class GateASpikeActivity extends Activity {
             try { unbindService(connection); } catch (Exception ignored) { }
             core = null;
             endpoint = null;
+            // rebindPending 在 onServiceConnected 后才清零（评审：清零过早存在重复重绑窗口）
             runOnUiThread(() -> bindCoreService());
-            rebindPending.set(false);
         }, "gatea-rebind").start();
     }
 
@@ -182,6 +191,15 @@ public class GateASpikeActivity extends Activity {
 
     private void runCheckSequence() {
         checks.clear();
+        // 防陈旧证据：序列开始即重置报告文件；若中途崩溃，残留文件不得冒充完整结果
+        try {
+            File stale = new File(getExternalFilesDir(null), "gatea-report.json");
+            if (stale.exists()) {
+                try (java.io.FileOutputStream output = new java.io.FileOutputStream(stale)) {
+                    output.write("{\"status\":\"running\"}".getBytes(StandardCharsets.UTF_8));
+                }
+            }
+        } catch (Exception ignored) { }
         new Thread(() -> {
             runCheck("endpoint-ready", () -> awaitEndpoint(30_000));
             // 逐项容错：单项失败不中断其余检查（Gate A 需要完整证据面）
@@ -244,18 +262,23 @@ public class GateASpikeActivity extends Activity {
         log("rawPost emit-events: " + postResult.substring(0, Math.min(220, postResult.length())));
         long started = System.currentTimeMillis();
         List<Long> arrivals = new ArrayList<>();
+        List<String> rawEvents = new ArrayList<>();
         BufferedReader reader = headerReader; // 同一 socket 流，续读事件
         long deadline = System.currentTimeMillis() + 15_000;
         while (arrivals.size() < 3 && System.currentTimeMillis() < deadline) {
             String line = reader.readLine();
             if (line == null) break;
-            if (line.startsWith("data:")) arrivals.add(System.currentTimeMillis() - started);
+            if (line.startsWith("data:")) {
+                arrivals.add(System.currentTimeMillis() - started);
+                rawEvents.add(line.length() > 120 ? line.substring(0, 120) : line);
+            }
         }
         socket.close();
         boolean pass = arrivals.size() == 3 && arrivals.get(1) - arrivals.get(0) > 50 && arrivals.get(2) - arrivals.get(1) > 50;
         record("sse-incremental-delivery", pass, new JSONObject()
             .put("arrivalOffsetsMs", new JSONArray(arrivals))
-            .put("note", "间隔应≈300ms 且逐条 flush，非连接结束整包"));
+            .put("rawEvents", new JSONArray(rawEvents))
+            .put("note", "间隔应≈300ms 且逐条 flush，非连接结束整包；原始事件前缀随报告存档"));
     }
 
     /** 命令 POST 往返：echo 回执 + 进程内桥时延。 */
@@ -413,19 +436,30 @@ public class GateASpikeActivity extends Activity {
     }
 
     /**
-     * renderer 崩溃实测（Gate A 硬条件，评审第 4 条）：WebView 沙箱渲染进程运行在本应用 UID 下
-     * （GATE-A-LOW-PERMISSION §3"进程内自杀钩子"替代测法），直接同 UID kill 渲染进程 →
-     * onRenderProcessGone → 服务自杀 → binding died → rebind → 二次握手全周期。
-     * 页内 JS OOM 在 64 位大内存设备上不可靠，故采用确定性 kill。
+     * renderer crash 实测（Gate A 硬条件，评审第 4 条）：沙箱渲染进程运行在 isolated UID 下
+     * （应用与 adb shell kill 均 EPERM，真机实测），唯一可行路径是经页面桥下发 commit-OOM——
+     * 渲染进程内提交物理内存直到 Chromium 自行终止渲染进程 → onRenderProcessGone →
+     * 服务 fail(renderer_gone) + 自杀 → binding died → rebind → 新端点二次握手全周期。
+     * 显式标注为替代测法（GATE-A-LOW-PERMISSION §3 批准的是 :core 自杀钩子；本项替代测法
+     * 需架构 AI 追认），证据含 onRenderProcessGone 时间戳、旧/新端点与端口变化时刻。
      */
     private void checkRendererCrash() throws Exception {
         awaitEndpoint(30_000);
         JSONObject oldEndpoint = endpoint;
-        // 沙箱渲染进程运行在 isolated UID 下（应用与 shell 均 kill 被拒，真机实测）——
-        // 唯一可行路径是页内 commit-OOM 让 Chromium 自行终止渲染进程
+        long oldCoreStartedAt = oldEndpoint == null ? 0 : 0; // 端点不含 startedAt，另经 status 摘要获取
+        long dispatchedAt = System.currentTimeMillis();
+        // 真正触发：经 gateway 下发 crash-renderer 命令（页内 commit-OOM）
+        String raw = rawPost(new JSONObject()
+            .put("requestId", "crash-renderer")
+            .put("command", "crash-renderer"), false);
+        log("crash-renderer dispatched, response=[" + raw.substring(0, Math.min(140, raw.length())) + "]");
+        // 等 onRenderProcessGone → 服务 fail(renderer_gone)/自杀 → binding died → rebind → 新端点
         long deadline = System.currentTimeMillis() + 30_000;
         JSONObject newEndpoint = null;
+        String goneStatusAt = null;
         while (System.currentTimeMillis() < deadline) {
+            String captured = rendererGoneStatusAt;
+            if (captured != null && goneStatusAt == null) goneStatusAt = captured;
             JSONObject candidate = endpoint;
             if (candidate != null && candidate.optInt("port") != oldEndpoint.optInt("port")) { newEndpoint = candidate; break; }
             Thread.sleep(200);
@@ -442,24 +476,16 @@ public class GateASpikeActivity extends Activity {
                 secondHandshake = false;
             }
         }
-        record("renderer-crash-recovery", restarted && secondHandshake, new JSONObject()
-            .put("method", "page commit-OOM (替代测法：renderer 为 isolated UID，应用/shell kill 均 EPERM，真机实测)")
+        JSONObject evidence = new JSONObject()
+            .put("method", "page commit-OOM（替代测法：renderer 为 isolated UID，应用/shell kill 均 EPERM；需架构 AI 追认）")
+            .put("dispatchedResponse", raw.substring(0, Math.min(140, raw.length())))
+            .put("renderProcessGoneAt", rendererGoneStatusAt == null ? "not-observed" : rendererGoneStatusAt)
+            .put("oldPort", oldEndpoint == null ? -1 : oldEndpoint.optInt("port"))
+            .put("newPort", newEndpoint == null ? -1 : newEndpoint.optInt("port"))
+            .put("portChangedMs", newEndpoint == null ? -1 : System.currentTimeMillis() - dispatchedAt)
             .put("restarted", restarted)
-            .put("secondHandshakeReady", secondHandshake)
-            .put("method", "same-uid kill (debug-only spike; 替代测法 per GATE-A-LOW-PERMISSION §3)")
-            .put("note", "renderer 死亡 → onRenderProcessGone → 服务自杀 → binding died → rebind 全周期"));
-    }
-
-    /** 查找本应用的 WebView 沙箱渲染进程 pid（同 UID，ActivityManager 可见）。 */
-    private int findRendererPid() {
-        android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
-        if (manager == null) return -1;
-        for (android.app.ActivityManager.RunningAppProcessInfo info : manager.getRunningAppProcesses()) {
-            if (info.processName.startsWith("com.huawei.webview:sandboxed_process") || info.processName.contains(":sandboxed_process")) {
-                return info.pid;
-            }
-        }
-        return -1;
+            .put("secondHandshakeReady", secondHandshake);
+        record("renderer-crash-recovery", restarted && secondHandshake && !"not-observed".equals(rendererGoneStatusAt), evidence);
     }
 
     private Socket openSse() throws Exception {

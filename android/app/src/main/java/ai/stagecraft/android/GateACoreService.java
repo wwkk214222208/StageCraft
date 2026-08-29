@@ -59,7 +59,7 @@ public class GateACoreService extends Service {
 
         @Override
         public String getStatusSummary() {
-            return GateACoreService.this.getStatusSummary().toString();
+            return enforceBinderLimit(GateACoreService.this.getStatusSummary().toString());
         }
 
         @Override

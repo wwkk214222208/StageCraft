@@ -16,6 +16,7 @@ public final class GateACrashGuard {
     private GateACrashGuard() {}
 
     public static void install(Context context) {
+        GateALog.init(context);
         String processName = processName();
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
