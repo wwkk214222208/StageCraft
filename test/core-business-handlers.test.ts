@@ -317,3 +317,73 @@ test('W6：未知业务路径返回 404', async () => {
   const response = await handler.handle(apiRequest('GET', '/api/not-a-core-route'))
   assert.equal(response.status, 404)
 })
+
+test('R3-2 空态：providers 未配置时返回 {providers:[], defaults}（前端下拉 disabled 依赖）', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('GET', '/api/providers'))
+  assert.equal(response.status, 200)
+  const body = JSON.parse(await bodyText(response))
+  assert.deepEqual(body.providers, [], '未配置时必须空数组')
+  assert.ok('defaultRoleProviderId' in body.defaults, 'defaults 键必须齐全（空值）')
+})
+
+test('R3-2 空态：stories 无剧本时返回裸空数组', async () => {
+  const facade = makeFacade()
+  facade.stories = () => []
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('GET', '/api/stories'))
+  assert.equal(response.status, 200)
+  const body = JSON.parse(await bodyText(response))
+  assert.deepEqual(body, [], '空剧本库必须返回 []')
+})
+
+test('R3-2 空态：billing 未初始化时 {prices.rates:[], stats.totalCost:0}', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('GET', '/api/billing'))
+  assert.equal(response.status, 200)
+  const body = JSON.parse(await bodyText(response))
+  assert.deepEqual(body.prices.rates, [], 'prices.rates 空态必须 []')
+  assert.equal(body.stats.totalCost, 0, 'stats.totalCost 空态必须 0')
+})
+
+test('R3-2 错误态：story.delete 无 id → 400 {error}', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('DELETE', '/api/stories'))
+  assert.equal(response.status, 400)
+  const body = JSON.parse(await bodyText(response))
+  assert.equal(typeof body.error, 'string', '错误必须 400 {error: string}')
+})
+
+test('R3-2 错误态：archive.delete 不存在 → 400 {error}', async () => {
+  const facade = makeFacade()
+  facade.invokeSync = (operation, input) => {
+    if (operation === 'archive.delete') return { ok: false, error: { message: '存档不存在或已删除。' } }
+    if (operation === 'archive.list') return { files: [] }
+    return { ok: true }
+  }
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('POST', '/api/archive/delete', { name: '不存在' }))
+  assert.equal(response.status, 400)
+  const body = JSON.parse(await bodyText(response))
+  assert.equal(body.error, '存档不存在或已删除。')
+})
+
+test('R3-3：story.import/export 返回稳定 unsupported（SAF 原生通道裁决）', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const cases = [
+    ['POST', '/api/story/import'],
+    ['GET', '/api/story/export'],
+    ['POST', '/api/archive/import'],
+    ['GET', '/api/archive/export'],
+  ] as const
+  for (const [method, path] of cases) {
+    const response = await handler.handle(apiRequest(method, path, {}))
+    assert.equal(response.status, 503, `${method} ${path} 必须 503`)
+    const body = JSON.parse(await bodyText(response))
+    assert.equal(body.error.code, 'unsupported_capability', `${path} 必须稳定 unsupported`)
+  }
+})

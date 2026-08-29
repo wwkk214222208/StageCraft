@@ -130,4 +130,65 @@ public final class PluginManagerTest {
         }
         assertTrue("隔离插件必须仍在 plan 中（enabled=false）", found);
     }
+
+    @Test public void r3SetEnabledRebuildsPlanWithChangedHash() throws Exception {
+        File file = tempStore();
+        PluginManager manager = new PluginManager(new PluginConfigStore(file));
+        // 注入 catalog
+        File manifest = new File("src/main/assets/plugin-manifest.json");
+        String json = new String(Files.readAllBytes(manifest.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        JSONArray catalog = new JSONObject(json).optJSONArray("plugins");
+        for (int i = 0; i < catalog.length(); i++) {
+            JSONObject plugin = catalog.optJSONObject(i);
+            manager.catalog().add(new PluginManager.PluginCatalog(
+                plugin.optString("id"), plugin.optString("version"), plugin.optString("manifestHash")));
+        }
+        // 初始 plan（全部 enabled）
+        JSONObject planBefore = manager.buildLaunchPlan();
+        String hashBefore = planBefore.optString("pluginSetHash");
+        // R3-4：setEnabled(false) 必须立即重建 plan（哈希变化 + enabled=false）
+        String targetId = catalog.optJSONObject(0).optString("id");
+        manager.setEnabled(targetId, false);
+        JSONObject planAfter = manager.buildLaunchPlan(); // 复用持久化 plan = 重建后的新 plan
+        String hashAfter = planAfter.optString("pluginSetHash");
+        assertFalse("禁用插件后 pluginSetHash 必须变化", hashBefore.equals(hashAfter));
+        boolean found = false;
+        JSONArray plugins = planAfter.optJSONArray("plugins");
+        for (int i = 0; i < plugins.length(); i++) {
+            JSONObject plugin = plugins.optJSONObject(i);
+            if (targetId.equals(plugin.optString("id"))) {
+                found = true;
+                assertFalse("setEnabled(false) 后 plan 必须 enabled=false", plugin.optBoolean("enabled"));
+            }
+        }
+        assertTrue("plan 必须含被禁用插件（enabled=false）", found);
+        // 重启语义：新 PluginManager 实例（模拟 Core 重启）消费同一持久化 plan
+        PluginManager restarted = new PluginManager(new PluginConfigStore(file));
+        JSONObject planOnRestart = restarted.buildLaunchPlan();
+        assertEquals("重启必须消费新 plan（哈希一致）", hashAfter, planOnRestart.optString("pluginSetHash"));
+    }
+
+    @Test public void r3QuarantineChangeRebuildsPlan() throws Exception {
+        File file = tempStore();
+        PluginManager manager = new PluginManager(new PluginConfigStore(file));
+        File manifest = new File("src/main/assets/plugin-manifest.json");
+        String json = new String(Files.readAllBytes(manifest.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        JSONArray catalog = new JSONObject(json).optJSONArray("plugins");
+        for (int i = 0; i < catalog.length(); i++) {
+            JSONObject plugin = catalog.optJSONObject(i);
+            manager.catalog().add(new PluginManager.PluginCatalog(
+                plugin.optString("id"), plugin.optString("version"), plugin.optString("manifestHash")));
+        }
+        String hashBefore = manager.buildLaunchPlan().optString("pluginSetHash");
+        // quarantine 变化 → plan 重建（哈希变化）
+        String targetId = catalog.optJSONObject(1).optString("id");
+        JSONArray quarantine = new JSONArray();
+        quarantine.put(new JSONObject().put("pluginId", targetId));
+        manager.updateQuarantine(quarantine);
+        String hashAfter = manager.buildLaunchPlan().optString("pluginSetHash");
+        assertFalse("quarantine 变化后 pluginSetHash 必须变化", hashBefore.equals(hashAfter));
+        // 相同 quarantine 再上报 → 不重建（幂等）
+        manager.updateQuarantine(quarantine);
+        assertEquals("相同 quarantine 不得重建 plan", hashAfter, manager.buildLaunchPlan().optString("pluginSetHash"));
+    }
 }

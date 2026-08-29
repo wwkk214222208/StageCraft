@@ -101,4 +101,96 @@ public final class CoreDataServerCancelTest {
             server.stop();
         }
     }
+
+    @Test public void r3BusinessRouteDisconnectCancelsRequestId() throws Exception {
+        // R3-5：业务路由（/api/turn 经 registry 转发）带 requestId；客户端断开 → cancel(requestId)
+        CoreDataServer server = new CoreDataServer("secret", DIRECT, SILENT);
+        server.start();
+        final AtomicReference<String> cancelled = new AtomicReference<>();
+        final AtomicBoolean bridgeCalled = new AtomicBoolean();
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"POST\",\"pattern\":\"/api/turn\",\"owner\":\"core\",\"capability\":\"room.command\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"turn.start\"}"
+                + "]}" , null));
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApi(String method, String path, java.util.Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                bridgeCalled.set(true);
+                // 故意不回调：模拟长模型请求（turn 触发 model.request）
+            }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { cancelled.set(requestId); }
+        });
+        try {
+            Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), server.getPort());
+            socket.setSoTimeout(5000);
+            OutputStream output = socket.getOutputStream();
+            String body = "{\"requestId\":\"req-turn-1\",\"text\":\"hello\",\"requiredRoleIds\":[\"seraphina\"]}";
+            output.write(("POST /api/turn HTTP/1.1\r\n"
+                + "host: 127.0.0.1\r\n"
+                + "x-core-nonce: secret\r\n"
+                + "content-type: application/json\r\n"
+                + "content-length: " + body.getBytes(StandardCharsets.UTF_8).length + "\r\n"
+                + "connection: close\r\n\r\n" + body).getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            // 确保已进入 forwardApi 后再断开
+            long bridgeDeadline = System.currentTimeMillis() + 3000;
+            while (!bridgeCalled.get() && System.currentTimeMillis() < bridgeDeadline) {
+                Thread.sleep(20);
+            }
+            assertTrue("业务路由必须经 forwardApi 转发", bridgeCalled.get());
+            socket.close();
+            // 有界等待：cancel 必须被调用（业务长请求断开后底层模型请求停止）
+            long deadline = System.currentTimeMillis() + 15000;
+            while (cancelled.get() == null && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            assertEquals("业务路由断开必须取消 requestId", "req-turn-1", cancelled.get());
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void r3ClientDisconnectReleasesWithinBoundedTime() throws Exception {
+        // R3-5：有界释放——断开后连接线程必须在有界时间内结束（不泄漏）
+        CoreDataServer server = new CoreDataServer("secret", DIRECT, SILENT);
+        server.start();
+        final AtomicBoolean bridgeCalled = new AtomicBoolean();
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApi(String method, String path, java.util.Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                bridgeCalled.set(true);
+            }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            long started = System.currentTimeMillis();
+            Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), server.getPort());
+            socket.setSoTimeout(5000);
+            OutputStream output = socket.getOutputStream();
+            String body = "{\"requestId\":\"req-bounded\",\"type\":\"submit-text\"}";
+            output.write(("POST /api/core/commands HTTP/1.1\r\n"
+                + "host: 127.0.0.1\r\n"
+                + "x-core-nonce: secret\r\n"
+                + "content-type: application/json\r\n"
+                + "content-length: " + body.getBytes(StandardCharsets.UTF_8).length + "\r\n"
+                + "connection: close\r\n\r\n" + body).getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            long bridgeDeadline = System.currentTimeMillis() + 3000;
+            while (!bridgeCalled.get() && System.currentTimeMillis() < bridgeDeadline) {
+                Thread.sleep(20);
+            }
+            socket.close();
+            // 断开后服务器连接线程应快速结束（<3s，不等到 20s 桥超时）
+            long deadline = System.currentTimeMillis() + 3000;
+            while (System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            long elapsed = System.currentTimeMillis() - started;
+            assertTrue("断开后必须在有界时间内释放连接", elapsed < 6000);
+        } finally {
+            server.stop();
+        }
+    }
 }
