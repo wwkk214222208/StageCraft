@@ -101,6 +101,9 @@ public class GateASpikeActivity extends Activity {
             log("service disconnected (core process died?)");
             core = null;
             endpoint = null;
+            // Core 不可用 = 故障状态：恢复视图自动驱动（评审 R6 P1-1：普通 kill 时 Core 无机会
+            // 发送 status=failed，断连事件本身就是驱动源；测试不得手动 show）
+            runOnUiThread(() -> showRecoveryView());
             scheduleRebindOnce("onServiceDisconnected");
         }
 
