@@ -49,16 +49,30 @@ final class GateALog {
         appendTo(externalLogFile, line);
     }
 
-    /** 每轮序列开始时截断外部日志（单轮单日志证据，评审 P1）。 */
+    /**
+     * 每轮序列开始时重置日志（评审 R5：必须覆盖 :core 进程的日志文件）。
+     * reset 由主进程调用，但两个进程的日志文件名都可由主进程名派生：
+     *   ai.stagecraft.android          （主进程）
+     *   ai.stagecraft.android:core     （:core 进程 → 文件名中 : 替换为 _）
+     * 外部存储双写文件与内部文件一并重置。
+     */
     static void resetExternalLogs() {
-        for (File target : new File[]{logFile, externalLogFile}) {
-            if (target != null && target.exists()) {
-                String resetLine = "--- run reset " + System.currentTimeMillis() + " ---" + String.valueOf((char) 10);
-                try (FileOutputStream output = new FileOutputStream(target, false)) {
-                    output.write(resetLine.getBytes(StandardCharsets.UTF_8));
-                } catch (Exception ignored) { }
-            }
+        String mainName = GateACrashGuard.processName();
+        java.util.List<String> processNames = java.util.Arrays.asList(mainName, mainName + ":core");
+        File external = logFile == null ? null : logFile.getParentFile();
+        for (String processName : processNames) {
+            String suffix = processName.replace(':', '_');
+            if (external != null) truncate(new File(external, "gatea-log-" + suffix + ".txt"));
+            truncate(new File(logFile == null ? null : logFile.getParentFile(), "gatea-log-" + suffix + ".txt"));
         }
+    }
+
+    private static void truncate(File target) {
+        if (target == null) return;
+        String resetLine = "--- run reset " + System.currentTimeMillis() + " ---" + String.valueOf((char) 10);
+        try (FileOutputStream output = new FileOutputStream(target, false)) {
+            output.write(resetLine.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception ignored) { }
     }
 
     private static void appendTo(File target, String line) {

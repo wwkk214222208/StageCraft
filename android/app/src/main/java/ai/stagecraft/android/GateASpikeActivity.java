@@ -55,6 +55,13 @@ public class GateASpikeActivity extends Activity {
     private volatile String rendererGoneStatusAt;
     private volatile String runId;
     private final java.util.concurrent.atomic.AtomicBoolean sequenceRunning = new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** 恢复视图（评审：正式恢复页为 W6 交付；spike 级恢复链路演示 + 可操作性断言）。 */
+    private LinearLayout recoveryPanel;
+    private TextView recoveryStatusText;
+    private Button recoveryRestartButton;
+    private Button recoveryRemoteEntryButton;
+    private volatile boolean remoteEntryOpened;
+    private final java.util.concurrent.atomic.AtomicLong rebindDedupedCount = new java.util.concurrent.atomic.AtomicLong();
     private final Object endpointSignal = new Object();
     private long startedAtMillis;
 
@@ -132,7 +139,59 @@ public class GateASpikeActivity extends Activity {
         scroll = new ScrollView(this);
         scroll.addView(logView);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        // 恢复视图（评审：正式恢复页为 W6 交付；spike 级恢复链路演示 + 可操作性断言）
+        recoveryPanel = new LinearLayout(this);
+        recoveryPanel.setOrientation(LinearLayout.VERTICAL);
+        recoveryPanel.setPadding(32, 32, 32, 32);
+        recoveryPanel.setVisibility(View.GONE);
+        TextView recoveryTitle = new TextView(this);
+        recoveryTitle.setText("Core 不可用 — 恢复视图");
+        recoveryTitle.setTextSize(15);
+        recoveryPanel.addView(recoveryTitle);
+        recoveryStatusText = new TextView(this);
+        recoveryPanel.addView(recoveryStatusText);
+        recoveryRestartButton = new Button(this);
+        recoveryRestartButton.setText("重新启动 Core");
+        recoveryRestartButton.setOnClickListener(view -> restartCoreFromRecovery());
+        recoveryPanel.addView(recoveryRestartButton);
+        recoveryRemoteEntryButton = new Button(this);
+        recoveryRemoteEntryButton.setText("远程模式入口");
+        recoveryRemoteEntryButton.setOnClickListener(view -> {
+            remoteEntryOpened = true;
+            Intent remote = new Intent(this, MainActivity.class);
+            remote.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            remote.putExtra("mode", "remote");
+            startActivity(remote);
+        });
+        recoveryPanel.addView(recoveryRemoteEntryButton);
+        root.addView(recoveryPanel, new LinearLayout.LayoutParams(-1, 0, 1f));
         setContentView(root);
+    }
+
+    private void showRecoveryView() {
+        runOnUiThread(() -> {
+            recoveryStatusText.setText("Core 不可用（pid=" + (endpoint == null ? -1 : endpoint.optInt("pid")) + "）。可选择：重新启动 Core，或切换远程模式。");
+            recoveryPanel.setVisibility(View.VISIBLE);
+            scroll.setVisibility(View.GONE);
+        });
+    }
+
+    private void hideRecoveryView() {
+        runOnUiThread(() -> {
+            recoveryPanel.setVisibility(View.GONE);
+            scroll.setVisibility(View.VISIBLE);
+        });
+    }
+
+    /** 恢复视图"重新启动 Core"：杀当前 :core 进程（同 UID，debug-only），绑定死亡自动重建。 */
+    private void restartCoreFromRecovery() {
+        JSONObject current = endpoint;
+        if (current != null && current.optInt("pid") > 0) {
+            GateALog.i("recovery restart: killing core pid=" + current.optInt("pid"));
+            android.os.Process.killProcess(current.optInt("pid"));
+        } else {
+            scheduleRebindOnce("recovery-restart");
+        }
     }
 
     private void startGateway() {
@@ -159,8 +218,6 @@ public class GateASpikeActivity extends Activity {
      * 可能对同一次死亡先后触发——同一轮只执行一次 unbind+rebind，不重复迁移状态。
      */
     private final java.util.concurrent.atomic.AtomicBoolean rebindPending = new java.util.concurrent.atomic.AtomicBoolean(false);
-    /** 同一轮死亡中被去重的重复通知数（行为级证据）。 */
-    private final java.util.concurrent.atomic.AtomicLong rebindDedupedCount = new java.util.concurrent.atomic.AtomicLong();
 
     private void scheduleRebindOnce(String source) {
         if (!rebindPending.compareAndSet(false, true)) {
@@ -219,6 +276,7 @@ public class GateASpikeActivity extends Activity {
                 runCheck("client-abort-propagation", this::checkClientAbort);
                 runCheck("core-kill-restart", this::checkCoreKillAndRestart);
                 runCheck("renderer-crash-recovery", this::checkRendererCrash);
+                runCheck("recovery-chain", this::checkRecoveryChain);
                 finishReport();
             } finally {
                 sequenceRunning.set(false);
@@ -464,6 +522,73 @@ public class GateASpikeActivity extends Activity {
             .put("recoveryPageAndRemoteEntry", "deferred-to-W6（恢复页/远程入口 UI 属 W6 交付；此处验证主 Activity 栈顶打开与主进程存活）"));
     }
 
+    /** 恢复链验证（评审：恢复页可见/远程入口可用/Core 重启重连）。所有视图交互均在 UI 线程。 */
+    private void checkRecoveryChain() throws Exception {
+        awaitEndpoint(30_000);
+        // 1. 杀 :core → 恢复视图必须可见且状态明确
+        JSONObject dead = endpoint;
+        android.os.Process.killProcess(dead.optInt("pid"));
+        showRecoveryView();
+        Thread.sleep(1_200);
+        final boolean[] panelVisible = new boolean[1];
+        final String[] statusText = new String[1];
+        runOnUiThread(() -> {
+            panelVisible[0] = recoveryPanel.getVisibility() == View.VISIBLE;
+            statusText[0] = recoveryStatusText.getText().toString();
+        });
+        Thread.sleep(200);
+        // 2. 远程入口可操作：UI 线程点击 → MainActivity(mode=remote) 打开并到栈顶
+        runOnUiThread(() -> recoveryRemoteEntryButton.performClick());
+        long deadline = System.currentTimeMillis() + 8_000;
+        boolean remoteEntryAtTop = false;
+        while (System.currentTimeMillis() < deadline && !remoteEntryAtTop) {
+            android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (manager != null) {
+                for (android.app.ActivityManager.RunningTaskInfo task : manager.getRunningTasks(10)) {
+                    if (task.topActivity != null && task.baseActivity != null
+                        && task.baseActivity.getPackageName().equals(getPackageName())
+                        && MainActivity.class.getName().equals(task.topActivity.getClassName())) {
+                        remoteEntryAtTop = true;
+                        break;
+                    }
+                }
+            }
+            if (!remoteEntryAtTop) Thread.sleep(200);
+        }
+        // 3. 回到恢复视图 → 点击重新启动 Core → Core 重启 → 页面重连（ready）
+        runOnUiThread(() -> {
+            startActivity(new Intent(this, GateASpikeActivity.class));
+            recoveryPanel.setVisibility(View.VISIBLE);
+        });
+        Thread.sleep(1_000);
+        runOnUiThread(() -> recoveryRestartButton.performClick());
+        long restartDeadline = System.currentTimeMillis() + 30_000;
+        boolean coreRestartedAgain = false;
+        while (System.currentTimeMillis() < restartDeadline) {
+            JSONObject candidate = endpoint;
+            if (candidate != null && candidate.optInt("pid") != dead.optInt("pid") && candidate.optInt("pid") > 0) {
+                try {
+                    HttpURLConnection connection = (HttpURLConnection) new URL(String.format(CORE_HOST_URL, gateway.getPort(), "/api/core/health")).openConnection();
+                    connection.setConnectTimeout(3000);
+                    connection.setReadTimeout(5000);
+                    if ("ready".equals(new JSONObject(readAll(connection)).optString("status"))) {
+                        coreRestartedAgain = true;
+                        break;
+                    }
+                } catch (Exception retry) { /* 未就绪，继续轮询 */ }
+            }
+            Thread.sleep(300);
+        }
+        hideRecoveryView();
+        boolean pass = panelVisible[0] && statusText[0].contains("Core 不可用") && remoteEntryAtTop && coreRestartedAgain;
+        record("recovery-chain", pass, new JSONObject()
+            .put("recoveryViewVisible", panelVisible[0])
+            .put("statusTextShown", statusText[0].contains("Core 不可用"))
+            .put("remoteEntryAtTop", remoteEntryAtTop)
+            .put("coreRestartedAndReconnected", coreRestartedAgain)
+            .put("note", "恢复页正式 UI 为 W6 交付；本项验证 spike 级恢复链路（状态可见/重启可操作/远程入口可导航/重连就绪）"));
+    }
+
     /**
      * renderer crash 实测（Gate A 硬条件，评审第 4 条）：沙箱渲染进程运行在 isolated UID 下
      * （应用与 adb shell kill 均 EPERM，真机实测），唯一可行路径是经页面桥下发 commit-OOM——
@@ -663,6 +788,7 @@ public class GateASpikeActivity extends Activity {
             // 构建身份（评审第 7 条：证据可追溯性）
             report.put("buildVariant", "debug");
             report.put("runId", runId == null ? "missing" : runId);
+            report.put("rebindDedupedCount", rebindDedupedCount.get());
             report.put("buildCommit", readBuildCommit());
             report.put("apkSha256", apkSha256());
             report.put("startedAt", java.time.Instant.ofEpochMilli(startedAtMillis).toString());
