@@ -12,7 +12,7 @@ test('embedded Android composition executes shared Core and speaks the bridge pr
   api.start((message: string) => messages.push(JSON.parse(message)))
   assert.equal(messages[0].type, 'connection.state')
   assert.equal(messages[1].type, 'core.resync')
-  assert.equal(messages[1].view.protocolVersion, '1.0')
+  assert.equal(messages[1].view.protocolVersion, '1.1')
   api.dispatch(JSON.stringify({ id: 'android-test', actor: 'player', type: 'submit-text', payload: { text: 'hello' } }))
   await new Promise(resolve => setImmediate(resolve))
   assert.ok(messages.some(message => message.type === 'connection.error' && /Core command has no handler/.test(message.message)))

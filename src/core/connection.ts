@@ -1,11 +1,14 @@
-import type { CoreEvent, CoreRuntimePort, CoreView, HumanCommand } from './protocol.ts'
+import { CORE_PROTOCOL_VERSION, supportsProtocolVersion } from './protocol.ts'
+import type { CoreCapability, CoreEvent, CoreEventEnvelope, CoreHealth, CoreRuntimePort, CoreView, CommandReceipt, HumanCommand } from './protocol.ts'
 
 export type CoreConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'disposed'
 
 export type CoreConnectionMessage =
   | { type: 'connection.state'; state: CoreConnectionState; attempt?: number }
   | { type: 'core.resync'; reason: 'initial' | 'manual' | 'reconnect'; revision: number; view: CoreView }
-  | { type: 'core.event'; event: CoreEvent }
+  /** 1.1 连接携带 envelope（roomId/turnId/requestId 关联元数据）；1.0 legacy 连接不带。 */
+  | { type: 'core.event'; event: CoreEvent; envelope?: CoreEventEnvelope }
+  | { type: 'connection.error'; message: string; code?: string }
 
 export interface CoreCommandResult {
   ok: true
@@ -14,11 +17,52 @@ export interface CoreCommandResult {
 
 export interface CoreConnection {
   readonly state: CoreConnectionState
+  /** 协商后的协议版本：本地恒为 CORE_PROTOCOL_VERSION；远程在首次连接时探测（1.0 legacy 或 1.1）。 */
+  readonly protocolVersion: string
   getView(): Promise<CoreView>
   dispatch(command: HumanCommand): Promise<CoreCommandResult>
+  /** 回执语义（§3.3）：网络错误在提交之后发生时返回 unknown-after-disconnect，绝不重放。 */
+  dispatchWithReceipt(command: HumanCommand): Promise<CommandReceipt>
+  /** 1.1 握手；1.0 legacy 服务端返回 null。 */
+  health(): Promise<CoreHealth | null>
+  capabilities(): Promise<CoreCapability[]>
+  cancel(requestId: string): Promise<boolean>
   subscribe(listener: (message: CoreConnectionMessage) => void): () => void
   reconnect(): Promise<CoreView>
   dispose(): void | Promise<void>
+}
+
+/** §3.4 关联过滤的状态：UI 侧当前权威 revision / 当前 turn / 关心的 request。 */
+export interface CoreEventDeliveryFilter {
+  revision?: number
+  turnId?: string | null
+  requestId?: string | null
+}
+
+/**
+ * 消费规则（计划 §3.4）：
+ * - revision 小于当前权威 revision 的事件直接丢弃；
+ * - thinking delta 只进入其 requestId 对应的请求（filter.requestId 非空时）；
+ * - envelope 带 turnId 且与当前 turn 不匹配的 reaction/decision/draft/thinking 不得渲染。
+ * turnId/requestId 未提供或事件未携带时放行（无法判定 ≠ 判定失败）。
+ */
+export function shouldDeliverCoreEvent(message: { type: string; event: CoreEvent; envelope?: CoreEventEnvelope }, filter: CoreEventDeliveryFilter): boolean {
+  if (message.type !== 'core.event') return true
+  const event = message.event
+  const revision = message.envelope?.revision ?? event.revision
+  if (filter.revision !== undefined && typeof revision === 'number' && revision < filter.revision) return false
+  if (filter.requestId !== undefined && filter.requestId !== null && event.type === 'model.thinking.delta' && event.requestId !== filter.requestId) return false
+  if (filter.turnId !== undefined && filter.turnId !== null) {
+    const envelopeTurnId = message.envelope?.turnId
+    if (envelopeTurnId !== undefined && envelopeTurnId !== filter.turnId) return false
+  }
+  return true
+}
+
+/** 判断 SSE data 是否为 1.1 envelope（与 raw CoreEvent 的形状差异：protocolVersion+roomId+payload 三元组）。 */
+export function isCoreEventEnvelope(value: unknown): value is CoreEventEnvelope {
+  return Boolean(value) && typeof value === 'object'
+    && 'payload' in (value as object) && 'protocolVersion' in (value as object) && 'roomId' in (value as object)
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
@@ -73,6 +117,7 @@ export class LocalCoreConnection implements CoreConnection {
   constructor(core: CoreRuntimePort) { this.core = core }
 
   get state(): CoreConnectionState { return this.currentState }
+  get protocolVersion(): string { return CORE_PROTOCOL_VERSION }
 
   async getView(): Promise<CoreView> {
     this.assertActive()
@@ -83,6 +128,34 @@ export class LocalCoreConnection implements CoreConnection {
     this.assertActive()
     await this.core.dispatch(clone(command))
     return { ok: true, view: clone(this.core.getView()) }
+  }
+
+  /** 同进程分派不存在"结果未知"：成功即 accepted，抛错即 rejected。 */
+  async dispatchWithReceipt(command: HumanCommand): Promise<CommandReceipt> {
+    this.assertActive()
+    try {
+      await this.core.dispatch(clone(command))
+      const view = clone(this.core.getView())
+      return { requestId: command.id, status: 'accepted', revision: view.revision, view }
+    } catch (error) {
+      return { requestId: command.id, status: 'rejected', error: { code: 'command_failed', message: error instanceof Error ? error.message : String(error) } }
+    }
+  }
+
+  async health(): Promise<CoreHealth | null> {
+    this.assertActive()
+    return this.core.getHealth?.() ?? null
+  }
+
+  async capabilities(): Promise<CoreCapability[]> {
+    this.assertActive()
+    return this.core.getCapabilities?.() ?? []
+  }
+
+  async cancel(requestId: string): Promise<boolean> {
+    this.assertActive()
+    await this.core.cancel(requestId)
+    return true
   }
 
   subscribe(listener: (message: CoreConnectionMessage) => void): () => void {
@@ -163,6 +236,8 @@ export class RemoteCoreConnection implements CoreConnection {
   private connectPromise?: Promise<CoreView>
   private disposed = false
   private lastView?: CoreView
+  private negotiated: '1.1' | '1.0' = '1.0'
+  private lastDeliveredRevision = Number.NEGATIVE_INFINITY
 
   constructor(options: RemoteCoreConnectionOptions) {
     if (!options.session) throw new Error('Remote Core session is required.')
@@ -175,6 +250,8 @@ export class RemoteCoreConnection implements CoreConnection {
   }
 
   get state(): CoreConnectionState { return this.currentState }
+  /** 探测到 1.1 health 前保守按 1.0 对待；真实版本以最近一次连接的协商结果为准。 */
+  get protocolVersion(): string { return this.negotiated }
 
   async getView(): Promise<CoreView> {
     this.assertActive()
@@ -184,15 +261,79 @@ export class RemoteCoreConnection implements CoreConnection {
   }
 
   async dispatch(command: HumanCommand): Promise<CoreCommandResult> {
+    const receipt = await this.dispatchWithReceipt(command)
+    if (receipt.status === 'unknown-after-disconnect') throw new Error(`Core command result is unknown after disconnect: ${command.id}`)
+    if (receipt.status === 'rejected') throw new Error(receipt.error?.message ?? `Core command rejected: ${command.id}`)
+    return { ok: true, view: receipt.view ?? this.lastView ?? (await this.getView()) }
+  }
+
+  /**
+   * 回执语义（§3.3）：提交后连接失败 → unknown-after-disconnect（调用方禁止重放）；
+   * 服务端明确拒绝 → rejected；1.0 legacy {ok:true,view} 也归一化为 accepted。
+   */
+  async dispatchWithReceipt(command: HumanCommand): Promise<CommandReceipt> {
     this.assertActive()
-    const response = await this.fetchImpl(`${this.baseUrl}/api/core/commands`, {
-      method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify(clone(command)),
-    })
-    const body = await this.readJson(response)
-    if (!response.ok) throw new Error(this.errorMessage(body, `Core Command failed: ${response.status}`))
-    const result = body as CoreCommandResult
-    if (result.view) this.lastView = clone(result.view)
-    return clone(result)
+    let body: unknown
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/api/core/commands`, {
+        method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify(clone(command)),
+      })
+      body = await this.readJson(response)
+      if (!response.ok) {
+        return { requestId: command.id, status: 'rejected', error: { code: 'command_rejected', message: this.errorMessage(body, `Core Command failed: ${response.status}`) } }
+      }
+    } catch (error) {
+      return { requestId: command.id, status: 'unknown-after-disconnect', error: { code: 'connection_lost', message: error instanceof Error ? error.message : String(error) } }
+    }
+    const candidate = body as { requestId?: string; status?: CommandReceipt['status']; revision?: number; view?: CoreView; error?: { code: string; message: string }; ok?: boolean }
+    if (candidate && typeof candidate === 'object' && typeof candidate.status === 'string') {
+      const receipt: CommandReceipt = { requestId: candidate.requestId ?? command.id, status: candidate.status }
+      if (candidate.revision !== undefined) receipt.revision = candidate.revision
+      if (candidate.view) { receipt.view = clone(candidate.view); this.lastView = clone(candidate.view) }
+      if (candidate.error) receipt.error = candidate.error
+      return receipt
+    }
+    // 1.0 legacy 形状 {ok:true,view}
+    const view = (candidate as { view?: CoreView } | null)?.view
+    if (view) this.lastView = clone(view)
+    return { requestId: command.id, status: 'accepted', revision: view?.revision, view: view ? clone(view) : undefined }
+  }
+
+  /** 1.1 服务端返回 CoreHealth；1.0 legacy（无 health 端点）返回 null。 */
+  async health(): Promise<CoreHealth | null> {
+    this.assertActive()
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/api/core/health`, { headers: this.headers({ accept: 'application/json' }) })
+      if (!response.ok) return null
+      return clone(await response.json()) as CoreHealth
+    } catch {
+      return null
+    }
+  }
+
+  async capabilities(): Promise<CoreCapability[]> {
+    this.assertActive()
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/api/core/capabilities`, { headers: this.headers({ accept: 'application/json' }) })
+      if (!response.ok) return []
+      const body = await response.json() as { capabilities?: CoreCapability[] }
+      return Array.isArray(body.capabilities) ? clone(body.capabilities) : []
+    } catch {
+      return []
+    }
+  }
+
+  /** 1.1 服务端接受取消并返回 {ok:true}；1.0 legacy 无该端点，返回 false（不视为错误）。 */
+  async cancel(requestId: string): Promise<boolean> {
+    this.assertActive()
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/api/core/cancel`, {
+        method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ requestId }),
+      })
+      return response.ok
+    } catch {
+      return false
+    }
   }
 
   subscribe(listener: (message: CoreConnectionMessage) => void): () => void {
@@ -240,6 +381,8 @@ export class RemoteCoreConnection implements CoreConnection {
   private async open(generation: number, controller: AbortController, reason: 'initial' | 'manual' | 'reconnect', attempt: number): Promise<CoreView> {
     let eventStream: ReadableStream<Uint8Array> | undefined
     try {
+      // 先探测版本（§3.2）：有 health 且支持范围覆盖本客户端 → 1.1；无 health 或探测失败 → 1.0 legacy。
+      await this.negotiateVersion(controller.signal)
       const response = await this.fetchImpl(`${this.baseUrl}/api/core/events`, { headers: this.headers({ accept: 'text/event-stream' }), signal: controller.signal })
       if (!response.ok || !response.body) throw new Error(`Core Events failed: ${response.status}`)
       eventStream = response.body
@@ -248,6 +391,7 @@ export class RemoteCoreConnection implements CoreConnection {
       const view = await this.requestView(controller.signal)
       if (!this.isCurrent(generation)) throw new Error('Connection superseded.')
       this.lastView = clone(view)
+      this.lastDeliveredRevision = Number.NEGATIVE_INFINITY
       this.setState('connected')
       this.emit({ type: 'core.resync', reason, revision: view.revision, view })
       void this.consume(eventStream, generation, controller).catch(error => this.handleDisconnect(error, generation, attempt + 1))
@@ -256,6 +400,27 @@ export class RemoteCoreConnection implements CoreConnection {
       try { await eventStream?.cancel() } catch { /* stream setup may already have failed */ }
       if (this.isCurrent(generation)) void this.handleDisconnect(error, generation, attempt + 1)
       throw error
+    }
+  }
+
+  private async negotiateVersion(signal?: AbortSignal): Promise<void> {
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/api/core/health`, { headers: this.headers({ accept: 'application/json' }), signal })
+      if (!response.ok) { this.negotiated = '1.0'; return }
+      const health = await response.json() as { protocolVersion?: string; minSupportedProtocolVersion?: string; maxSupportedProtocolVersion?: string }
+      const serverVersion = typeof health.protocolVersion === 'string' ? health.protocolVersion : '1.0'
+      const min = typeof health.minSupportedProtocolVersion === 'string' ? health.minSupportedProtocolVersion : serverVersion
+      const max = typeof health.maxSupportedProtocolVersion === 'string' ? health.maxSupportedProtocolVersion : serverVersion
+      if (!supportsProtocolVersion(CORE_PROTOCOL_VERSION, min, max)) {
+        this.negotiated = '1.0'
+        this.setState('disconnected')
+        this.emit({ type: 'connection.error', code: 'protocol_incompatible', message: `协议版本无交集：client ${CORE_PROTOCOL_VERSION} 不在 server 支持范围 [${min}, ${max}] 内，升级方向见 server health。` })
+        throw new Error('protocol_incompatible')
+      }
+      this.negotiated = serverVersion === '1.0' ? '1.0' : '1.1'
+    } catch (error) {
+      if (error instanceof Error && error.message === 'protocol_incompatible') throw error
+      this.negotiated = '1.0'
     }
   }
 
@@ -268,7 +433,25 @@ export class RemoteCoreConnection implements CoreConnection {
         const chunk = await reader.read()
         if (chunk.done) throw new Error('Core event stream closed.')
         parser.push(decoder.decode(chunk.value, { stream: true }), data => {
-          try { this.emit({ type: 'core.event', event: JSON.parse(data) as CoreEvent }) } catch { /* malformed events are ignored; stream stays usable */ }
+          try {
+            const parsed = JSON.parse(data) as unknown
+            if (isCoreEventEnvelope(parsed)) {
+              // 1.1：envelope 携带关联元数据；revision 单调过滤（§3.4），旧事件直接丢弃。
+              const revision = typeof parsed.revision === 'number' ? parsed.revision : undefined
+              if (revision !== undefined) {
+                if (revision < this.lastDeliveredRevision) return
+                this.lastDeliveredRevision = revision
+              }
+              this.emit({ type: 'core.event', event: parsed.payload, envelope: parsed })
+              return
+            }
+            const event = parsed as CoreEvent
+            if (typeof event.revision === 'number') {
+              if (event.revision < this.lastDeliveredRevision) return
+              this.lastDeliveredRevision = event.revision
+            }
+            this.emit({ type: 'core.event', event })
+          } catch { /* malformed events are ignored; stream stays usable */ }
         })
       }
     } finally {
@@ -298,7 +481,8 @@ export class RemoteCoreConnection implements CoreConnection {
   }
 
   private headers(extra: Record<string, string>): Record<string, string> {
-    return { ...extra, authorization: `Bearer ${this.session}` }
+    // 服务端按此头做逐连接版本整形（Q5）；1.0 server 忽略之。
+    return { ...extra, authorization: `Bearer ${this.session}`, 'x-core-protocol-version': CORE_PROTOCOL_VERSION }
   }
 
   private async readJson(response: Response): Promise<unknown> {

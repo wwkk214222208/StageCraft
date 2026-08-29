@@ -39,7 +39,7 @@ test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', asy
     const coreViewRes = await fetch(`${base}/api/core/view`)
     assert.equal(coreViewRes.status, 200)
     const coreView = await coreViewRes.json() as { protocolVersion: string; revision: number; state: { room?: { id?: string }; workflow?: { phase?: string } } }
-    assert.equal(coreView.protocolVersion, '1.0')
+    assert.equal(coreView.protocolVersion, '1.1')
     assert.equal(coreView.state.room?.id, room.id)
     assert.equal(coreView.state.workflow?.phase, room.phase)
 

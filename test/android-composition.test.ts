@@ -22,7 +22,7 @@ test('Android composition starts the real StageCraft solution and exposes lifecy
   const composition = createAndroidComposition(operations(), { onMessage: value => messages.push(value) })
   composition.start()
   assert.equal(messages[0].type, 'connection.state')
-  assert.equal(composition.core.getView().protocolVersion, '1.0')
+  assert.equal(composition.core.getView().protocolVersion, '1.1')
   composition.refresh()
   composition.stop()
   composition.stop()

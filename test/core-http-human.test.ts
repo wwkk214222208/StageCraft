@@ -80,7 +80,7 @@ test('HttpHumanCorePlugin handles Core view, commands and SSE broadcast to multi
   try {
     const viewResponse = await fetch(`${base}/api/core/view`)
     assert.equal(viewResponse.status, 200)
-    assert.equal((await viewResponse.json() as { protocolVersion: string }).protocolVersion, '1.0')
+    assert.equal((await viewResponse.json() as { protocolVersion: string }).protocolVersion, '1.1')
 
     const commandResponse = await fetch(`${base}/api/core/commands`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(command()),
