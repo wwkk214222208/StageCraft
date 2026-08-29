@@ -190,6 +190,37 @@ public final class CoreService extends Service {
                 @Override public void forwardApi(String method, String path, Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
                     forwardApiRequest(method, path, headers, bodyJson, resultConsumer);
                 }
+
+                @Override public void forwardApiTracked(String method, String path, Map<String, String> headers, String bodyJson,
+                                                        java.util.function.Consumer<String> transportIdConsumer,
+                                                        java.util.function.Consumer<String> resultConsumer) {
+                    // R5-4：api-* transport id 既用于 pending 表（结果回传），也作为取消 key——
+                    // CoreDataServer 断开时经 cancel(transportId) → protocol-cancel → JS abort。
+                    final String transportId = "api-" + System.currentTimeMillis() + "-" + pendingApiSequence.incrementAndGet();
+                    pendingApi.put(transportId, resultConsumer);
+                    transportIdConsumer.accept(transportId);
+                    try {
+                        String headersJson = new JSONObject(headers).toString();
+                        main.post(() -> {
+                            if (coreWebView == null) {
+                                java.util.function.Consumer<String> consumer = pendingApi.remove(transportId);
+                                if (consumer != null) consumer.accept("{\"status\":503,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"core_not_ready\\\",\\\"message\\\":\\\"core webview is not available\\\"}}\"}");
+                                return;
+                            }
+                            coreWebView.evaluateJavascript(
+                                "window.CoreHostBridge && window.CoreHostBridge.dispatchRequest("
+                                    + JSONObject.quote(transportId) + ","
+                                    + JSONObject.quote(method) + ","
+                                    + JSONObject.quote(path) + ","
+                                    + JSONObject.quote(headersJson) + ","
+                                    + JSONObject.quote(bodyJson) + ")",
+                                null);
+                        });
+                    } catch (Exception error) {
+                        java.util.function.Consumer<String> consumer = pendingApi.remove(transportId);
+                        if (consumer != null) consumer.accept("{\"status\":500,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"bridge_failed\\\",\\\"message\\\":\\\"" + error.getMessage() + "\\\"}}\"}");
+                    }
+                }
             });
             dataServer.start();
 

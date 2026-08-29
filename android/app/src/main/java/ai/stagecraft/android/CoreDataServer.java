@@ -65,6 +65,20 @@ public final class CoreDataServer {
             // 默认退化为原 forward（兼容旧实现）：不携带协议上下文，语义由各实现方决定。
             forward(bodyJson, resultConsumer);
         }
+
+        /**
+         * R5-4：带 transport 跟踪的协议端点转发。transportIdConsumer 在请求真正发出前
+         * 被回调（transport 层唯一 id），供调用方在客户端断开时经 cancel(transportId) 取消
+         * 底层请求——真实页面请求无显式 requestId 时仍可取消。
+         * 默认实现：生成本地 id 并回调后走 forwardApi（兼容旧实现）。
+         */
+        default void forwardApiTracked(String method, String path, Map<String, String> headers, String bodyJson,
+                                       java.util.function.Consumer<String> transportIdConsumer,
+                                       java.util.function.Consumer<String> resultConsumer) {
+            String transportId = "transport-" + System.nanoTime();
+            transportIdConsumer.accept(transportId);
+            forwardApi(method, path, headers, bodyJson, resultConsumer);
+        }
     }
 
     /**
@@ -344,15 +358,19 @@ public final class CoreDataServer {
     private void forwardApiAndRespond(Socket socket, String method, String path, Map<String, String> headers, String body, CommandForwarder forwarder) {
         final String[] result = new String[1];
         java.util.concurrent.CountDownLatch responded = new java.util.concurrent.CountDownLatch(1);
-        executor.execute(() -> forwarder.forwardApi(method, path, headers, body, json -> { result[0] = json; responded.countDown(); }));
-        // W6-5：等待期间探测客户端断开（页面关闭 → gateway 关上游 → 本 socket EOF）——
-        // 断开则取消 requestId（底层模型请求不得继续运行）并有界结束连接。
+        final String[] transportId = new String[1];
+        executor.execute(() -> forwarder.forwardApiTracked(method, path, headers, body,
+            id -> transportId[0] = id,
+            json -> { result[0] = json; responded.countDown(); }));
+        // W6-5/R5-4：等待期间探测客户端断开（页面关闭 → gateway 关上游 → 本 socket EOF）——
+        // 断开则取消底层请求：body 显式 requestId 优先（协议端点），否则用 transport id
+        // （真实页面业务请求无显式 requestId 时仍可取消）。
         String requestId = "";
         try {
             JSONObject bodyJson = new JSONObject(body.isEmpty() ? "{}" : body);
             requestId = bodyJson.optString("requestId", bodyJson.optString("id", ""));
         } catch (Exception ignored) { }
-        final String cancelRequestId = requestId;
+        final String cancelRequestId = requestId.isEmpty() && transportId[0] != null ? transportId[0] : requestId;
         try {
             long deadline = System.currentTimeMillis() + BRIDGE_TIMEOUT_MS;
             while (responded.getCount() > 0) {

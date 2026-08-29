@@ -387,3 +387,51 @@ test('R3-3：story.import/export 返回稳定 unsupported（SAF 原生通道裁�
     assert.equal(body.error.code, 'unsupported_capability', `${path} 必须稳定 unsupported`)
   }
 })
+
+test('R5-2：story.save-as 无新 ID 时生成新 ID（源 ID 只作复制来源，不覆盖）', async () => {
+  const facade = makeFacade()
+  const saved = new Map<string, unknown>()
+  facade.invokeSync = (operation, input) => {
+    if (operation === 'story.saveAs') {
+      saved.set(String((input as Record<string, unknown>).id), (input as Record<string, unknown>).story)
+      return { ok: true, id: (input as Record<string, unknown>).id }
+    }
+    return { ok: true }
+  }
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('POST', '/api/story/save-as', { story: { id: 'story-source', title: '源故事' }, title: '副本' }))
+  assert.equal(response.status, 200)
+  const body = JSON.parse(await bodyText(response))
+  assert.ok(body.id, '必须返回新 id')
+  assert.notEqual(body.id, 'story-source', '新 id 不得等于源 id')
+  // 源故事未被动过：只有新 id 被写入（saveAs 只写新键）
+  assert.ok(saved.has(body.id), '新 id 必须写入')
+  assert.ok(!saved.has('story-source') || (saved.get('story-source') as { id?: string })?.id === 'story-source', '源 id 不得被覆盖为新 id')
+})
+
+test('R5-3：prompt active scope 统一走 preset.active-scope.set（合并更新 + 持久化可读）', async () => {
+  const facade = makeFacade()
+  const activeStore = new Map<string, string>()
+  facade.invokeSync = (operation, input) => {
+    if (operation === 'preset.list') return { presets: [{ id: 'p1' }], activeByScope: Object.fromEntries(activeStore) }
+    if (operation === 'preset.active-scope.set') {
+      const active = (input as { activeByScope: Record<string, string> }).activeByScope
+      for (const [k, v] of Object.entries(active)) activeStore.set(k, v)
+      return { ok: true }
+    }
+    if (operation === 'preset.save') return { ok: true }
+    return { ok: true }
+  }
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  // 设置 director scope
+  const put1 = await handler.handle(apiRequest('PUT', '/api/prompts/presets', { scope: 'director', activePresetId: 'p-director' }))
+  assert.equal(put1.status, 200)
+  // 再设置 chat scope（合并，不覆盖 director）
+  const put2 = await handler.handle(apiRequest('PUT', '/api/prompts/presets', { scope: 'chat', activePresetId: 'p-chat' }))
+  assert.equal(put2.status, 200)
+  // GET 必须从同一存储读到两个 scope（模拟重启后仍可读）
+  const get = await handler.handle(apiRequest('GET', '/api/prompts/presets'))
+  const body = JSON.parse(await bodyText(get))
+  assert.equal(body.activeByScope.director, 'p-director', 'director scope 必须保留')
+  assert.equal(body.activeByScope.chat, 'p-chat', 'chat scope 必须保留（合并更新）')
+})

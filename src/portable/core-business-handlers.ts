@@ -321,14 +321,18 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     facade.invokeSync('story.save', { story })
     return ok({ ok: true })
   } },
-  // R3-3：save-as 必须传 id/title（AndroidCompositionOperations.story.saveAs 要求 id）
+  // R5-2：save-as 未提供新 ID 时生成新 ID（源 ID 只作复制来源，绝不覆盖源故事）；
+  // 新 ID 符合同一校验规则（story-<timestamp36>，与 AndroidCompositionOperations 同形）
   { handlerId: 'story.save-as', impl: (facade, body) => {
     const story = (body.story ?? body) as { id?: string; title?: string }
-    const title = stringOf(body, 'title') || story?.title || ''
-    const id = stringOf(body, 'id') || story?.id
-    if (!id) return err('故事 id 缺失')
-    const result = facade.invokeSync('story.saveAs', { id, title, story: story ?? body }) as { id?: string; title?: string } | null
-    return ok({ ok: true, id: result?.id ?? id, title: result?.title ?? title })
+    const sourceId = stringOf(body, 'id') || story?.id
+    if (!sourceId) return err('故事 id 缺失')
+    // 显式新 ID 优先；否则生成（时间戳 36 进制，与原生 saveAs 的 id 规则一致）
+    const newId = stringOf(body, 'newId') || stringOf(body, 'new_id') || ('story-' + Date.now().toString(36))
+    const title = stringOf(body, 'title') || story?.title || newId
+    const copy = { ...(story ?? {}), id: newId, title }
+    facade.invokeSync('story.saveAs', { id: newId, title, story: copy })
+    return ok({ ok: true, id: newId, title })
   } },
   // R3-3 裁决：story/archive 导入导出是 zip/文件字节，经 SAF 原生通道（NativeBridge.importStoryDocument/
   // exportDocument）承载；gateway 路由返回明确稳定 unsupported，UI 走同一受测入口（不假挂载 JSON 占位）。
@@ -410,26 +414,34 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   } },
 
   // ── W6-1 补挂：提示词预设（经原生端口 preset）──
-  // R3-2：桌面契约 GET /api/prompts/presets → {presets, activeByScope, modes, gameplayScenarios}
+  // R3-2/R5-3：桌面契约 GET /api/prompts/presets → {presets, activeByScope, modes, gameplayScenarios}；
+  // activeByScope 从 preset.list 的 SQLite 存储读取（非固定空对象）
   { handlerId: 'prompt.presets.list', impl: facade => {
-    const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[] } | null
+    const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[]; activeByScope?: Record<string, string> } | null
     return ok({
       presets: result?.presets ?? [],
-      activeByScope: {},
+      activeByScope: result?.activeByScope ?? {},
       modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }],
       gameplayScenarios: {},
     })
   } },
-  // R3-2：桌面契约 PUT 两种模式 → 裸 PromptPresetState 或 {ok:true, presets}
+  // R3-2/R5-3：桌面契约 PUT 两种模式 → 裸 PromptPresetState 或 {ok:true, presets}；
+  // 切换当前预设走 preset.active-scope.set 同一 SQLite 存储（合并更新，不覆盖其他 scope）
   { handlerId: 'prompt.presets.put', impl: (facade, body) => {
     if (body.preset) {
       facade.invokeSync('preset.save', { preset: body.preset })
       const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[] } | null
       return ok({ ok: true, presets: result?.presets ?? [] })
     }
-    // 切换当前预设：仅持久化 activeByScope
-    facade.invokeSync('secret.set', { key: 'local.prompt.active-scope', value: JSON.stringify({ [stringOf(body, 'scope')]: stringOf(body, 'activePresetId') }) })
-    return ok({ presets: (facade.invokeSync('preset.list', {}) as { presets?: unknown[] } | null)?.presets ?? [], activeByScope: { [stringOf(body, 'scope')]: stringOf(body, 'activePresetId') } })
+    // 切换 scope 的当前预设：读现有 activeByScope → 合并更新 → 写同一 SQLite
+    const scope = stringOf(body, 'scope')
+    const activePresetId = stringOf(body, 'activePresetId')
+    if (!scope || !activePresetId) return err('scope 与 activePresetId 必填')
+    const current = (facade.invokeSync('preset.list', {}) as { activeByScope?: Record<string, string> } | null)?.activeByScope ?? {}
+    const merged = { ...current, [scope]: activePresetId }
+    facade.invokeSync('preset.active-scope.set', { activeByScope: merged })
+    const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[]; activeByScope?: Record<string, string> } | null
+    return ok({ presets: result?.presets ?? [], activeByScope: result?.activeByScope ?? merged })
   } },
   // R3-2：桌面契约 DELETE /api/prompts/presets?id= → {ok:true, presets}
   { handlerId: 'prompt.presets.delete', impl: (facade, body) => {

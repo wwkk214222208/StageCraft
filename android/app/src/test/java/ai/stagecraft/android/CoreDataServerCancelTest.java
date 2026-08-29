@@ -1,6 +1,7 @@
 package ai.stagecraft.android;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -189,6 +190,61 @@ public final class CoreDataServerCancelTest {
             }
             long elapsed = System.currentTimeMillis() - started;
             assertTrue("断开后必须在有界时间内释放连接", elapsed < 6000);
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void r5BusinessRequestWithoutRequestIdCancelsViaTransportId() throws Exception {
+        // R5-4：真实页面 /api/turn 不带显式 requestId（app.js api() 不注入）→ 断开时
+        // forwarder.cancel 必须收到 transport id（forwardApiTracked 回调），底层模型请求停止。
+        CoreDataServer server = new CoreDataServer("secret", DIRECT, SILENT);
+        server.start();
+        final AtomicReference<String> cancelled = new AtomicReference<>();
+        final AtomicBoolean bridgeCalled = new AtomicBoolean();
+        final AtomicReference<String> transportId = new AtomicReference<>();
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"POST\",\"pattern\":\"/api/turn\",\"owner\":\"core\",\"capability\":\"room.command\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"turn.start\"}"
+                + "]}" , null));
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApiTracked(String method, String path, java.util.Map<String, String> headers, String bodyJson,
+                                                    java.util.function.Consumer<String> transportIdConsumer,
+                                                    java.util.function.Consumer<String> resultConsumer) {
+                bridgeCalled.set(true);
+                transportIdConsumer.accept("transport-test-1");
+                transportId.set("transport-test-1");
+                // 故意不回调：模拟长模型请求
+            }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { cancelled.set(requestId); }
+        });
+        try {
+            Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), server.getPort());
+            socket.setSoTimeout(5000);
+            OutputStream output = socket.getOutputStream();
+            // 真实页面请求：无 requestId/id 字段（app.js api() 只发业务 payload）
+            String body = "{\"text\":\"hello\",\"requiredRoleIds\":[\"seraphina\"]}";
+            output.write(("POST /api/turn HTTP/1.1\r\n"
+                + "host: 127.0.0.1\r\n"
+                + "x-core-nonce: secret\r\n"
+                + "content-type: application/json\r\n"
+                + "content-length: " + body.getBytes(StandardCharsets.UTF_8).length + "\r\n"
+                + "connection: close\r\n\r\n" + body).getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            long bridgeDeadline = System.currentTimeMillis() + 3000;
+            while (!bridgeCalled.get() && System.currentTimeMillis() < bridgeDeadline) {
+                Thread.sleep(20);
+            }
+            assertTrue("业务路由必须经 forwardApiTracked 转发", bridgeCalled.get());
+            socket.close();
+            long deadline = System.currentTimeMillis() + 15000;
+            while (cancelled.get() == null && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            assertNotNull("无显式 requestId 时也必须取消（transport id）", cancelled.get());
+            assertEquals("取消必须用 transport id", "transport-test-1", cancelled.get());
         } finally {
             server.stop();
         }

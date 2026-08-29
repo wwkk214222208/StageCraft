@@ -386,6 +386,64 @@ public final class CoreDataServerTest {
         }
     }
 
+    @Test public void r5QueryPreservedInForwardApiGet() throws Exception {
+        // R5-1：GET /api/story/get?id=s1 → forwardApi 必须收到含 query 的完整路径
+        CoreDataServer server = startServer("secret");
+        final String[] receivedPath = new String[1];
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"GET\",\"pattern\":\"/api/story/get\",\"owner\":\"core\",\"capability\":\"story.read\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"story.get\"}"
+                + "]}" , null));
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApi(String method, String path, java.util.Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                receivedPath[0] = path;
+                resultConsumer.accept("{\"status\":200,\"body\":\"{\\\"id\\\":\\\"s1\\\"}\"}");
+            }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            String response = get("http://127.0.0.1:" + server.getPort() + "/api/story/get?id=s1", "secret");
+            assertTrue("GET query 必须转发并回执: " + response, response.startsWith("200 "));
+            assertEquals("forwardApi 必须收到含 query 的完整路径", "/api/story/get?id=s1", receivedPath[0]);
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test public void r5QueryPreservedInForwardApiDelete() throws Exception {
+        // R5-1：DELETE /api/roles/memories?roleId=seraphina → forwardApi 收到含 query 的完整路径
+        CoreDataServer server = startServer("secret");
+        final String[] receivedPath = new String[1];
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"DELETE\",\"pattern\":\"/api/roles/memories\",\"owner\":\"core\",\"capability\":\"role.memories\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"role.memories.delete\"}"
+                + "]}" , null));
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApi(String method, String path, java.util.Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                receivedPath[0] = path;
+                resultConsumer.accept("{\"status\":200,\"body\":\"{\\\"ok\\\":true}\"}");
+            }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            java.net.HttpURLConnection connection = (java.net.HttpURLConnection) new java.net.URL("http://127.0.0.1:" + server.getPort() + "/api/roles/memories?roleId=seraphina").openConnection();
+            connection.setRequestMethod("DELETE");
+            connection.setRequestProperty("x-core-nonce", "secret");
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(5000);
+            int status = connection.getResponseCode();
+            connection.disconnect();
+            assertEquals(200, status);
+            assertEquals("DELETE 的 forwardApi 必须收到含 query 的完整路径", "/api/roles/memories?roleId=seraphina", receivedPath[0]);
+        } finally {
+            server.stop();
+        }
+    }
+
     @Test public void desktopOnlyRouteReturnsUnsupportedCapability() throws Exception {
         CoreDataServer server = startServer("secret");
         server.setRouteRegistry(RouteRegistry.parse(
