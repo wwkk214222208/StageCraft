@@ -69,7 +69,7 @@ public final class NativeOperationGuard {
             return enforceLegacyOnly ? "legacy-main-core 例外已移除（Gate D）：" + operation : null;
         }
         if (mainHost.contains(operation)) return null;
-        return "operation 未登记于 NativeOperationRegistry：" + operation;
+        return "operation 未登记于 NativeOperationRegistry（legacy=" + legacyMainCore.size() + ", mainHost=" + mainHost.size() + "）：" + operation;
     }
 
     /** :core 侧（W5 CoreNative 桥）专用：只允许 core-native。 */
@@ -86,4 +86,6 @@ public final class NativeOperationGuard {
     }
 
     public java.util.Set<String> mainHost() { return new java.util.HashSet<>(mainHost); }
+
+    public java.util.Set<String> legacyMainCore() { return new java.util.HashSet<>(legacyMainCore); }
 }

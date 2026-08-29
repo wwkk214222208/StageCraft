@@ -18,12 +18,36 @@
  * 并指定 fixPackage/fixDeadline；'待评审'状态不得流入 W4/W6。裁决明细见 custom/docs/pending/API-OWNER-INVENTORY.zh.md。
  */
 
-export const REGISTRY_VERSION = '1.0.0-w1-r'
+export const REGISTRY_VERSION = '1.0.0-gateb'
 
 export type ApiOwner = 'core' | 'main-host' | 'desktop-only' | 'deprecated'
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 /** CP-W1：草案条目的裁决状态——'待评审'不得流入 W4/W6；fixPackage 指向修复工作包，fixDeadline 以 Gate 为界。 */
 export type RouteAdjudication = 'accepted' | 'revised' | 'deferred'
+
+/**
+ * 认证/代理策略（Gate B：不能以 auth:none 代替）：
+ *  - local-open    ：本地明开放（main-host 本地回应 / deprecated 迁移 adapter / desktop-only 的本地稳定错误）
+ *  - core-nonce    ：必须经 UI gateway 注入 nonce 代理到 CoreDataServer（远程模式下由配对凭据等价保护）
+ *  - remote-paired ：仅在远程端声明对应 capability 且携带配对凭据时可代理（desktop-only 专属）
+ */
+export type AuthPolicy =
+  | { kind: 'local-open' }
+  | { kind: 'core-nonce' }
+  | { kind: 'remote-paired' }
+
+/** 按 owner 派生认证/代理策略（单一事实来源，禁止逐路由手写漂移）。 */
+export function authPolicyFor(owner: ApiOwner): AuthPolicy {
+  switch (owner) {
+    case 'core':
+      return { kind: 'core-nonce' }
+    case 'desktop-only':
+      return { kind: 'remote-paired' }
+    case 'main-host':
+    case 'deprecated':
+      return { kind: 'local-open' }
+  }
+}
 
 export interface ApiStreamContract {
   contentType: 'text/event-stream'
@@ -48,6 +72,8 @@ export interface ApiRoute {
   adjudication?: RouteAdjudication
   fixPackage?: string
   fixDeadline?: string
+  /** 认证/代理策略：按 owner 派生（Gate B 显式化，见 authPolicyFor）。 */
+  authPolicy?: AuthPolicy
 }
 
 const CORE_PROTOCOL_STREAM: ApiStreamContract = {
@@ -288,6 +314,7 @@ export function generateRegistryJson(): string {
       owner: route.owner,
       capability: route.capability,
       auth: route.auth,
+      authPolicy: authPolicyFor(route.owner),
       requestSchema: route.requestSchema ?? null,
       responseSchema: route.responseSchema ?? null,
       handlerId: route.handlerId,

@@ -133,13 +133,17 @@ test('匹配语义：method 精确、静态优先于参数、更具体优先（Q
 test('registry JSON 产物确定性生成、结构完整且与构建资产一致（Q6/CP-W1）', () => {
   const first = generateRegistryJson()
   assert.equal(first, generateRegistryJson(), '两次生成必须逐字节一致')
-  const parsed = JSON.parse(first) as { registryVersion: string; routes: Array<{ order: number; method: string; pattern: string; owner: string; handlerId: string; capability: string; stream: unknown; note: string | null; adjudication: string | null }> }
+  const parsed = JSON.parse(first) as { registryVersion: string; routes: Array<{ order: number; method: string; pattern: string; owner: string; handlerId: string; capability: string; stream: unknown; note: string | null; adjudication: string | null; authPolicy: { kind: string } | null }> }
   assert.equal(parsed.routes.length, API_ROUTES.length)
   for (const [index, route] of parsed.routes.entries()) {
     assert.equal(route.order, index, '生成序必须稳定')
     assert.ok(['core', 'main-host', 'desktop-only', 'deprecated'].includes(route.owner))
     assert.ok(route.capability && route.handlerId)
+    assert.ok(route.authPolicy && ['local-open', 'core-nonce', 'remote-paired'].includes(route.authPolicy.kind), 'authPolicy 必须显式派生（Gate B：不能全部 auth:none）')
   }
+  const kindByOwner = (owner: string) => new Set(parsed.routes.filter(r => r.owner === owner).map(r => r.authPolicy!.kind))
+  assert.deepEqual([...kindByOwner('core')], ['core-nonce'])
+  assert.deepEqual([...kindByOwner('main-host')], ['local-open'])
   const sseRoutes = parsed.routes.filter(route => route.stream)
   assert.ok(sseRoutes.some(route => route.pattern === '/api/core/events'), 'core SSE 必须登记流契约')
 
