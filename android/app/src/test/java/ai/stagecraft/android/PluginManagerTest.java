@@ -67,7 +67,20 @@ public final class PluginManagerTest {
     @Test public void managerBuildsAndPersistsLaunchPlan() throws Exception {
         File file = tempStore();
         PluginManager manager = new PluginManager(new PluginConfigStore(file));
-        manager.setEnabled("stagecraft.chat", true);
+        // 注入构建期 catalog（真实 plugin-manifest.json；JVM 测试直读仓库资产）
+        File manifest = new File("src/main/assets/plugin-manifest.json");
+        assertTrue("plugin-manifest.json 必须存在", manifest.exists());
+        String json = new String(Files.readAllBytes(manifest.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        JSONObject root = new JSONObject(json);
+        JSONArray catalog = root.optJSONArray("plugins");
+        assertNotNull(catalog);
+        assertTrue("catalog 必须含内置插件", catalog.length() >= 4);
+        // 手工注入 catalog（loadCatalog 需要 Context；测试用直接构造）
+        for (int i = 0; i < catalog.length(); i++) {
+            JSONObject plugin = catalog.optJSONObject(i);
+            manager.catalog().add(new PluginManager.PluginCatalog(
+                plugin.optString("id"), plugin.optString("version"), plugin.optString("manifestHash")));
+        }
         JSONObject plan = manager.regenerateLaunchPlan();
         assertNotNull(plan);
         assertEquals("1.1", plan.optString("protocolVersion"));
@@ -76,12 +89,14 @@ public final class PluginManagerTest {
         boolean found = false;
         for (int i = 0; i < plugins.length(); i++) {
             JSONObject plugin = plugins.optJSONObject(i);
-            if ("stagecraft.chat".equals(plugin.optString("id"))) {
+            if ("stagecraft.solution".equals(plugin.optString("id"))) {
                 found = true;
                 assertTrue("启用插件必须 enabled", plugin.optBoolean("enabled"));
+                assertFalse("manifestHash 不得是占位 unknown", "unknown".equals(plugin.optString("manifestHash")));
+                assertFalse("manifestHash 不得为空", plugin.optString("manifestHash").isEmpty());
             }
         }
-        assertTrue("launch plan 必须含启用插件", found);
+        assertTrue("launch plan 必须含内置插件（catalog 驱动）", found);
         // plan 持久化：新实例可读同一 plan
         PluginManager reloaded = new PluginManager(new PluginConfigStore(file));
         assertNotNull("launch plan 必须持久化", reloaded.buildLaunchPlan());
@@ -90,17 +105,29 @@ public final class PluginManagerTest {
     @Test public void regeneratedPlanMarksQuarantinedDisabled() throws Exception {
         File file = tempStore();
         PluginManager manager = new PluginManager(new PluginConfigStore(file));
-        manager.setEnabled("bad.plugin", true);
+        // 注入 catalog（复用真实资产）
+        File manifest = new File("src/main/assets/plugin-manifest.json");
+        String json = new String(Files.readAllBytes(manifest.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        JSONArray catalog = new JSONObject(json).optJSONArray("plugins");
+        for (int i = 0; i < catalog.length(); i++) {
+            JSONObject plugin = catalog.optJSONObject(i);
+            manager.catalog().add(new PluginManager.PluginCatalog(
+                plugin.optString("id"), plugin.optString("version"), plugin.optString("manifestHash")));
+        }
+        String quarantinedId = catalog.optJSONObject(0).optString("id");
         JSONArray quarantine = new JSONArray();
-        quarantine.put(new JSONObject().put("pluginId", "bad.plugin"));
+        quarantine.put(new JSONObject().put("pluginId", quarantinedId));
         manager.updateQuarantine(quarantine);
         JSONObject plan = manager.regenerateLaunchPlan();
         JSONArray plugins = plan.optJSONArray("plugins");
+        boolean found = false;
         for (int i = 0; i < plugins.length(); i++) {
             JSONObject plugin = plugins.optJSONObject(i);
-            if ("bad.plugin".equals(plugin.optString("id"))) {
+            if (quarantinedId.equals(plugin.optString("id"))) {
+                found = true;
                 assertFalse("隔离插件必须 enabled=false", plugin.optBoolean("enabled"));
             }
         }
+        assertTrue("隔离插件必须仍在 plan 中（enabled=false）", found);
     }
 }

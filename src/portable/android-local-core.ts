@@ -452,6 +452,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     bridgeVersion: ANDROID_CORE_BRIDGE_VERSION,
     protocolVersion: CORE_PROTOCOL_VERSION,
     roomId: LOCAL_ROOM_ID,
+    /** W6-1：原生端口同步调用（story/archive/preset/secret/billing；CoreBusinessHandler 用）。 */
+    invokeSync: (operation: string, input: Json = {}): unknown => invokeSync(operation, input),
     start,
     stop: (): void => { composition?.stop(); sink = undefined },
     reconnect: (): void => composition?.start(),

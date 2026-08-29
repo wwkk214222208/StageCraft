@@ -54,6 +54,17 @@ public final class CoreServiceStateMachine {
         return true;
     }
 
+    /** W6-2：插件隔离 → DEGRADED（Core 仍可用，能力降级；计划 §6.3 失败插件使 Core 降级而非崩溃）。 */
+    public boolean onPluginQuarantined() {
+        failureCode = "plugin_quarantined";
+        try {
+            lifecycle.transition(CoreLifecycle.State.DEGRADED);
+            return true;
+        } catch (CoreLifecycle.IllegalTransition error) {
+            return false; // 非运行态（starting 等）保持原状态；后续 ready 时由 onBridgeReady 恢复
+        }
+    }
+
     /** 优雅停止：→ STOPPING；随后释放完成 → ABSENT。 */
     public boolean onStopRequested() {
         try {

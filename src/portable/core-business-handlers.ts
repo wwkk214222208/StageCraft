@@ -16,7 +16,10 @@ import type { ApiRequest, ApiResponse, PortableApiHandler } from './api-handler.
 import { jsonResponse, readJsonBody } from './api-handler.ts'
 import { API_ROUTES } from '../api-route-registry.ts'
 
-/** 组合根 facade 的可用方法签名（与 android-local-core.ts 的 localCore 对齐）。 */export interface CoreFacade {
+/** 组合根 facade 的可用方法签名（与 android-local-core.ts 的 localCore 对齐）。 */
+export interface CoreFacade {
+  /** W6-1：原生端口同步调用（story/archive/preset/secret/billing 等 core-native 操作，经 CoreNativeBridge）。 */
+  invokeSync: (operation: string, input?: Record<string, unknown>) => unknown
   getRoom: () => unknown
   getView: () => unknown
   submitTurn: (input: { text: string; requiredRoleIds?: string[] }) => Promise<unknown>
@@ -74,6 +77,11 @@ export interface CoreBusinessHandlerEntry {
 }
 
 const ok = (value: unknown): { status: number; body: unknown } => ({ status: 200, body: value })
+/** W6-1 逐条裁决：明确 unsupported 的稳定错误（评审允许路径；前端 DEGRADED 表已有容错）。 */
+const unsupported = (message: string): { status: number; body: unknown } => ({
+  status: 503,
+  body: { error: { code: 'unsupported_capability', message } },
+})
 const stringOf = (body: Record<string, unknown>, key: string): string => typeof body[key] === 'string' ? body[key] as string : ''
 const stringArray = (body: Record<string, unknown>, key: string): string[] => Array.isArray(body[key]) ? (body[key] as unknown[]).filter((item): item is string => typeof item === 'string') : []
 const recordOf = (body: Record<string, unknown>, key: string): Record<string, string> => {
@@ -224,6 +232,108 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   // ── 故事 ──
   { handlerId: 'story.list', impl: facade => ok({ stories: facade.stories() }) },
   { handlerId: 'story.get', impl: async (facade, body) => { const story = await facade.story(stringOf(body, 'id')); return ok({ story }) } },
+
+  // ── W6-1 补挂：故事写入/导入导出（经原生端口 core-native 操作）──
+  { handlerId: 'story.create', impl: (facade, body) => {
+    const result = facade.invokeSync('story.create', { title: stringOf(body, 'title'), opening: body.opening ?? '', playerCharacter: body.playerCharacter ?? {}, roles: Array.isArray(body.roles) ? body.roles : [] })
+    return ok(result ?? { ok: true })
+  } },
+  { handlerId: 'story.delete', impl: (facade, body) => { facade.invokeSync('story.delete', { id: stringOf(body, 'id') }); return ok({ ok: true }) } },
+  { handlerId: 'story.save', impl: (facade, body) => { facade.invokeSync('story.save', { story: body.story ?? body }); return ok({ ok: true }) } },
+  { handlerId: 'story.save-as', impl: (facade, body) => { facade.invokeSync('story.saveAs', { story: body.story ?? body }); return ok({ ok: true }) } },
+  { handlerId: 'story.import', impl: (facade, body) => { facade.invokeSync('archive.import', { archive: body.archive ?? body }); return ok({ ok: true }) } },
+  { handlerId: 'story.export', impl: (facade, body) => { const result = facade.invokeSync('archive.export', { storyId: stringOf(body, 'storyId') }); return ok(result ?? { ok: true }) } },
+
+  // ── W6-1 补挂：存档（经原生端口）──
+  { handlerId: 'archive.list', impl: facade => { const result = facade.invokeSync('archive.list', {}) as { files?: unknown[] } | null; return ok(result ?? { files: [] }) } },
+  { handlerId: 'archive.save', impl: (facade, body) => { facade.invokeSync('archive.save', { name: stringOf(body, 'name'), archive: body.archive ?? {} }); return ok({ ok: true, name: stringOf(body, 'name') }) } },
+  { handlerId: 'archive.load', impl: (facade, body) => { const result = facade.invokeSync('archive.load', { name: stringOf(body, 'name') }); return ok(result ?? { ok: true }) } },
+  { handlerId: 'archive.delete', impl: (facade, body) => { facade.invokeSync('archive.delete', { name: stringOf(body, 'name') }); return ok({ ok: true }) } },
+  { handlerId: 'archive.export', impl: (facade, body) => { const result = facade.invokeSync('archive.export', { storyId: stringOf(body, 'storyId') }); return ok(result ?? { ok: true }) } },
+  { handlerId: 'archive.import', impl: (facade, body) => { facade.invokeSync('archive.import', { archive: body.archive ?? body }); return ok({ ok: true }) } },
+
+  // ── W6-1 补挂：供应商扩展（经原生端口 secret）──
+  { handlerId: 'provider.delete', impl: (facade, body) => {
+    // 删除后回退默认：组合根 setProvider 重新解析（无默认时保持未配置）
+    facade.invokeSync('secret.remove', { key: 'local.provider.meta' })
+    return ok({ ok: true })
+  } },
+  { handlerId: 'provider.default-role', impl: (facade, body) => {
+    const meta = facade.invokeSync('secret.get', { key: 'local.provider.meta' }) as { found?: boolean; value?: string } | null
+    const parsed = meta?.found && meta.value ? JSON.parse(meta.value) as { defaults?: Record<string, unknown> } : { defaults: {} }
+    parsed.defaults = { ...(parsed.defaults ?? {}), role: stringOf(body, 'providerId') }
+    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify(parsed) })
+    return ok({ ok: true })
+  } },
+  { handlerId: 'provider.director', impl: (facade, body) => {
+    const meta = facade.invokeSync('secret.get', { key: 'local.provider.meta' }) as { found?: boolean; value?: string } | null
+    const parsed = meta?.found && meta.value ? JSON.parse(meta.value) as { defaults?: Record<string, unknown> } : { defaults: {} }
+    parsed.defaults = { ...(parsed.defaults ?? {}), director: stringOf(body, 'providerId') }
+    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify(parsed) })
+    return ok({ ok: true })
+  } },
+  { handlerId: 'provider.director-thinking', impl: (facade, body) => {
+    // 导演思考强度：与角色 thinking 同语义（组合根无独立设置，映射为默认强度持久化）
+    const meta = facade.invokeSync('secret.get', { key: 'local.provider.meta' }) as { found?: boolean; value?: string } | null
+    const parsed = meta?.found && meta.value ? JSON.parse(meta.value) as { defaults?: Record<string, unknown> } : { defaults: {} }
+    parsed.defaults = { ...(parsed.defaults ?? {}), directorThinking: stringOf(body, 'strength') || 'balanced' }
+    facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify(parsed) })
+    return ok({ ok: true })
+  } },
+
+  // ── W6-1 补挂：计费/用量（经原生端口 secret 持久化；billing 为本地模拟）──
+  { handlerId: 'billing.summary', impl: facade => {
+    const raw = facade.invokeSync('secret.get', { key: 'local.billing.state' }) as { found?: boolean; value?: string } | null
+    const state = raw?.found && raw.value ? JSON.parse(raw.value) as Record<string, unknown> : {}
+    return ok({ billing: state.billing ?? { totalCost: 0 }, usage: state.usage ?? { turns: 0, tokens: 0 } })
+  } },
+  { handlerId: 'billing.prices.get', impl: facade => {
+    const raw = facade.invokeSync('secret.get', { key: 'local.billing.prices' }) as { found?: boolean; value?: string } | null
+    return ok(raw?.found && raw.value ? JSON.parse(raw.value) : { prices: [] })
+  } },
+  { handlerId: 'billing.prices.put', impl: (facade, body) => { facade.invokeSync('secret.set', { key: 'local.billing.prices', value: JSON.stringify(body) }); return ok({ ok: true }) } },
+  { handlerId: 'billing.reset', impl: facade => { facade.invokeSync('secret.set', { key: 'local.billing.state', value: JSON.stringify({ billing: { totalCost: 0 }, usage: { turns: 0, tokens: 0 } }) }); return ok({ ok: true }) } },
+  { handlerId: 'billing.usage', impl: facade => {
+    const raw = facade.invokeSync('secret.get', { key: 'local.billing.state' }) as { found?: boolean; value?: string } | null
+    const state = raw?.found && raw.value ? JSON.parse(raw.value) as { usage?: Record<string, unknown> } : {}
+    return ok(state.usage ?? { turns: 0, tokens: 0 })
+  } },
+
+  // ── W6-1 补挂：提示词预设（经原生端口 preset）──
+  { handlerId: 'prompt.presets.list', impl: facade => {
+    const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[] } | null
+    return ok(result ?? { presets: [] })
+  } },
+  { handlerId: 'prompt.presets.put', impl: (facade, body) => { facade.invokeSync('preset.save', { preset: body.preset ?? body }); return ok({ ok: true }) } },
+  { handlerId: 'prompt.presets.delete', impl: (facade, body) => { facade.invokeSync('preset.delete', { id: stringOf(body, 'id') }); return ok({ ok: true }) } },
+  { handlerId: 'prompt.presets.export', impl: facade => {
+    const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[] } | null
+    return ok({ presets: result?.presets ?? [] })
+  } },
+  { handlerId: 'prompt.private-toggles.get', impl: () => ok({}) },
+  { handlerId: 'prompt.private-toggles.put', impl: (facade, body) => {
+    facade.invokeSync('secret.set', { key: 'local.prompt.private-toggles', value: JSON.stringify(body.toggles ?? body) })
+    return ok({ ok: true })
+  } },
+
+  // ── W6-1 逐条裁决（明确 unsupported + 前端 DEGRADED 容错；评审允许路径）──
+  // state.rollback/branch/scene-revision：Android 无正文回滚/分支语义（桌面专属）→ 稳定 unsupported
+  { handlerId: 'state.rollback', impl: () => unsupported('正文回滚仅桌面支持（Android 本地无状态分支语义）') },
+  { handlerId: 'state.branch', impl: () => unsupported('正文分支仅桌面支持（Android 本地无状态分支语义）') },
+  { handlerId: 'state.scene-revision', impl: () => unsupported('正文字段回滚仅桌面支持') },
+  // provider.discover：Android 无模型发现服务 → 稳定 unsupported
+  { handlerId: 'provider.discover', impl: () => unsupported('模型发现仅桌面支持（Android 手动配置供应商）') },
+  // story.sync-role(s)：角色同步是桌面与远程间的同步语义，本地单设备无意义 → 稳定 unsupported
+  { handlerId: 'story.sync-role', impl: () => unsupported('角色同步仅远程/桌面同步流程使用') },
+  { handlerId: 'story.sync-roles', impl: () => unsupported('角色同步仅远程/桌面同步流程使用') },
+  // prompt.import-st：ST 卡导入是桌面创作流程 → 稳定 unsupported
+  { handlerId: 'prompt.import-st', impl: () => unsupported('ST 卡导入仅桌面支持') },
+  // creator.*：创作者工作台是桌面创作流程（Android 无创作工作台 UI）→ 稳定 unsupported
+  { handlerId: 'creator.preview', impl: () => unsupported('创作者工作台仅桌面支持') },
+  { handlerId: 'creator.apply', impl: () => unsupported('创作者工作台仅桌面支持') },
+  { handlerId: 'creator.revert', impl: () => unsupported('创作者工作台仅桌面支持') },
+  // st-cards.import：ST 卡导入仅桌面 → 稳定 unsupported
+  { handlerId: 'creator.st-cards.import', impl: () => unsupported('ST 卡导入仅桌面支持') },
 ]
 
 /**

@@ -214,3 +214,52 @@ test('W6：恢复联动——Core 断连自动导航恢复页，恢复后回本�
   assert.match(activity, /returning to local UI/, 'Core 恢复必须回本地 UI')
   assert.match(activity, /core recovered/, '恢复后自动回本地')
 })
+
+test('W6-1 整改：Core 业务路由必须全部挂载或明确裁决（无 handler_not_mounted 遗留）', () => {
+  const business = read('..', '..', '..', '..', 'src', 'portable', 'core-business-handlers.ts')
+  assert.match(business, /story\.create/, 'story 写入必须挂载')
+  assert.match(business, /archive\.list/, 'archive 必须挂载')
+  assert.match(business, /billing\.summary/, 'billing 必须挂载')
+  assert.match(business, /prompt\.presets\.list/, 'prompt 必须挂载')
+  assert.match(business, /unsupported_capability/, '逐条裁决必须用稳定 unsupported')
+  assert.match(business, /state\.rollback/, 'state 裁决必须存在')
+  assert.match(business, /creator\.preview/, 'creator 裁决必须存在')
+  // 组合根必须暴露原生端口（invokeSync 供业务 handler 使用）
+  const localCore = read('..', '..', '..', '..', 'src', 'portable', 'android-local-core.ts')
+  assert.match(localCore, /invokeSync: \(operation/, '组合根必须暴露 invokeSync')
+})
+
+test('W6-2 整改：PluginManager 消费构建期 catalog，宿主 API 提供插件状态读写', () => {
+  const manager = read('java', 'ai', 'stagecraft', 'android', 'PluginManager.java')
+  assert.match(manager, /plugin-manifest\.json/, '必须加载构建期插件目录')
+  assert.match(manager, /loadCatalog/, '必须有 catalog 加载')
+  assert.match(manager, /computePluginSetHash/, 'pluginSetHash 必须确定性计算')
+  assert.match(manager, /manifestHash/, 'plan 必须含真实 manifestHash')
+  const bridge = read('java', 'ai', 'stagecraft', 'android', 'NativeBridge.java')
+  assert.match(bridge, /getPluginState/, '页面必须可读插件状态')
+  assert.match(bridge, /setPluginEnabled/, '页面必须可改插件启用')
+  const service = read('java', 'ai', 'stagecraft', 'android', 'CoreService.java')
+  assert.match(service, /onPluginQuarantined/, '隔离必须走 degraded 而非 crashed')
+  const stateMachine = read('java', 'ai', 'stagecraft', 'android', 'CoreServiceStateMachine.java')
+  assert.match(stateMachine, /onPluginQuarantined/, '状态机必须支持 degraded 迁移')
+})
+
+test('W6-3 整改：main-host handler 逐条真实能力或明确稳定 unsupported', () => {
+  const activity = read('java', 'ai', 'stagecraft', 'android', 'MainActivity.java')
+  assert.match(activity, /host\.remote\.revoke/, 'revoke 必须实现')
+  assert.match(activity, /clearSession/, 'revoke 必须清会话')
+  assert.match(activity, /host\.remote\.pairing-code/, 'pairing-code 必须裁决')
+  assert.match(activity, /host\.remote\.sync\.put/, 'sync.put 必须裁决')
+  assert.match(activity, /host\.update\.check/, 'update.check 必须裁决')
+  assert.match(activity, /host\.update\.download/, 'update.download 必须裁决')
+  // 裁决必须稳定 unsupported（非 501 占位）
+  const unsupportedCount = (activity.match(/unsupported_capability/g) ?? []).length
+  assert.ok(unsupportedCount >= 4, `必须 ≥4 处明确 unsupported 裁决，实际 ${unsupportedCount}`)
+})
+
+test('W6-5 整改：CoreDataServer 客户端断开必须取消底层 requestId', () => {
+  const server = read('java', 'ai', 'stagecraft', 'android', 'CoreDataServer.java')
+  assert.match(server, /isClientGone/, '必须有客户端断开探测')
+  assert.match(server, /forwarder\.cancel\(cancelRequestId\)/, '断开必须取消 requestId')
+  assert.match(server, /client disconnected while awaiting bridge result/, '必须记录取消事件')
+})

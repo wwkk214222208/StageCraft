@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -28,6 +29,8 @@ public final class NativeBridge implements AutoCloseable {
     private final Activity activity;
     private final WebView webView;
     private final RemoteSessionStore sessionStore;
+    /** W6-2：主进程插件管理（desired/effective/quarantined 读写；MainActivity 注入）。 */
+    private volatile PluginManager pluginManager;
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
     private final AtomicLong connectionGeneration = new AtomicLong();
     private final AtomicLong operationGeneration = new AtomicLong();
@@ -55,6 +58,53 @@ public final class NativeBridge implements AutoCloseable {
 
     @JavascriptInterface public boolean localCoreAllowed() {
         return embeddedCore.valid();
+    }
+
+    /** W6-2：注入主进程 PluginManager（MainActivity 创建后调用；Core 不可用时仍可用）。 */
+    public void setPluginManager(PluginManager manager) {
+        this.pluginManager = manager;
+    }
+
+    /**
+     * W6-2：插件管理状态读取（desired/effective/quarantined + catalog）。
+     * 页面经 StageCraftNative.getPluginState() 调用；Core 不可用时仍可用（配置在主进程）。
+     */
+    @JavascriptInterface public String getPluginState() {
+        PluginManager manager = pluginManager;
+        if (manager == null) return errorJson("Plugin manager is not available.");
+        try {
+            JSONObject result = new JSONObject();
+            result.put("desired", manager.desiredEnabled() == null ? new JSONObject() : manager.desiredEnabled());
+            result.put("quarantined", manager.quarantined() == null ? new JSONArray() : manager.quarantined());
+            result.put("effective", new JSONArray(manager.effectiveEnabled()));
+            JSONArray catalog = new JSONArray();
+            for (PluginManager.PluginCatalog entry : manager.catalog()) {
+                catalog.put(new JSONObject()
+                    .put("id", entry.id)
+                    .put("version", entry.version)
+                    .put("manifestHash", entry.manifestHash));
+            }
+            result.put("catalog", catalog);
+            return result.toString();
+        } catch (Exception error) {
+            return errorJson(error.getMessage() == null ? "Plugin state read failed." : error.getMessage());
+        }
+    }
+
+    /**
+     * W6-2：写插件启用意图（改配置 → 提示重启生效；调用方触发 host.restart 重启 Core）。
+     * 返回 {ok, restartRequired: true}。
+     */
+    @JavascriptInterface public String setPluginEnabled(String id, boolean enabled) {
+        PluginManager manager = pluginManager;
+        if (manager == null) return errorJson("Plugin manager is not available.");
+        if (id == null || id.isEmpty()) return errorJson("Plugin id is required.");
+        try {
+            manager.setEnabled(id, enabled);
+            return new JSONObject().put("ok", true).put("restartRequired", true).toString();
+        } catch (Exception error) {
+            return errorJson(error.getMessage() == null ? "Plugin enable failed." : error.getMessage());
+        }
     }
 
     /** 当前已配对会话的 Bearer token（仅供 StageCraftWebViewClient 注入，不暴露给页面 JS）。 */

@@ -73,6 +73,8 @@ const mainHostOperations: NativeOperation[] = [
   { name: 'syncRemoteFetch', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
   { name: 'updateDownloadAndInstall', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
   { name: 'clearSession', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'getPluginState', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: 'W6-2：插件管理状态读取（desired/effective/quarantined/catalog）；Core 不可用时仍可用。' },
+  { name: 'setPluginEnabled', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: 'W6-2：插件启用意图修改（改配置 → 重启 Core 生效）。' },
 ]
 
 /**

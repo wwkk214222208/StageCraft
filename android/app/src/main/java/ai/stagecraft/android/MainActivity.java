@@ -60,8 +60,7 @@ public final class MainActivity extends Activity {
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
         EmbeddedCoreArtifact.Verification embeddedCore = EmbeddedCoreArtifact.verify(this);
         bridge = new NativeBridge(this, webView, new RemoteSessionStore(this), embeddedCore);
-        webView.addJavascriptInterface(bridge, "StageCraftNative");
-        // Enable browser dialogs used by the Web UI (prompt/confirm/alert).
+        webView.addJavascriptInterface(bridge, "StageCraftNative");        // Enable browser dialogs used by the Web UI (prompt/confirm/alert).
         // WebView 默认不实现 onJsPrompt（prompt() 会静默失败）——「与电脑同步」绑定等流程依赖它输入地址/配对码。
         webChromeClient = new WebChromeClient() {
             @Override public boolean onJsPrompt(WebView view, String url, String message, String defaultValue, JsPromptResult result) {
@@ -124,6 +123,10 @@ public final class MainActivity extends Activity {
         // W6：Core 进程连接与插件配置存储（Core 不可用时仍可用）。
         pluginConfigStore = new PluginConfigStore(this);
         pluginManager = new PluginManager(pluginConfigStore);
+        // W6-2：加载构建期插件目录（launch plan 消费真实 manifest/hash）
+        pluginManager.loadCatalog(this);
+        // W6-2：注入 PluginManager 到原生桥（页面经 StageCraftNative.getPluginState/setPluginEnabled 访问）
+        if (bridge != null) bridge.setPluginManager(pluginManager);
         coreConnection = new CoreConnection(this, new CoreConnection.Listener() {
             @Override public void onEndpointReady(JSONObject endpoint) {
                 handleEndpointReady(endpoint);
@@ -140,6 +143,10 @@ public final class MainActivity extends Activity {
             @Override public void onStatus(JSONObject summary) {
                 lastCoreStatus = summary.optString("status", "");
                 GateALog.i("core status: " + lastCoreStatus);
+                // W6-2：隔离记录变化（plugin_quarantined）→ 主动刷新 quarantine → PluginManager 回写
+                if ("plugin_quarantined".equals(summary.optString("failureCode"))) {
+                    fetchQuarantineFromCore();
+                }
             }
 
             @Override public void onCoreDisconnected() {
@@ -209,7 +216,7 @@ public final class MainActivity extends Activity {
         }
     }
 
-    /** W6：main-host 路由的宿主实现（配对/同步/版本/更新/重启走 NativeBridge 或稳定占位）。 */
+    /** W6-3：main-host 路由的宿主实现（配对/同步/版本/更新/重启；逐条真实能力或明确稳定 unsupported）。 */
     private String handleMainHostRoute(String handlerId, String method, String path, Map<String, String> headers, String bodyJson) throws Exception {
         switch (handlerId) {
             case "host.version": {
@@ -229,14 +236,78 @@ public final class MainActivity extends Activity {
                 result.put("body", body.toString());
                 return result.toString();
             }
+            case "host.remote.revoke": {
+                // W6-3：撤销配对（真实能力）——清会话/连接/凭据 → 回配对页
+                if (bridge != null) {
+                    runOnUiThread(() -> {
+                        bridge.clearSession();
+                        showPairingPage();
+                    });
+                }
+                return "{\"status\":200,\"body\":\"{\\\"ok\\\":true,\\\"revoked\\\":true}\"}";
+            }
+            case "host.remote.pairing-code": {
+                // W6-3 裁决：配对码由远程桌面生成（Android 只显示配对状态）；本地 HTTP 面返回
+                // 明确稳定 unsupported，配对流程走 NativeBridge 原生通道（页面已有配对 UI）。
+                JSONObject result = new JSONObject();
+                result.put("status", 503);
+                JSONObject body = new JSONObject();
+                body.put("error", new JSONObject()
+                    .put("code", "unsupported_capability")
+                    .put("message", "配对码由远程桌面生成；Android 本地请使用配对页原生通道"));
+                result.put("body", body.toString());
+                return result.toString();
+            }
+            case "host.remote.sync.put": {
+                // W6-3 裁决：同步写入经 NativeBridge.syncRemoteFetch 异步回调承载（配对凭据不进页面
+                // HTTP 面），本地 HTTP 面返回明确稳定 unsupported；页面同步 UI 走原生通道。
+                JSONObject result = new JSONObject();
+                result.put("status", 503);
+                JSONObject body = new JSONObject();
+                body.put("error", new JSONObject()
+                    .put("code", "unsupported_capability")
+                    .put("message", "同步写入经原生桥通道承载（配对凭据不进页面 HTTP 面）"));
+                result.put("body", body.toString());
+                return result.toString();
+            }
+            case "host.update.check": {
+                // W6-3 裁决：Android 无更新检查服务器（更新经 APK 分发）；返回当前版本 + 稳定 unsupported
+                String version = "unknown";
+                try (java.io.InputStream input = getAssets().open("version.json")) {
+                    byte[] bytes = new byte[input.available()];
+                    int read = input.read(bytes);
+                    version = new JSONObject(new String(bytes, 0, Math.max(0, read), java.nio.charset.StandardCharsets.UTF_8)).optString("version", "unknown");
+                }
+                JSONObject result = new JSONObject();
+                result.put("status", 503);
+                JSONObject body = new JSONObject();
+                body.put("currentVersion", version);
+                body.put("error", new JSONObject()
+                    .put("code", "unsupported_capability")
+                    .put("message", "Android 无更新检查服务器；更新经 APK 分发"));
+                result.put("body", body.toString());
+                return result.toString();
+            }
+            case "host.update.download": {
+                // W6-3 裁决：APK 下载/安装经 NativeBridge.updateDownloadAndInstall 原生通道
+                // （PackageInstaller 需 Activity 上下文）；HTTP 面返回明确稳定 unsupported。
+                JSONObject result = new JSONObject();
+                result.put("status", 503);
+                JSONObject body = new JSONObject();
+                body.put("error", new JSONObject()
+                    .put("code", "unsupported_capability")
+                    .put("message", "APK 更新经原生通道（PackageInstaller），页面请走更新入口"));
+                result.put("body", body.toString());
+                return result.toString();
+            }
             case "host.restart": {
                 // 重启 Core（插件配置变更后生效）：请求优雅停止 → BIND_AUTO_CREATE 自动重建
                 if (coreConnection != null) coreConnection.requestStop();
                 return "{\"status\":200,\"body\":\"{\\\"ok\\\":true,\\\"restarting\\\":true}\"}";
             }
             default:
-                // 迁移期占位：配对/更新等仍走 NativeBridge 原生通道，HTTP 面返回稳定不可用
-                return "{\"status\":501,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"host_handler_unavailable\\\",\\\"message\\\":\\\"handler 迁移中: " + handlerId + "\\\"}}\"}";
+                // 未实现的 main-host handler：明确稳定不可用（不应静默 404）
+                return "{\"status\":501,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"host_handler_unavailable\\\",\\\"message\\\":\\\"handler 未实现: " + handlerId + "\\\"}}\"}";
         }
     }
 
@@ -306,6 +377,8 @@ public final class MainActivity extends Activity {
     /** Package-visible test hook; does not expose the WebView outside the app package. */
     WebView testingWebView() { return webView; }
     WebChromeClient testingWebChromeClient() { return webChromeClient; }
+    /** W6-4：instrumentation 测试用 gateway 端口（无 gateway 时 -1）。 */
+    int gatewayPortForTest() { return gateway == null ? -1 : gateway.getPort(); }
 
     /** Open the packaged full Web UI directly, without passing through the pairing renderer. */
     void showLocalUi() {

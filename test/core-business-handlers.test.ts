@@ -28,6 +28,15 @@ function makeFacade(): CoreFacade & { calls: string[] } {
   const record = (name: string) => (...args: unknown[]) => { calls.push(name + ':' + args.map(arg => JSON.stringify(arg)).join(',')); return Promise.resolve({ ok: true }) }
   return {
     calls,
+    invokeSync: (operation: string, input?: Record<string, unknown>) => {
+      calls.push('invokeSync:' + operation + ':' + JSON.stringify(input ?? {}))
+      if (operation === 'story.create') return { ok: true, id: 'story-created', title: input?.title }
+      if (operation === 'archive.list') return { files: ['存档A'] }
+      if (operation === 'preset.list') return { presets: [{ id: 'p1' }] }
+      if (operation === 'secret.get') return { found: false }
+      if (operation === 'archive.export') return { ok: true, url: 'archive://x' }
+      return { ok: true }
+    },
     getRoom: () => ({ revision: 3, roomId: 'r1' }),
     getView: () => ({ revision: 3 }),
     submitTurn: record('submitTurn'),
@@ -160,17 +169,72 @@ test('W6：角色记忆路由调组合根方法', async () => {
   assert.ok(facade.calls.some(call => call.startsWith('storeNpcMemories:')), '必须调用 storeNpcMemories')
 })
 
-test('W6：未挂载的 core 业务路由返回稳定 handler_not_mounted（含 handlerId）', async () => {
+test('W6-1：全部 81 条 core 业务路由已挂载（无 handler_not_mounted）', () => {
+  const coverage = buildBusinessCoverage(API_ROUTES)
+  const unmounted = coverage.filter(item => !item.mounted)
+  assert.equal(unmounted.length, 0, `必须全部挂载，未挂载: ${unmounted.map(item => item.handlerId).join(', ')}`)
+  assert.equal(coverage.length, 81, '必须覆盖全部 81 条 core 业务路由')
+})
+
+test('W6-1：逐条裁决的 unsupported 路由返回稳定 unsupported_capability', async () => {
   const facade = makeFacade()
   const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
-  // 找一个 registry 有但未挂载的 handlerId（如 story.sync-role 或 creator.preview）
-  const unhandled = CORE_BUSINESS_ROUTES.find(route => !CORE_BUSINESS_HANDLERS.some(entry => entry.handlerId === route.handlerId))
-  assert.ok(unhandled, 'registry 必须存在未挂载业务路由')
-  const response = await handler.handle(apiRequest('POST', unhandled.pattern, {}))
-  assert.equal(response.status, 503)
+  for (const path of ['/api/state/rollback', '/api/state/branch', '/api/creator/preview', '/api/st-cards/import', '/api/providers/discover', '/api/prompts/import-st']) {
+    const response = await handler.handle(apiRequest('POST', path, {}))
+    assert.equal(response.status, 503, `${path} 必须 503`)
+    const body = JSON.parse(await bodyText(response))
+    assert.equal(body.error.code, 'unsupported_capability', `${path} 必须稳定 unsupported_capability`)
+  }
+})
+
+test('W6-1：story.create 经原生端口真实调用并返回响应形状', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('POST', '/api/stories', { title: '新剧本', opening: '开场' }))
+  assert.equal(response.status, 200)
+  assert.ok(facade.calls.some(call => call.startsWith('invokeSync:story.create:')), '必须调用原生 story.create')
   const body = JSON.parse(await bodyText(response))
-  assert.equal(body.error.code, 'handler_not_mounted')
-  assert.equal(body.error.handlerId, unhandled.handlerId)
+  assert.equal(body.id, 'story-created')
+  assert.equal(body.title, '新剧本')
+})
+
+test('W6-1：archive.list 经原生端口返回文件清单', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('GET', '/api/archive/list'))
+  assert.equal(response.status, 200)
+  assert.ok(facade.calls.some(call => call.startsWith('invokeSync:archive.list:')), '必须调用原生 archive.list')
+  const body = JSON.parse(await bodyText(response))
+  assert.deepEqual(body.files, ['存档A'])
+})
+
+test('W6-1：prompt.presets.list 经原生端口返回预设', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('GET', '/api/prompts/presets'))
+  assert.equal(response.status, 200)
+  assert.ok(facade.calls.some(call => call.startsWith('invokeSync:preset.list:')), '必须调用原生 preset.list')
+  const body = JSON.parse(await bodyText(response))
+  assert.equal(body.presets[0].id, 'p1')
+})
+
+test('W6-1：billing.summary 返回稳定响应形状（secret 兜底空态）', async () => {
+  const facade = makeFacade()
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('GET', '/api/billing'))
+  assert.equal(response.status, 200)
+  const body = JSON.parse(await bodyText(response))
+  assert.ok('billing' in body && 'usage' in body, 'billing.summary 必须返回 {billing, usage}')
+})
+
+test('W6-1：原生端口失败 → 500 handler_failed（失败语义）', async () => {
+  const facade = makeFacade()
+  facade.invokeSync = () => { throw new Error('database write failed') }
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('POST', '/api/stories', { title: 'x' }))
+  assert.equal(response.status, 500)
+  const body = JSON.parse(await bodyText(response))
+  assert.equal(body.error.code, 'handler_failed')
 })
 
 test('W6：参数 pattern 匹配与路径参数提取', () => {

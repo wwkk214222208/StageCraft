@@ -1,0 +1,33 @@
+{
+  "catalogVersion": "1.0.0",
+  "plugins": [
+    {
+      "id": "stagecraft.human.http",
+      "version": "1.0.0",
+      "kind": "human",
+      "title": "Core Protocol Human Adapter",
+      "manifestHash": "a567b98c"
+    },
+    {
+      "id": "stagecraft.llm.android",
+      "version": "1.0.0",
+      "kind": "llm",
+      "title": "Android Native LLM Router",
+      "manifestHash": "91d82985"
+    },
+    {
+      "id": "stagecraft.solution",
+      "version": "1.0.0",
+      "kind": "solution",
+      "title": "StageCraft Solution（Chat/Director/Management）",
+      "manifestHash": "7dabebc8"
+    },
+    {
+      "id": "stagecraft.state.android",
+      "version": "1.0.0",
+      "kind": "repository",
+      "title": "Android State Repository",
+      "manifestHash": "c041e4f3"
+    }
+  ]
+}

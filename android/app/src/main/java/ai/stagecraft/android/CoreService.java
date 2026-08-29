@@ -265,13 +265,16 @@ public final class CoreService extends Service {
                     pluginQuarantine = message.optJSONArray("quarantine");
                     GateALog.i("plugin-report ok=" + message.optBoolean("ok", false)
                         + " quarantine=" + (pluginQuarantine == null ? 0 : pluginQuarantine.length()));
-                    // 有隔离记录 → degraded（计划 §6.3：失败插件使 Core 降级，管理器仍可用）
+                    // 有隔离记录 → degraded（计划 §6.3：失败插件使 Core 降级，管理器仍可用）；
+                    // 无隔离 → 保持当前状态（ready 幂等；degraded 由后续 core-ready 恢复）
                     if (pluginQuarantine != null && pluginQuarantine.length() > 0) {
-                        stateMachine.onFailure("plugin_quarantined");
+                        stateMachine.onPluginQuarantined();
                     }
                     if (dataServer != null) {
                         dataServer.setHealthJson(buildHealth(null).toString());
                     }
+                    // W6-2：事件驱动——隔离记录变化经 Binder status 广播（主进程 onStatus 触发 fetch）
+                    broadcastStatus();
                 }
                 case "log" -> GateALog.i("core-host: " + message.optString("text"));
                 default -> GateALog.w("unknown bridge message type: " + type);

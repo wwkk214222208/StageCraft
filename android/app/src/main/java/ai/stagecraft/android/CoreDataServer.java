@@ -310,18 +310,51 @@ public final class CoreDataServer {
         }
     }
 
-    /**
-     * W4 合流：经 CommandForwarder.forwardApi 转发协议端点请求并写回响应。
+    /** W6-5：探测客户端是否已断开（读其输入流 EOF=FIN；带超时避免阻塞）。 */
+    private static boolean isClientGone(Socket socket) {
+        try {
+            socket.setSoTimeout(100);
+            int probe = socket.getInputStream().read();
+            return probe < 0;
+        } catch (java.net.SocketTimeoutException alive) {
+            return false; // 客户端仍连接（无数据）
+        } catch (IOException closed) {
+            return true; // 连接已重置/关闭
+        } catch (Exception closed) {
+            return true; // 任何异常（含 Socket closed）视为断开
+        }
+    }
+
+    /** W4 合流：经 CommandForwarder.forwardApi 转发协议端点请求并写回响应。
      * 回调交付 {"status":<http>, "body":"<json>"}；超时回 504。
      */
     private void forwardApiAndRespond(Socket socket, String method, String path, Map<String, String> headers, String body, CommandForwarder forwarder) {
         final String[] result = new String[1];
         java.util.concurrent.CountDownLatch responded = new java.util.concurrent.CountDownLatch(1);
         executor.execute(() -> forwarder.forwardApi(method, path, headers, body, json -> { result[0] = json; responded.countDown(); }));
+        // W6-5：等待期间探测客户端断开（页面关闭 → gateway 关上游 → 本 socket EOF）——
+        // 断开则取消 requestId（底层模型请求不得继续运行）并有界结束连接。
+        String requestId = "";
         try {
-            if (!responded.await(BRIDGE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                respond(socket, 504, "application/json", "{\"error\":{\"code\":\"bridge_timeout\",\"message\":\"core bridge did not respond within " + BRIDGE_TIMEOUT_MS + "ms\"}}");
-                return;
+            JSONObject bodyJson = new JSONObject(body.isEmpty() ? "{}" : body);
+            requestId = bodyJson.optString("requestId", bodyJson.optString("id", ""));
+        } catch (Exception ignored) { }
+        final String cancelRequestId = requestId;
+        try {
+            long deadline = System.currentTimeMillis() + BRIDGE_TIMEOUT_MS;
+            while (responded.getCount() > 0) {
+                if (System.currentTimeMillis() > deadline) {
+                    respond(socket, 504, "application/json", "{\"error\":{\"code\":\"bridge_timeout\",\"message\":\"core bridge did not respond within " + BRIDGE_TIMEOUT_MS + "ms\"}}");
+                    return;
+                }
+                if (isClientGone(socket)) {
+                    // 客户端已断开：取消底层请求（长模型请求不得继续运行），有界结束连接
+                    logger.i("core data: client disconnected while awaiting bridge result; cancelling requestId=" + cancelRequestId);
+                    if (!cancelRequestId.isEmpty()) {
+                        try { forwarder.cancel(cancelRequestId); } catch (Exception ignored) { }
+                    }
+                    return;
+                }                responded.await(100, java.util.concurrent.TimeUnit.MILLISECONDS);
             }
         } catch (InterruptedException latchWait) {
             Thread.currentThread().interrupt();

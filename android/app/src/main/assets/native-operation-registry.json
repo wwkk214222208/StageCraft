@@ -17,6 +17,8 @@
     "syncRemoteFetch",
     "updateDownloadAndInstall",
     "clearSession",
+    "getPluginState",
+    "setPluginEnabled",
     "invokeSync",
     "invokeAsync"
   ],
@@ -154,6 +156,16 @@
     },
     {
       "name": "clearSession",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "getPluginState",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "setPluginEnabled",
       "owner": "main-host",
       "legacyExposure": "main"
     },
