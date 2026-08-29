@@ -68,6 +68,14 @@ public final class MainActivity extends Activity {
                     .show();
                 return true;
             }
+
+            @Override public void onProgressChanged(WebView view, int newProgress) {
+                // page-ready 证据（评审 R6）：进度 100 且 URL 含 mode=remote 时落盘——
+                // 恢复链验证以此证明远程页"完成加载"而非仅调用了 loadUrl
+                if (newProgress >= 100 && view.getUrl() != null && view.getUrl().contains("mode=remote")) {
+                    GateALog.i("main webview page ready: " + view.getUrl());
+                }
+            }
         };
         webView.setWebChromeClient(webChromeClient);
         // 本地完整 Web UI 走 127.0.0.1 环回服务器（http://localhost 常规 Web 语义，见 LocalLoopbackServer）

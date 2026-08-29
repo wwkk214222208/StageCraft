@@ -529,24 +529,48 @@ public class GateASpikeActivity extends Activity {
     /** 恢复链验证（评审：恢复页可见/远程入口可用/Core 重启重连）。所有视图交互均在 UI 线程。 */
     private void checkRecoveryChain() throws Exception {
         awaitEndpoint(30_000);
-        // 1. 杀 :core → 恢复视图必须由故障状态自动驱动出现（评审 R5：不得手动 show）
+        // 0. 状态清理（评审 R6 P1-1）：明确隐藏恢复视图并清空上一项测试残留，
+        //    确认面板 GONE 后，本次 kill 触发的显示才能作为因果证据
+        runOnUiThread(() -> recoveryPanel.setVisibility(View.GONE));
+        rendererGoneStatusAt = null;
+        long preHideDeadline = System.currentTimeMillis() + 3_000;
+        boolean preStateGone = false;
+        while (System.currentTimeMillis() < preHideDeadline) {
+            final boolean[] gone = new boolean[1];
+            runOnUiThread(() -> gone[0] = recoveryPanel.getVisibility() == View.GONE);
+            Thread.sleep(200);
+            if (gone[0]) { preStateGone = true; break; }
+        }
+        // 1. 杀 :core → 恢复视图必须由故障状态自动驱动出现：
+        //    普通 kill 时 Core 无机会发送 status=failed，断连事件（onServiceDisconnected）
+        //    即为驱动源；记录从 kill 到自动显示的时延
         JSONObject dead = endpoint;
+        long killedAt = System.currentTimeMillis();
         android.os.Process.killProcess(dead.optInt("pid"));
-        long showDeadline = System.currentTimeMillis() + 10_000;
+        long showDeadline = killedAt + 10_000;
         final boolean[] panelVisible = new boolean[1];
         final String[] statusText = new String[1];
-        while (System.currentTimeMillis() < showDeadline && !panelVisible[0]) {
+        long autoShownAt = 0;
+        while (System.currentTimeMillis() < showDeadline && autoShownAt == 0) {
+            final long[] shown = new long[1];
+            runOnUiThread(() -> {
+                shown[0] = recoveryPanel.getVisibility() == View.VISIBLE ? System.currentTimeMillis() : 0;
+            });
+            Thread.sleep(200);
+            if (shown[0] > 0) autoShownAt = shown[0];
             runOnUiThread(() -> {
                 panelVisible[0] = recoveryPanel.getVisibility() == View.VISIBLE;
                 statusText[0] = recoveryStatusText.getText().toString();
             });
-            Thread.sleep(200);
         }
         Thread.sleep(200);
         // 2. 远程入口可操作：UI 线程点击 → MainActivity(mode=remote) 打开、实际加载远程页并到栈顶
         //    （评审 R5：仅栈顶不足以证明——同时校验文件日志中 mode=remote 的 WebView 加载记录）
-        long remoteEntryStart = System.currentTimeMillis();
-        runOnUiThread(() -> recoveryRemoteEntryButton.performClick());
+        final long[] remoteClickAt = new long[1];
+        runOnUiThread(() -> {
+            recoveryRemoteEntryButton.performClick();
+            remoteClickAt[0] = System.currentTimeMillis();
+        });
         long deadline = System.currentTimeMillis() + 8_000;
         boolean remoteEntryAtTop = false;
         while (System.currentTimeMillis() < deadline && !remoteEntryAtTop) {
@@ -563,11 +587,21 @@ public class GateASpikeActivity extends Activity {
             }
             if (!remoteEntryAtTop) Thread.sleep(200);
         }
-        long pageDeadline = System.currentTimeMillis() + 5_000;
+        long pageDeadline = System.currentTimeMillis() + 8_000;
         boolean remotePageLoaded = false;
         while (System.currentTimeMillis() < pageDeadline && !remotePageLoaded) {
-            if (readMainProcessLog().contains("/index.html?mode=remote")) remotePageLoaded = true;
-            else Thread.sleep(200);
+            // page-ready 证据必须晚于本轮远程入口点击（runId 隔离同类校验，评审 R6 P1-2）
+            String mainLog = readMainProcessLog();
+            for (String line : mainLog.split("\n")) {
+                if (line.contains("main webview page ready") && line.contains("mode=remote")) {
+                    String millis = line.split("  ")[0];
+                    if (millis.matches("\\d+") && Long.parseLong(millis) > remoteClickAt[0]) {
+                        remotePageLoaded = true;
+                        break;
+                    }
+                }
+            }
+            if (!remotePageLoaded) Thread.sleep(300);
         }
         // 3. 回到恢复视图 → 点击重新启动 Core → Core 重启 → 页面重连（ready）
         runOnUiThread(() -> {
@@ -594,12 +628,14 @@ public class GateASpikeActivity extends Activity {
             Thread.sleep(300);
         }
         hideRecoveryView();
-        boolean pass = panelVisible[0] && statusText[0].contains("Core 不可用") && remoteEntryAtTop && remotePageLoaded && coreRestartedAgain;
+        boolean pass = panelVisible[0] && statusText[0].contains("Core 不可用") && remoteEntryAtTop && remotePageLoaded && coreRestartedAgain && autoShownAt > 0;
         record("recovery-chain", pass, new JSONObject()
             .put("recoveryViewVisible", panelVisible[0])
             .put("statusTextShown", statusText[0].contains("Core 不可用"))
             .put("remoteEntryAtTop", remoteEntryAtTop)
             .put("remotePageLoaded", remotePageLoaded)
+            .put("recoveryAutoShowLatencyMs", autoShownAt == 0 ? -1 : autoShownAt - killedAt)
+            .put("preStateGone", preStateGone)
             .put("coreRestartedAndReconnected", coreRestartedAgain)
             .put("note", "恢复页正式 UI 为 W6 交付；本项验证 spike 级恢复链路（状态可见/重启可操作/远程入口实际加载远程页/重连就绪）"));
     }
@@ -678,6 +714,9 @@ public class GateASpikeActivity extends Activity {
             .put("restarted", restarted)
             .put("secondHandshakeReady", secondHandshake);
         record("renderer-crash-recovery", restarted && secondHandshake && renderGoneConfirmed, evidence);
+        // 清除残留状态：本检查触发的恢复视图不得残留到下一项检查（评审 R6 P1-1）
+        hideRecoveryView();
+        Thread.sleep(800);
     }
 
     /** 读取主进程文件日志（验证远程页实际加载，评审 R5）。 */
