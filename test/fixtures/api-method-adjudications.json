@@ -1,0 +1,41 @@
+{
+  "$comment": "CP-W1 method-unknown 人工裁决表：前端字面量经变量中转（三元赋值后经 api(endpoint) 调用），扫描器无法静态绑定 method。每条给出裁决 method、证据与依据。Gate B 冻结后此表必须清零或逐条由调用点重构消除。",
+  "adjudications": [
+    {
+      "path": "/api/chat/director-decide",
+      "methods": ["POST"],
+      "evidence": "app.js: api(director ? '/api/chat/director-decide' : '/api/chat/speak-all', {}) —— api() helper 为 POST",
+      "basis": "api() helper 统一 method POST；desktop app-boot.ts 与 shim 均只实现 POST"
+    },
+    {
+      "path": "/api/chat/speak-all",
+      "methods": ["POST"],
+      "evidence": "app.js: api(director ? '/api/chat/director-decide' : '/api/chat/speak-all', {}) —— 同上",
+      "basis": "同 /api/chat/director-decide"
+    },
+    {
+      "path": "/api/roles/memories",
+      "methods": ["POST"],
+      "evidence": "app.js: const endpoint = isNew ? '/api/roles/memories' : '/api/roles/memories/update'; api(endpoint, payload)",
+      "basis": "api() helper 为 POST；desktop POST /api/roles/memories 已实现（GET 由 room 快照路径另行覆盖）"
+    },
+    {
+      "path": "/api/roles/memories/update",
+      "methods": ["POST"],
+      "evidence": "app.js: 同上三元赋值后经 api(endpoint, payload) 调用",
+      "basis": "api() helper 为 POST；desktop POST /api/roles/memories/update 已实现"
+    },
+    {
+      "path": "/api/state/rollback",
+      "methods": ["POST"],
+      "evidence": "app.js: const endpoint = isRollback ? '/api/state/rollback' : '/api/state/branch'; 后经 api(endpoint) 调用",
+      "basis": "api() helper 为 POST；desktop/shim 均只实现 POST"
+    },
+    {
+      "path": "/api/state/branch",
+      "methods": ["POST"],
+      "evidence": "app.js: 同上三元赋值",
+      "basis": "同 /api/state/rollback"
+    }
+  ]
+}

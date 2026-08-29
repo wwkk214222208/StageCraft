@@ -1,16 +1,21 @@
 /**
- * NativeOperationRegistry —— JavaScript bridge 操作面的进程归属唯一事实来源（计划 v0.4 §1.4 / Q9 裁决）。
+ * NativeOperationRegistry —— JavaScript bridge 操作面的进程归属唯一事实来源（计划 v0.4 §1.4 / Q9 / CP-W1）。
  *
- * HTTP 路由归属（src/api-route-registry.ts）不能替代 JS interface 的能力隔离：
- *  - core-native  ：只允许注册到 Core 进程 Core WebView 的暴露面（CoreNative/WebMessagePort）。
- *  - main-host    ：只允许注册到主进程主 WebView 的暴露面（迁移期别名 StageCraftHost/StageCraftNative）。
- *  - forbidden    ：两侧均不得注册（如曾提议后废弃的操作）。
+ * HTTP 路由归属（src/api-route-registry.ts）不能替代 JS interface 的能力隔离。CP-W1 要求
+ * 同时表达"当前 legacy 暴露面"与"目标暴露面"，不得用排除 invokeSync/invokeAsync 的测试
+ * 宣称已经不相交：
  *
- * 两套暴露集合的不相交性由 test/native-operation-registry.test.ts 自动断言；
- * 扫描来源：AndroidCompositionOperations.java（invokeSync 分派键）与 src/portable/android-local-core.ts（SYNC_OPERATIONS）。
+ *  - owner（目标态）：core-native 只注册进 Core WebView 暴露面；main-host 只注册进主 WebView
+ *    暴露面；forbidden 两侧均不得注册。两份目标 allowlist 必须不相交（测试以真实 Java 分派键证明）。
+ *  - legacyExposure（当前态）：`legacy-main-core` 表示该操作今天仍可从主 WebView 经通用
+ *    invokeSync/invokeAsync 入口执行——这是迁移债务，如实登记；Gate D 强制移除该例外，届时
+ *    Java 分派层必须拒绝主 WebView 对 core-native 的跨 owner 调用。
+ *  - 新建的主/Core bridge 从第一天起必须执行各自 allowlist；legacy 例外集合封闭，不得新增 operation。
  */
 
 export type NativeOperationOwner = 'core-native' | 'main-host' | 'forbidden'
+/** 当前态：main=仅主 WebView；core=仅 Core WebView；legacy-main-core=主 WebView 经 legacy 通用入口可达（债务）；none=当前不可达。 */
+export type LegacyExposure = 'main' | 'core' | 'legacy-main-core' | 'none'
 
 export interface NativeOperation {
   /** invokeSync/invokeAsync 的 operation 名，或直接 JS interface 方法名。 */
@@ -18,70 +23,110 @@ export interface NativeOperation {
   owner: NativeOperationOwner
   /** surface 说明该操作经哪个通道进入：generic bridge dispatch 或直接 interface 方法。 */
   surface: 'generic-dispatch' | 'interface-method'
+  legacyExposure: LegacyExposure
   note?: string
 }
 
-export const NATIVE_OPERATIONS: readonly NativeOperation[] = [
-  // ── Core 平台端口（§5.3：Core 进程独占；Core WebView 暴露面） ──────────────
-  { name: 'asset.read', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'asset.write', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'asset.remove', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'secret.get', owner: 'core-native', surface: 'generic-dispatch', note: '只对 Core runtime 开放；插件 API 只得受控模型请求能力（§5.5）。' },
-  { name: 'secret.set', owner: 'core-native', surface: 'generic-dispatch', note: 'Q10：provider key 写入只发生在 Core 进程。' },
-  { name: 'secret.remove', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'core-state.commit', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'core-state.restore', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'stagecraft.room.get', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'stagecraft.repository', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'stories.list', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'story.read', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'story.create', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'story.delete', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'story.save', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'story.saveAs', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'preset.list', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'preset.save', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'preset.delete', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'preset.active-scope.set', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'archive.list', owner: 'core-native', surface: 'generic-dispatch', note: '存档文件存储随 W5 迁入 Core 进程（与 ApiRouteRegistry archive owner 一致）。' },
-  { name: 'archive.load', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'archive.save', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'archive.delete', owner: 'core-native', surface: 'generic-dispatch' },
-  { name: 'model.request', owner: 'core-native', surface: 'generic-dispatch', note: '流式回调经进程内桥逐事件投递；凭据不回传页面（§5.5）。' },
-  { name: 'model.cancel', owner: 'core-native', surface: 'generic-dispatch' },
-
-  // ── 主进程宿主端口（主 WebView 暴露面；迁移期别名 StageCraftNative） ────────
-  { name: 'localCoreAllowed', owner: 'main-host', surface: 'interface-method' },
-  { name: 'ready', owner: 'main-host', surface: 'interface-method' },
-  { name: 'pair', owner: 'main-host', surface: 'interface-method', note: '远程配对；凭据不进入页面（Q10）。' },
-  { name: 'reconnect', owner: 'main-host', surface: 'interface-method' },
-  { name: 'disconnect', owner: 'main-host', surface: 'interface-method' },
-  { name: 'refresh', owner: 'main-host', surface: 'interface-method' },
-  { name: 'dispatch', owner: 'main-host', surface: 'interface-method', note: '远程模式命令传输通道（RemoteCoreConnection）；本地模式命令走同源 gateway，不经此口。' },
-  { name: 'loadMedia', owner: 'main-host', surface: 'interface-method' },
-  { name: 'chooseStoryArchive', owner: 'main-host', surface: 'interface-method', note: 'SAF 文件选择属宿主边界（§1.4）；选中的内容交给 core owner API 处理。' },
-  { name: 'chooseCharacterCard', owner: 'main-host', surface: 'interface-method' },
-  { name: 'exportDocument', owner: 'main-host', surface: 'interface-method' },
-  { name: 'syncStatus', owner: 'main-host', surface: 'interface-method' },
-  { name: 'syncPair', owner: 'main-host', surface: 'interface-method' },
-  { name: 'syncRemoteFetch', owner: 'main-host', surface: 'interface-method' },
-  { name: 'updateDownloadAndInstall', owner: 'main-host', surface: 'interface-method' },
-  { name: 'clearSession', owner: 'main-host', surface: 'interface-method' },
+const coreNativeOperations: NativeOperation[] = [
+  { name: 'asset.read', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'asset.write', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'asset.remove', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'secret.get', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core', note: '只对 Core runtime 开放；插件 API 只得受控模型请求能力（§5.5）。' },
+  { name: 'secret.set', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core', note: 'Q10：provider key 写入只发生在 Core 进程。' },
+  { name: 'secret.remove', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'core-state.commit', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'core-state.restore', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'stagecraft.room.get', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'stagecraft.repository', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'stories.list', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'story.read', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'story.create', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'story.delete', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'story.save', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'story.saveAs', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'preset.list', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'preset.save', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'preset.delete', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'preset.active-scope.set', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'archive.list', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core', note: '存档文件存储随 W5 迁入 Core 进程（与 ApiRouteRegistry archive owner 一致）。' },
+  { name: 'archive.load', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'archive.save', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'archive.delete', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'model.request', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core', note: '流式回调经进程内桥逐事件投递；凭据不回传页面（§5.5）。' },
+  { name: 'model.cancel', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
 ]
 
-export function nativeOperationsByOwner(owner: NativeOperationOwner): string[] {
-  return NATIVE_OPERATIONS.filter(operation => operation.owner === owner).map(operation => operation.name)
+const mainHostOperations: NativeOperation[] = [
+  { name: 'localCoreAllowed', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'ready', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'pair', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: '远程配对；凭据不进入页面（Q10）。' },
+  { name: 'reconnect', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'disconnect', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'refresh', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'dispatch', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: '远程模式命令传输通道（RemoteCoreConnection）；本地模式命令走同源 gateway，不经此口。' },
+  { name: 'loadMedia', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'chooseStoryArchive', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: 'SAF 文件选择属宿主边界（§1.4）；选中的内容交给 core owner API 处理。' },
+  { name: 'chooseCharacterCard', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'exportDocument', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'syncStatus', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'syncPair', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'syncRemoteFetch', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'updateDownloadAndInstall', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+  { name: 'clearSession', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
+]
+
+/**
+ * legacy 通用入口本身：迁移期主 WebView 仍经它执行 core-native 操作（CP-W1 要求如实登记的债务）。
+ * 目标态：主 WebView 只暴露 main-host；invokeSync/invokeAsync 的 core-native 通道在 Gate D 移除。
+ */
+const legacyGenericEntry: NativeOperation[] = [
+  { name: 'invokeSync', owner: 'main-host', surface: 'interface-method', legacyExposure: 'legacy-main-core', note: 'legacy 通用入口（Gate D 债务）：迁移期主 WebView 经此调用 core-native 操作；Gate D 后 Java 分派层必须拒绝主 WebView 的跨 owner 调用。' },
+  { name: 'invokeAsync', owner: 'main-host', surface: 'interface-method', legacyExposure: 'legacy-main-core', note: '同 invokeSync（Gate D 债务）。' },
+]
+
+export const NATIVE_OPERATIONS: readonly NativeOperation[] = [
+  ...coreNativeOperations,
+  ...mainHostOperations,
+  ...legacyGenericEntry,
+]
+
+/** 目标态 allowlist：Core WebView 暴露面（新建 Core bridge 第一天起强制执行）。 */
+export function coreNativeAllowlist(): string[] {
+  return coreNativeOperations.map(operation => operation.name)
 }
 
-/** 主/Core 两套 WebView 暴露集合必须无交集（Q9：不相交断言）。 */
+/** 目标态 allowlist：主 WebView 暴露面（新建主进程 bridge 第一天起强制执行）。 */
+export function mainHostAllowlist(): string[] {
+  return mainHostOperations.map(operation => operation.name)
+}
+
+/**
+ * 迁移期封闭例外：今天可从主 WebView 经 legacy 通用入口执行的 core-native 操作集合。
+ * 该集合只允许收缩（Gate D 清零），不得新增。
+ */
+export function legacyMainCoreException(): string[] {
+  return NATIVE_OPERATIONS
+    .filter(operation => operation.legacyExposure === 'legacy-main-core' && operation.owner === 'core-native')
+    .map(operation => operation.name)
+}
+
+/** 目标态不相交 + legacy 债务封闭性校验（CP-W1：测试必须穷举真实 Java 分派键证明，而非只比 owner 字符串）。 */
 export function assertDisjointExposure(): void {
-  const mainHost = new Set(nativeOperationsByOwner('main-host'))
-  const coreNative = nativeOperationsByOwner('core-native')
-  const overlap = coreNative.filter(name => mainHost.has(name))
-  if (overlap.length) throw new Error(`NativeOperationRegistry 暴露面交集：${overlap.join(', ')}`)
+  const mainHost = new Set(mainHostAllowlist())
+  const overlap = coreNativeAllowlist().filter(name => mainHost.has(name))
+  if (overlap.length) throw new Error(`目标暴露面交集：${overlap.join(', ')}`)
   for (const operation of NATIVE_OPERATIONS) {
-    if (operation.owner === 'forbidden' && operation.surface !== 'generic-dispatch') {
-      throw new Error(`forbidden 操作 ${operation.name} 不得出现在任何 interface surface`)
+    if (operation.owner === 'forbidden' && operation.legacyExposure !== 'none') {
+      throw new Error(`forbidden 操作 ${operation.name} 不得保留任何 legacy 暴露面`)
+    }
+    if (operation.legacyExposure === 'legacy-main-core' && operation.surface !== 'interface-method' && operation.owner !== 'core-native') {
+      throw new Error(`${operation.name} 的 legacy-main-core 例外只允许落在 core-native generic-dispatch 或通用入口上`)
+    }
+  }
+  const genericEntries = legacyGenericEntry.map(operation => operation.name)
+  for (const operation of NATIVE_OPERATIONS) {
+    if (operation.legacyExposure === 'legacy-main-core' && !genericEntries.includes(operation.name) && operation.surface !== 'generic-dispatch') {
+      throw new Error(`${operation.name} 不得绕过封闭的 legacy 通用入口`)
     }
   }
 }

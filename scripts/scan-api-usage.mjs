@@ -46,6 +46,14 @@ function pushHit(list, hit) {
   }
 }
 
+/** shim 特判路径的静态 method 证据（local-runtime-web-entry.js fetch 补丁块）。 */
+const SPECIAL_METHODS = {
+  '/api/core/view': 'GET',
+  '/api/core/commands': 'POST',
+  '/api/core/events': 'GET',
+  '/api/core/ui/action': 'POST',
+}
+
 /** 前端：fetch/EventSource/api()/postJson()/agentSessionRequest() 调用点 + 全量字面量兜底。 */
 function scanFrontend(text) {
   const hits = []
@@ -53,7 +61,8 @@ function scanFrontend(text) {
   const patterns = [
     // fetch('/api/..' 或 fetch(`/api/..，同语句内找 method: 'X'
     { re: new RegExp(`\\bfetch\\(\\s*${literal}`, 'g'), defaultMethod: 'GET' },
-    { re: new RegExp(`\\b(?:api|postJson|agentSessionRequest)\\(\\s*${literal}`, 'g'), defaultMethod: 'POST' },
+    { re: new RegExp(`\\b(?:api|postJson|agentSessionRequest|creatorRequest)\\(\\s*${literal}`, 'g'), defaultMethod: 'POST' },
+    { re: new RegExp(`\\bdownloadCurrentFile\\(\\s*${literal}`, 'g'), defaultMethod: 'GET' },
     { re: new RegExp(`\\bEventSource\\(\\s*${literal}`, 'g'), defaultMethod: 'GET', kind: 'sse' },
   ]
   for (const { re, defaultMethod, kind = 'json' } of patterns) {
@@ -67,11 +76,20 @@ function scanFrontend(text) {
       pushHit(hits, { method: methodMatch ? methodMatch[1].toUpperCase() : defaultMethod, path: p, kind })
     }
   }
-  // 兜底：三元/动态构造（如 fetch(cond ? '/api/a' : '/api/b')）的路径也必须登记；
-  // method 未知记为 ANY，完备性测试按路径匹配。
+  // 兜底：三元/动态构造（如 fetch(cond ? '/api/a' : '/api/b')）的路径也必须登记。
+  // method 精确性（CP-W1）：同一语句可见 method: 'X' 时登记真实 method；
+  // 否则记 'method-unknown'（仅表示证据不足，Gate B 需人工裁决或 fixture），不得冒充 ANY 通过。
   for (const match of text.matchAll(/['"`](\/api\/[a-zA-Z0-9_./-]*)['"`]/g)) {
     const p = normalizePathLiteral(match[1])
-    if (p) pushHit(hits, { method: 'ANY', path: p, kind: 'literal' })
+    if (!p) continue
+    const lineEnd = text.indexOf('\n', match.index)
+    const window = text.slice(text.lastIndexOf('\n', match.index) + 1, lineEnd === -1 ? match.index + 400 : lineEnd)
+    const methodMatch = window.match(/method:\s*'(\w+)'/)
+    if (methodMatch) {
+      pushHit(hits, { method: methodMatch[1].toUpperCase(), path: p, kind: 'json' })
+    } else {
+      pushHit(hits, { method: 'method-unknown', path: p, kind: 'method-unknown' })
+    }
   }
   return hits
 }
@@ -118,9 +136,14 @@ function scanShim(text) {
     }
     const special = line.match(/pathname\s*===\s*'([^']*api[^']*)'/)
     if (special) {
-      // 特判分派的 method 未必在同行可见（如 /api/core/commands 实际只接 POST），记 ANY 按路径匹配
+      // 特判分派的 method 在 shim 源码中静态可判定（CP-W1 要求能静态确定的必须登记真实 method）：
+      // /api/core/view → GET（respondJsonAsync 只读快照）；/api/core/commands → POST（读 body 派发）；
+      // /api/core/events → GET SSE（fetch 读流）；/api/core/ui/action → POST（前端以 method POST 调用）。
       const p = normalizePathLiteral(special[1])
-      if (p) pushHit(hits, { method: 'ANY', path: p, kind: line.includes('event-stream') ? 'sse' : 'json' })
+      if (!p) return
+      const known = SPECIAL_METHODS[p]
+      if (known) pushHit(hits, { method: known, path: p, kind: known === 'GET' && line.includes('event-stream') ? 'sse' : 'json' })
+      else pushHit(hits, { method: 'method-unknown', path: p, kind: 'method-unknown' })
     }
     void index
   })

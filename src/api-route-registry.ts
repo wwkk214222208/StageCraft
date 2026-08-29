@@ -14,13 +14,16 @@
  * method 精确匹配；静态段优先于参数段；更具体 pattern 优先；同形状 pattern 视为歧义并使构建失败（Q6 裁决）。
  * v1 的 request/responseSchema 为命名 fixture 引用（供对等性与边界测试使用），不要求 Java 做运行期完整校验。
  *
- * owner 清单为 W1 草案：存疑条目在 note 中标注 `待合流评审`，Gate B 定版时逐条裁决。
+ * owner 清单已按 CP-W1 完成实施方裁决：原存疑条目逐条标注 adjudication（accepted/revised/deferred）
+ * 并指定 fixPackage/fixDeadline；'待评审'状态不得流入 W4/W6。裁决明细见 custom/docs/pending/API-OWNER-INVENTORY.zh.md。
  */
 
-export const REGISTRY_VERSION = '1.0.0-w1-draft'
+export const REGISTRY_VERSION = '1.0.0-w1-r'
 
 export type ApiOwner = 'core' | 'main-host' | 'desktop-only' | 'deprecated'
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
+/** CP-W1：草案条目的裁决状态——'待评审'不得流入 W4/W6；fixPackage 指向修复工作包，fixDeadline 以 Gate 为界。 */
+export type RouteAdjudication = 'accepted' | 'revised' | 'deferred'
 
 export interface ApiStreamContract {
   contentType: 'text/event-stream'
@@ -42,6 +45,9 @@ export interface ApiRoute {
   handlerId: string
   stream?: ApiStreamContract
   note?: string
+  adjudication?: RouteAdjudication
+  fixPackage?: string
+  fixDeadline?: string
 }
 
 const CORE_PROTOCOL_STREAM: ApiStreamContract = {
@@ -67,7 +73,7 @@ export const API_ROUTES: readonly ApiRoute[] = [
   { method: 'GET', pattern: '/api/core/events', owner: 'core', capability: 'core.protocol', auth: 'none', handlerId: 'core.events', stream: CORE_PROTOCOL_STREAM, note: '1.0 对端收到旧 CoreEvent 形状（Q5 裁决）；gateway 只透传字节。' },
   { method: 'POST', pattern: '/api/core/cancel', owner: 'core', capability: 'core.protocol', auth: 'none', handlerId: 'core.cancel', requestSchema: 'CancelRequest@1' },
   { method: 'GET', pattern: '/api/core/capabilities', owner: 'core', capability: 'core.protocol', auth: 'none', handlerId: 'core.capabilities', responseSchema: 'CoreCapabilityList@1' },
-  { method: 'POST', pattern: '/api/core/ui/action', owner: 'core', capability: 'ui.panels', auth: 'none', handlerId: 'core.ui.action', requestSchema: 'UiActionRequest@1', responseSchema: 'UiActionResult@1', note: '待合流评审：桌面 app-boot.ts 当前未实现该路由（前端调用即 404，HOST-PARITY 实证三），W4 需在共享 handler 中补齐。' },
+  { method: 'POST', pattern: '/api/core/ui/action', owner: 'core', capability: 'ui.panels', auth: 'none', handlerId: 'core.ui.action', requestSchema: 'UiActionRequest@1', responseSchema: 'UiActionResult@1', note: '裁决(accepted)：桌面 app-boot.ts 当前未实现该路由（前端调用即 404，HOST-PARITY 实证三），W4 需在共享 handler 中补齐。', adjudication: 'accepted', fixPackage: 'W4（共享 handler 补齐桌面实现）', fixDeadline: 'Gate D 前' },
 
   // ── 房间 / 回合 / workflow（core） ─────────────────────────────────────
   { method: 'GET', pattern: '/api/room', owner: 'core', capability: 'room.read', auth: 'none', handlerId: 'room.snapshot', responseSchema: 'PublicRoomSnapshot@1' },
@@ -147,15 +153,15 @@ export const API_ROUTES: readonly ApiRoute[] = [
   { method: 'GET', pattern: '/api/prompts/presets', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.list' },
   { method: 'PUT', pattern: '/api/prompts/presets', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.put' },
   { method: 'DELETE', pattern: '/api/prompts/presets', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.delete' },
-  { method: 'POST', pattern: '/api/prompts/presets', owner: 'deprecated', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.post', note: '待合流评审：仅 Android shim 手抄存在，桌面与前端均无此调用（漂移实证，HOST-PARITY §3）；随 shim 删除，不迁移。' },
-  { method: 'GET', pattern: '/api/prompts/presets/export', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.export', note: '待合流评审：桌面已实现，shim 缺失（HOST-PARITY 实证四），Android 走共享 handler 后自然补齐。' },
+  { method: 'POST', pattern: '/api/prompts/presets', owner: 'deprecated', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.post', note: '裁决(accepted)：仅 Android shim 手抄存在，桌面与前端均无此调用（漂移实证，HOST-PARITY §3）；随 shim 删除，不迁移。', adjudication: 'accepted', fixPackage: 'W6（随 shim 删除，不迁移）', fixDeadline: 'Gate D' },
+  { method: 'GET', pattern: '/api/prompts/presets/export', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.export', note: '裁决(accepted)：桌面已实现，shim 缺失（HOST-PARITY 实证四），Android 走共享 handler 后自然补齐。', adjudication: 'accepted', fixPackage: 'W4（共享 handler 补齐 shim 缺失）', fixDeadline: 'Gate D 前' },
   { method: 'GET', pattern: '/api/prompts/private-toggles', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.private-toggles.get' },
   { method: 'PUT', pattern: '/api/prompts/private-toggles', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.private-toggles.put' },
-  { method: 'POST', pattern: '/api/prompts/import-st', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.import-st', note: 'ST 预设转换为纯 TS 共享实现；shim 缺失由共享 handler 补齐。' },
+  { method: 'POST', pattern: '/api/prompts/import-st', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.import-st', note: 'ST 预设转换为纯 TS 共享实现；shim 缺失由共享 handler 补齐。', adjudication: 'accepted', fixPackage: 'W4（共享 handler 补齐 shim 缺失）', fixDeadline: 'Gate D 前' },
 
   // ── 存档（core：导出/导入触碰权威状态；存储经 Core 文件端口） ─────────────
-  { method: 'GET', pattern: '/api/archive/export', owner: 'core', capability: 'archive.port', auth: 'none', handlerId: 'archive.export', note: '待合流评审：存档文件存储归属 Core 进程端口（与 §5.3 单一写入者一致）；主进程只承担 SAF 选择器桥，不承载该 API。' },
-  { method: 'GET', pattern: '/api/archive/list', owner: 'core', capability: 'archive.port', auth: 'none', handlerId: 'archive.list', note: '同上；StageCraftArchive 随 W5 迁入 Core 进程。' },
+  { method: 'GET', pattern: '/api/archive/export', owner: 'core', capability: 'archive.port', auth: 'none', handlerId: 'archive.export', note: '裁决(accepted)：存档文件存储归属 Core 进程端口（与 §5.3 单一写入者一致）；主进程只承担 SAF 选择器桥，不承载该 API。', adjudication: 'accepted', fixPackage: 'W5（StageCraftArchive 迁入 Core 进程端口）', fixDeadline: 'Gate D 前' },
+  { method: 'GET', pattern: '/api/archive/list', owner: 'core', capability: 'archive.port', auth: 'none', handlerId: 'archive.list', note: '同上；StageCraftArchive 随 W5 迁入 Core 进程。', adjudication: 'accepted', fixPackage: 'W5（StageCraftArchive 迁入 Core 进程端口）', fixDeadline: 'Gate D 前' },
   { method: 'POST', pattern: '/api/archive/save', owner: 'core', capability: 'archive.port', auth: 'none', handlerId: 'archive.save' },
   { method: 'POST', pattern: '/api/archive/load', owner: 'core', capability: 'archive.port', auth: 'none', handlerId: 'archive.load', note: '写入 Core state，必须由 Core 串行执行（§7.1）。' },
   { method: 'POST', pattern: '/api/archive/delete', owner: 'core', capability: 'archive.port', auth: 'none', handlerId: 'archive.delete' },
@@ -168,16 +174,16 @@ export const API_ROUTES: readonly ApiRoute[] = [
   { method: 'POST', pattern: '/api/st-cards/import', owner: 'core', capability: 'creator.workbench', auth: 'none', handlerId: 'creator.st-cards.import' },
 
   // ── 远程配对 / 同步（main-host，始终主进程处理；Q2） ─────────────────────
-  { method: 'POST', pattern: '/api/remote/pairing-code', owner: 'main-host', capability: 'remote.pairing', auth: 'none', handlerId: 'host.remote.pairing-code', note: '待合流评审：桌面未实现该路径（Android UI 专用宿主操作）；桌面返回稳定 unsupported_capability。' },
+  { method: 'POST', pattern: '/api/remote/pairing-code', owner: 'main-host', capability: 'remote.pairing', auth: 'none', handlerId: 'host.remote.pairing-code', note: '裁决(accepted)：桌面未实现该路径（Android UI 专用宿主操作）；桌面返回稳定 unsupported_capability。', adjudication: 'accepted', fixPackage: 'W6（main-host handler；桌面返回稳定 unsupported_capability）', fixDeadline: 'Gate D 前' },
   { method: 'POST', pattern: '/api/remote/revoke', owner: 'main-host', capability: 'remote.pairing', auth: 'none', handlerId: 'host.remote.revoke' },
   { method: 'GET', pattern: '/api/remote/sync', owner: 'main-host', capability: 'remote.sync', auth: 'none', handlerId: 'host.remote.sync.get' },
   { method: 'PUT', pattern: '/api/remote/sync', owner: 'main-host', capability: 'remote.sync', auth: 'none', handlerId: 'host.remote.sync.put' },
 
   // ── 宿主（main-host） ──────────────────────────────────────────────────
-  { method: 'GET', pattern: '/api/version', owner: 'main-host', capability: 'host.version', auth: 'none', handlerId: 'host.version', responseSchema: 'VersionInfo@1', note: '待合流评审：含 coreBundleVersion 时由主进程经数据面聚合 Core health（Q8：Binder 只走摘要）。' },
+  { method: 'GET', pattern: '/api/version', owner: 'main-host', capability: 'host.version', auth: 'none', handlerId: 'host.version', responseSchema: 'VersionInfo@1', note: '裁决(accepted)：含 coreBundleVersion 时由主进程经数据面聚合 Core health（Q8：Binder 只走摘要）。', adjudication: 'accepted', fixPackage: 'W6（coreBundleVersion 经数据面 health 聚合，Q8）', fixDeadline: 'Gate D 前' },
   { method: 'GET', pattern: '/api/update/check', owner: 'main-host', capability: 'host.update', auth: 'none', handlerId: 'host.update.check' },
   { method: 'POST', pattern: '/api/update/download', owner: 'main-host', capability: 'host.update', auth: 'none', handlerId: 'host.update.download' },
-  { method: 'POST', pattern: '/api/restart', owner: 'main-host', capability: 'host.lifecycle', auth: 'none', handlerId: 'host.restart', note: 'Android 语义 = 生成新 launch plan 并重启 Core 进程（§4.3）；桌面语义 = 重启服务进程。' },
+  { method: 'POST', pattern: '/api/restart', owner: 'main-host', capability: 'host.lifecycle', auth: 'none', handlerId: 'host.restart', note: 'Android 语义 = 生成新 launch plan 并重启 Core 进程（§4.3）；桌面语义 = 重启服务进程。', adjudication: 'accepted', fixPackage: 'W6（Android 语义=新 launch plan 重启 Core，§4.3）', fixDeadline: 'Gate D 前' },
 
   // ── DSH agent（desktop-only；Q2：仅远程端声明 capability 时可代理） ───────
   { method: 'GET', pattern: '/api/agent/capability', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.capability', note: '响应形状保持 {enabled,reason} 兼容；Android 端由 gateway 返回 unsupported_capability 时 UI 必须容错（W6 验证）。' },
@@ -189,7 +195,7 @@ export const API_ROUTES: readonly ApiRoute[] = [
   { method: 'POST', pattern: '/api/agent/message', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.message' , note: 'DSH 会话消息；Android 本地返回 unsupported_capability（§1.4）。' },
   { method: 'POST', pattern: '/api/agent/model', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.model' , note: 'DSH 会话模型选择；Android 本地返回 unsupported_capability（§1.4）。' },
   { method: 'POST', pattern: '/api/agent/models', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.models' , note: 'DSH 会话模型目录；Android 本地返回 unsupported_capability（§1.4）。' },
-  { method: 'POST', pattern: '/api/agent/context', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.context', note: '待合流评审：三端均未实现（HOST-PARITY 实证四的 404 项）；登记后 Android 得到稳定错误而非 404。' },
+  { method: 'POST', pattern: '/api/agent/context', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.context', note: '裁决(accepted)：三端均未实现（HOST-PARITY 实证四的 404 项）；登记后 Android 得到稳定错误而非 404。', adjudication: 'accepted', fixPackage: 'W6（gateway 返回稳定 unsupported_capability，消除 404）', fixDeadline: 'Gate D 前' },
 
   // ── 旧 SSE 通道（deprecated，Q5：/api/stream 为迁移路由，最终由 /api/core/events 取代） ──
   { method: 'GET', pattern: '/api/stream', owner: 'deprecated', capability: 'legacy.sse', auth: 'none', handlerId: 'legacy.stream', stream: LEGACY_STREAM, note: '迁移期由显式 adapter 转发到 /api/core/events 并按 event 名分发；UI 切换后删除（阶段 4）。' },
@@ -287,6 +293,9 @@ export function generateRegistryJson(): string {
       handlerId: route.handlerId,
       stream: route.stream ? { ...route.stream, eventNames: [...route.stream.eventNames] } : null,
       note: route.note ?? null,
+      adjudication: route.adjudication ?? null,
+      fixPackage: route.fixPackage ?? null,
+      fixDeadline: route.fixDeadline ?? null,
     })),
   }, null, 2) + '\n'
 }
