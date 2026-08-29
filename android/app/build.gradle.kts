@@ -160,6 +160,9 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.con
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    // The mockable android.jar stubs org.json ("Method quote in org.json.JSONObject not mocked"),
+    // so unit tests need the real implementation to exercise JSON boundaries such as JsonSafety.
+    testImplementation("org.json:json:20231013")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

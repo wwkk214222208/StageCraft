@@ -3,11 +3,12 @@ import type { CoreStateCommit, CoreStateRepository, CoreStateRestore } from '../
 import type { AssetRepository, SecretStore } from '../core/platform.ts'
 import type { StoryPackage } from '../story-packages.ts'
 import { ModelGatewayTransport } from './model-gateway-transport.ts'
-import type { ModelTransport } from '../core/platform.ts'
+import type { ModelTransport, ModelTransportCallbacks } from '../core/platform.ts'
 
 /** Small async operation port implemented by WebView hosts (Android, desktop shells, tests). */
 export interface NativeOperations {
-  invoke<T = unknown>(operation: string, input?: Record<string, unknown>): T | Promise<T>
+  /** `callbacks` 仅对流式操作（如 model.request）有意义，用于上报思维链增量；其余操作忽略。 */
+  invoke<T = unknown>(operation: string, input?: Record<string, unknown>, callbacks?: ModelTransportCallbacks): T | Promise<T>
   invokeSync?<T = unknown>(operation: string, input?: Record<string, unknown>): T
 }
 
@@ -66,7 +67,7 @@ export class NativeCoreStateRepository implements CoreStateRepository {
 export class NativeModelTransport implements ModelTransport {
   private readonly operations: NativeOperations
   constructor(operations: NativeOperations) { this.operations = operations }
-  request(request: ModelRequest): Promise<ModelResult> { return Promise.resolve(this.operations.invoke<ModelResult>('model.request', request as unknown as Record<string, unknown>)) }
+  request(request: ModelRequest, callbacks?: ModelTransportCallbacks): Promise<ModelResult> { return Promise.resolve(this.operations.invoke<ModelResult>('model.request', request as unknown as Record<string, unknown>, callbacks)) }
   cancel(requestId: string): Promise<void> { return Promise.resolve(this.operations.invoke('model.cancel', { requestId })).then(() => undefined) }
 }
 

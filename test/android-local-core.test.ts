@@ -223,6 +223,52 @@ test('local core isolates shared stream parsing for an arbitrary concurrent role
   local.dispose()
 })
 
+/** 与 Java SSE 分帧一致：先逐段推 reasoning，再推 content，最后 [DONE]。 */
+function reasoningNative(room: any) {
+  const native = fakeNative(room)
+  native.transport.invokeAsync = (operation: string, inputJson: string, callbackId: string): void => {
+    const input = JSON.parse(inputJson)
+    if (operation !== 'model.request') throw new Error(`unexpected async operation: ${operation}`)
+    native.transport.requests.push({ requestId: input.requestId })
+    const output = input.requestId.includes('role-decision')
+      ? { brief: '观察玩家意图，保持克制。', privateReaction: '记下这个信号。' }
+      : { text: '（生成的正文）', stateUpdates: {} }
+    for (const fragment of ['先观察', '玩家的意图，', '再决定如何回应。']) {
+      const event = { choices: [{ delta: { reasoning_content: fragment } }] }
+      globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, streamPayload: JSON.stringify(event) }))
+    }
+    const contentEvent = { choices: [{ delta: { content: JSON.stringify(output) } }] }
+    globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, streamPayload: JSON.stringify(contentEvent) }))
+    globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, streamPayload: '[DONE]' }))
+    globalThis.StageCraftNativeResult.handle(callbackId, JSON.stringify({ requestId: input.requestId, streamComplete: true }))
+  }
+  return native
+}
+
+test('local core streams reasoning as incremental thinking events, not only at completion', async () => {
+  const room = makeRoom([{ id: 'aria', name: 'Aria', portraitRef: '/assets/default.svg', currentState: 'At the festival.', presence: 'present', selfModel: 'Reserved.' }])
+  const { transport } = reasoningNative(room)
+  const globalObject: Record<string, unknown> = { StageCraftNative: transport }
+  installLocalCore(globalObject)
+  const local = globalObject.StageCraftLocalCore as any
+  local.setProvider({ baseUrl: 'https://api.example.com/v1', apiKey: 'key', model: 'deepseek-chat' })
+  const messages: any[] = []
+  local.start((message: string) => messages.push(JSON.parse(message)))
+  await local.submitTurn({ text: '玩家向 Aria 搭话。' })
+
+  const events = messages.filter((message: any) => message.type === 'thinking').map((message: any) => message.event)
+  const roleEvents = events.filter((event: any) => event.actor === 'role' && event.roleId === 'aria')
+  const incremental = roleEvents.filter((event: any) => event.done === false && event.text)
+
+  // 回归要点：修复前 workers 的 requestModel 直接调 modelRequest，绕过了 Core 事件总线，
+  // 于是只剩 done:true 的收尾事件（思维链随最终结果一次性出现，看不到"流式"）。
+  // 修复后必须收到多段 done:false 的增量。
+  assert.ok(incremental.length >= 2, `思维链必须逐段上报，实际只收到 ${incremental.length} 段增量`)
+  assert.equal(incremental.map((event: any) => event.text).join(''), '先观察玩家的意图，再决定如何回应。')
+  assert.ok(roleEvents.some((event: any) => event.done === true), '结束时仍要有 done 收尾事件')
+  local.dispose()
+})
+
 function makeRoom(roles: any[] = []) {
   return { id: 'android-local-room', title: 'Test', mode: 'director', autoPublish: false, speechMode: 'manual', hidePlayerSpeech: false, playerCharacter: { name: 'Player', persona: '', currentState: '' }, phase: 'awaiting-player-input', revision: 0, consultations: [], roles, reactions: [], decisions: [], scenes: [{ id: 'opening', turnId: 'opening', text: 'The festival begins.', kind: 'narration', createdAt: new Date().toISOString() }], lore: [] }
 }

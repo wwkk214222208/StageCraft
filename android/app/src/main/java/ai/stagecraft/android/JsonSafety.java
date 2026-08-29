@@ -47,4 +47,26 @@ public final class JsonSafety {
     public static void path(String path) {
         if (path == null || path.isEmpty() || path.length() > 512 || path.startsWith("/") || path.contains("..") || path.indexOf('\\') >= 0 || path.indexOf('\0') >= 0) throw new IllegalArgumentException("Invalid asset path.");
     }
+
+    /**
+     * Encodes a native operation result as JSON text for the WebView.
+     *
+     * The WebView always JSON.parse()s whatever invokeSync returns, so every result must be a
+     * complete JSON document. JSONObject/JSONArray already serialize that way, but a bare scalar
+     * does not: `String.toString()` emits `turn-42`, which JSON.parse rejects. That is exactly what
+     * broke repository methods returning a String (getLatestTurnId, saveWorldChange,
+     * approveWorldChange) with "Android bridge response is not valid JSON for stagecraft.repository."
+     */
+    public static String toJsonText(Object value) {
+        if (value == null || value == JSONObject.NULL) return "null";
+        if (value instanceof JSONObject || value instanceof JSONArray) return value.toString();
+        if (value instanceof Boolean) return value.toString();
+        if (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long) return value.toString();
+        if (value instanceof Number) {
+            // Non-finite doubles (NaN/Infinity) have no JSON literal; quote them instead of failing.
+            try { return JSONObject.numberToString((Number) value); }
+            catch (Exception error) { return JSONObject.quote(String.valueOf(value)); }
+        }
+        return JSONObject.quote(String.valueOf(value));
+    }
 }
