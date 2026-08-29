@@ -11,15 +11,22 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Gate B/C 收口测试（JVM，无 Robolectric）：
  *  - Gate B：Java RouteRegistry 消费构建期 JSON 资产（100+ 路由、歧义失败、authPolicy 显式、sha256 核对）；
  *            NativeOperationGuard 在真实分派层执行 allowlist（legacy-main-core 封闭例外）。
- *  - Gate C：TS 黄金样本（protocol-fixtures.json）在 Java 侧逐条对等断言（版本协商/envelope/receipt/SSE 帧）。
+ *  - Gate C：TS 黄金样本（protocol-fixtures.json）在 Java 侧逐条对等断言（版本协商/envelope/receipt/SSE 帧）；
+ *            真实 HTTP 边界行为（401/413/415/404/200/SSE 逐条/超时 504）。
  * 资产路径按 gradle 单测工作目录（android/app）解析。
  */
 public class GateBcClosureTest {
@@ -104,7 +111,12 @@ public class GateBcClosureTest {
     @Test
     public void routeRegistrySha256Verification() throws Exception {
         String json = readAsset("api-route-registry.json");
-        RouteRegistry.parse(json, RouteRegistry.sha256Hex(json));
+        RouteRegistry registry = RouteRegistry.parse(json, null);
+        RouteRegistry parsed = RouteRegistry.parse(json, RouteRegistry.sha256Hex(json));
+        assertEquals("registry 版本必须与 fixture 一致（Gate B 可核对）",
+            fixtures().getJSONObject("boundaries").getString("registryVersion"), registry.registryVersion());
+        assertEquals("registry sha256 必须与 fixture 一致（Gate B 可核对）",
+            fixtures().getJSONObject("boundaries").getString("registrySha256"), parsed.sha256());
         try {
             RouteRegistry.parse(json, "deadbeef");
             fail("sha256 不一致必须拒绝");
@@ -200,5 +212,172 @@ public class GateBcClosureTest {
     public void unsupportedCapabilityFixtureIsStable() throws Exception {
         JSONObject error = fixtures().getJSONObject("boundaries").getJSONObject("unsupportedCapabilityError");
         assertEquals("unsupported_capability", error.getString("code"));
+    }
+
+    // ── Gate C：真实 HTTP 边界行为（JVM 直连 CoreDataServer，驱动 401/413/415/404/200/SSE/超时）──
+
+    /** 直执行 dispatcher：命令转发回调同步完成（模拟 :core 主线程立即回执），避免 Handler/Looper 依赖。 */
+    private static final GateACoreDataServer.RunnableDispatcher DIRECT = Runnable::run;
+
+    private static String httpRequest(int port, String method, String path, java.util.Map<String, String> headers, String body) throws Exception {
+        try (Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), port)) {
+            socket.setSoTimeout(5000);
+            StringBuilder request = new StringBuilder(method + " " + path + " HTTP/1.1\r\n");
+            request.append("host: 127.0.0.1\r\n");
+            if (headers != null) for (java.util.Map.Entry<String, String> entry : headers.entrySet()) request.append(entry.getKey()).append(": ").append(entry.getValue()).append("\r\n");
+            if (body != null) request.append("content-length: ").append(body.getBytes(StandardCharsets.UTF_8).length).append("\r\n");
+            request.append("\r\n");
+            if (body != null) request.append(body);
+            OutputStream output = socket.getOutputStream();
+            output.write(request.toString().getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            String statusLine = reader.readLine();
+            StringBuilder response = new StringBuilder();
+            if (statusLine != null) response.append(statusLine).append("\n");
+            String line;
+            while ((line = reader.readLine()) != null && !line.isEmpty()) response.append(line).append("\n");
+            StringBuilder payload = new StringBuilder();
+            char[] buffer = new char[4096];
+            int read;
+            while ((read = reader.read(buffer)) >= 0) payload.append(buffer, 0, read);
+            return response + "\nBODY:" + payload;
+        }
+    }
+
+    private static GateACoreDataServer startBoundaryServer() throws Exception {
+        GateACoreDataServer server = new GateACoreDataServer("test-nonce", DIRECT);
+        server.setHealthJson("{\"protocolVersion\":\"1.1\",\"status\":\"ready\"}");
+        server.setCommandForwarder((body, callback) -> callback.accept("{\"requestId\":\"rq\",\"status\":\"accepted\",\"revision\":8}"));
+        server.start();
+        return server;
+    }
+
+    @Test
+    public void coreDataServerBoundaryBehaviors() throws Exception {
+        GateACoreDataServer server = startBoundaryServer();
+        try {
+            int port = server.getPort();
+            // 401：缺 nonce
+            String noNonce = httpRequest(port, "GET", "/api/core/health", java.util.Map.of(), null);
+            assertTrue("缺 nonce 必须 401，实际: " + noNonce.split("\n")[0], noNonce.contains("401"));
+            assertTrue("缺 nonce 错误码必须 unauthorized", noNonce.contains("unauthorized"));
+            // 401：nonce 错误
+            String wrongNonce = httpRequest(port, "GET", "/api/core/health", java.util.Map.of("x-core-nonce", "wrong"), null);
+            assertTrue("错 nonce 必须 401", wrongNonce.contains("401"));
+            // 200：health 带 nonce，且 health 含协议版本
+            String health = httpRequest(port, "GET", "/api/core/health", java.util.Map.of("x-core-nonce", "test-nonce"), null);
+            assertTrue("health 必须 200: " + health.split("\n")[0], health.contains("200"));
+            assertTrue("health 必须含协议版本", health.contains("\"protocolVersion\":\"1.1\""));
+            // 404：未知路径（稳定错误，不是随机 503）
+            String unknown = httpRequest(port, "GET", "/api/core/definitely-not", java.util.Map.of("x-core-nonce", "test-nonce"), null);
+            assertTrue("未知路径必须稳定 404", unknown.contains("404"));
+            assertTrue("404 必须带稳定错误码 not_found", unknown.contains("not_found"));
+            // 413：body 超限（MAX_BODY_BYTES+1）
+            String oversized = httpRequest(port, "POST", "/api/core/commands",
+                java.util.Map.of("x-core-nonce", "test-nonce", "content-type", "application/json"),
+                "{\"x\":\"" + "a".repeat(GateACoreDataServer.MAX_BODY_BYTES) + "\"}");
+            assertTrue("超限 body 必须 413", oversized.contains("413"));
+            assertTrue("413 必须带稳定错误码 payload_too_large", oversized.contains("payload_too_large"));
+            // 415：POST 但 content-type 非 JSON
+            String wrongType = httpRequest(port, "POST", "/api/core/commands",
+                java.util.Map.of("x-core-nonce", "test-nonce", "content-type", "text/plain"),
+                "{}");
+            assertTrue("非 JSON content-type 必须 415", wrongType.contains("415"));
+            assertTrue("415 必须带稳定错误码 unsupported_media_type", wrongType.contains("unsupported_media_type"));
+            // 415：无 content-type
+            String noType = httpRequest(port, "POST", "/api/core/commands", java.util.Map.of("x-core-nonce", "test-nonce"), "{}");
+            assertTrue("缺 content-type 必须 415", noType.contains("415"));
+            // 200：合法命令回执透传（requestId/status/accepted）
+            String accepted = httpRequest(port, "POST", "/api/core/commands",
+                java.util.Map.of("x-core-nonce", "test-nonce", "content-type", "application/json"),
+                "{\"requestId\":\"rq\",\"type\":\"submit-text\",\"actor\":\"player\"}");
+            assertTrue("合法命令必须 200: " + accepted.split("\n")[0], accepted.contains("200"));
+            assertTrue("回执必须透传 accepted", accepted.contains("\"status\":\"accepted\""));
+            assertTrue("回执必须透传 revision", accepted.contains("\"revision\":8"));
+            // 404：POST 到非命令路径也稳定
+            String postUnknown = httpRequest(port, "POST", "/api/core/nope", java.util.Map.of("x-core-nonce", "test-nonce", "content-type", "application/json"), "{}");
+            assertTrue("未知 POST 路径必须 404", postUnknown.contains("404"));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    public void coreDataServerSseStreamingAndContentType() throws Exception {
+        GateACoreDataServer server = startBoundaryServer();
+        try {
+            int port = server.getPort();
+            try (Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), port)) {
+                socket.setSoTimeout(3000);
+                OutputStream output = socket.getOutputStream();
+                output.write(("GET /api/core/events HTTP/1.1\r\nhost: 127.0.0.1\r\nx-core-nonce: test-nonce\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+                output.flush();
+                BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+                String statusLine = reader.readLine();
+                assertTrue("SSE 必须 200，实际: " + statusLine, statusLine != null && statusLine.contains("200"));
+                String contentType = null;
+                String line;
+                while ((line = reader.readLine()) != null && !line.isEmpty()) {
+                    if (line.toLowerCase().startsWith("content-type:")) contentType = line.substring("content-type:".length()).trim();
+                }
+                assertEquals("SSE 必须声明 text/event-stream", "text/event-stream", contentType);
+                // 订阅确认行
+                String confirm = reader.readLine();
+                assertTrue("必须收到订阅确认行", confirm != null && confirm.startsWith(": connected"));
+                // 事件逐条送达（先确认后派发；写循环异步，循环读直到 data: 帧或超时）
+                JSONObject event = new JSONObject()
+                    .put("protocolVersion", "1.1").put("roomId", "r").put("revision", 1)
+                    .put("type", "state.changed").put("payload", new JSONObject().put("revision", 1)).put("createdAt", "2026-08-29T00:00:00.000Z");
+                server.publishCoreEvent(event);
+                String frame = readSseFrame(reader);
+                assertNotNull("SSE 必须逐条收到事件帧", frame);
+                assertTrue("SSE 帧必须以 data: 开头", frame.startsWith("data: "));
+                JSONObject received = new JSONObject(frame.substring("data: ".length()));
+                assertTrue(CoreProtocolSupport.isValidEnvelope(received));
+                assertEquals("state.changed", received.getString("type"));
+                // 第二条事件（连续逐条）
+                JSONObject second = new JSONObject(event.toString()).put("revision", 2).put("type", "model.thinking.delta")
+                    .put("payload", new JSONObject().put("revision", 2).put("requestId", "fx").put("text", "思"));
+                server.publishCoreEvent(second);
+                String secondFrame = readSseFrame(reader);
+                assertNotNull("第二条事件必须逐条到达", secondFrame);
+                assertTrue(new JSONObject(secondFrame.substring("data: ".length())).getString("type").equals("model.thinking.delta"));
+            }
+        } finally {
+            server.stop();
+        }
+    }
+
+    /** 读下一条 data: SSE 帧；跳过注释行/空行，直到 data: 或超时（返回 null）。 */
+    private static String readSseFrame(BufferedReader reader) throws Exception {
+        long deadline = System.currentTimeMillis() + 3000;
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (line.startsWith("data: ")) return line;
+            if (System.currentTimeMillis() > deadline) return null;
+        }
+        return null;
+    }
+
+    @Test
+    public void coreDataServerBridgeTimeoutIsBounded() throws Exception {
+        // 桥回调永不返回：连接线程必须在有界时间内回 504，不得泄漏（注入 500ms 短超时避免拖慢测试）
+        GateACoreDataServer server = new GateACoreDataServer("test-nonce", DIRECT, 500);
+        server.setHealthJson("{\"protocolVersion\":\"1.1\",\"status\":\"ready\"}");
+        server.setCommandForwarder((body, callback) -> { /* 故意不回调 */ });
+        server.start();
+        try {
+            long started = System.currentTimeMillis();
+            String result = httpRequest(server.getPort(), "POST", "/api/core/commands",
+                java.util.Map.of("x-core-nonce", "test-nonce", "content-type", "application/json"),
+                "{\"requestId\":\"rq\",\"type\":\"submit-text\",\"actor\":\"player\"}");
+            long elapsed = System.currentTimeMillis() - started;
+            assertTrue("504 必须带稳定错误码 bridge_timeout", result.contains("bridge_timeout"));
+            assertTrue("504 必须稳定返回（有界），实际: " + result.split("\n")[0], result.contains("504"));
+            assertTrue("超时必须在有界时间内（<3s），实际 " + elapsed + "ms", elapsed < 3000);
+        } finally {
+            server.stop();
+        }
     }
 }

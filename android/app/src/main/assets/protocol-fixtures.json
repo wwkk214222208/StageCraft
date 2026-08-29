@@ -162,7 +162,9 @@
     "unsupportedCapabilityError": {
       "code": "unsupported_capability",
       "message": "not supported on this surface"
-    }
+    },
+    "registryVersion": "1.0.0-gateb",
+    "registrySha256": "82387ee58dbab946e904373ed068f29ab07b9978b774ed9b87fbdfafaf116acf"
   },
-  "sha256": "4d1f07bf0e5fbeb4806be388def0c21608f8e9cc9e9c19a2959ecfeb650a4426"
+  "sha256": "a335c910904735be1e1733ece6954052bea376735c8769259dfebf7c62669949"
 }

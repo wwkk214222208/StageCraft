@@ -76,7 +76,7 @@ test('Binder 发送侧 64KiB 断言 + 客户端 linkToDeath + 幂等重绑（评
 
 test('数据服务与 gateway：超时护栏 / 溢出关闭信号 / 明确 502（评审第 5 条+实现风险）', () => {
   const server = read('java', 'ai', 'stagecraft', 'android', 'GateACoreDataServer.java')
-  assert.match(server, /responded\.await\(20/, 'latch 必须带超时（防连接线程泄漏）')
+  assert.match(server, /bridgeTimeoutMs/, 'latch 必须带超时（防连接线程泄漏；生产默认 20s，测试可注入短值）')
   assert.match(server, /504/, '桥超时返回明确错误')
   assert.match(server, /overflowClosed/, 'SSE 溢出通知写循环关闭连接')
   assert.match(server, /: connected/, '订阅确认行（消除 setTimeout(0) 竞态）')

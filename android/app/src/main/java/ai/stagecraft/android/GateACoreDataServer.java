@@ -47,7 +47,10 @@ public final class GateACoreDataServer {
         boolean onEvent(String eventJson);
     }
 
-    private final Handler main = new Handler(Looper.getMainLooper());
+    /** 命令转发投递器：生产用主线程 Handler（桥回调须在 :core 主线程执行）；JVM 测试注入直执行器。 */
+    private final Handler main;
+    private final RunnableDispatcher dispatcher;
+    private final long bridgeTimeoutMs;
     private final String nonce;
     private ServerSocket server;
     private int port = -1;
@@ -67,8 +70,26 @@ public final class GateACoreDataServer {
         void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer);
     }
 
+    /** 把转发任务投递到桥线程（生产=主线程 Handler；测试=直执行）。 */
+    public interface RunnableDispatcher {
+        void dispatch(Runnable task);
+    }
+
     public GateACoreDataServer(String nonce) {
+        this(nonce, null, 20_000);
+    }
+
+    /** JVM 边界测试用：允许注入直执行 dispatcher 与短桥超时，避免 android.jar stub 的 Looper 依赖。 */
+    GateACoreDataServer(String nonce, RunnableDispatcher dispatcher) {
+        this(nonce, dispatcher, 20_000);
+    }
+
+    GateACoreDataServer(String nonce, RunnableDispatcher dispatcher, long bridgeTimeoutMs) {
         this.nonce = java.util.Objects.requireNonNull(nonce, "nonce");
+        this.bridgeTimeoutMs = bridgeTimeoutMs;
+        // 生产路径（dispatcher==null）用主线程 Handler；测试注入直执行器时不再触碰 Looper
+        this.main = dispatcher == null ? new Handler(Looper.getMainLooper()) : null;
+        this.dispatcher = dispatcher == null ? task -> main.post(task) : dispatcher;
     }
 
     public void setHealthJson(String json) { this.healthJson = json == null ? "{}" : json; }
@@ -147,6 +168,11 @@ public final class GateACoreDataServer {
                 return;
             }
             if ("/api/core/commands".equals(path) && "POST".equals(method)) {
+                String contentType = headers.getOrDefault("content-type", "");
+                if (!contentType.toLowerCase(Locale.ROOT).startsWith("application/json")) {
+                    respond(socket, 415, "application/json", "{\"error\":{\"code\":\"unsupported_media_type\",\"message\":\"commands 必须携带 application/json content-type\"}}");
+                    return;
+                }
                 String body = readBody(reader, headers);
                 if (body == null) {
                     respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
@@ -161,10 +187,10 @@ public final class GateACoreDataServer {
                 // socket I/O 全部留在连接线程（主线程写 loopback 也触发 NetworkOnMainThreadException）。
                 final String[] result = new String[1];
                 java.util.concurrent.CountDownLatch responded = new java.util.concurrent.CountDownLatch(1);
-                main.post(() -> forwarder.forward(body, json -> { result[0] = json; responded.countDown(); }));
+                dispatcher.dispatch(() -> forwarder.forward(body, json -> { result[0] = json; responded.countDown(); }));
                 // 超时护栏：桥回调永久不返回时连接线程不得泄漏（评审实现风险 1）
-                if (!responded.await(20, java.util.concurrent.TimeUnit.SECONDS)) {
-                    respond(socket, 504, "application/json", "{\"error\":{\"code\":\"bridge_timeout\",\"message\":\"core bridge did not respond within 20s\"}}");
+                if (!responded.await(bridgeTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    respond(socket, 504, "application/json", "{\"error\":{\"code\":\"bridge_timeout\",\"message\":\"core bridge did not respond within " + bridgeTimeoutMs + "ms\"}}");
                     return;
                 }
                 respond(socket, 200, "application/json", result[0] == null
@@ -291,6 +317,7 @@ public final class GateACoreDataServer {
             case 401 -> "Unauthorized";
             case 404 -> "Not Found";
             case 413 -> "Payload Too Large";
+            case 415 -> "Unsupported Media Type";
             case 502 -> "Bad Gateway";
             case 503 -> "Service Unavailable";
             default -> "Status";
