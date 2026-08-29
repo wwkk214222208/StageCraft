@@ -11,6 +11,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NATIVE_OPERATIONS } from '../src/native-operation-registry.ts'
 import { CORE_PROTOCOL_VERSION, MAX_SUPPORTED_PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION, supportsProtocolVersion } from '../src/core/protocol.ts'
+import { REGISTRY_VERSION, generateRegistryJson } from '../src/api-route-registry.ts'
 
 const NL = String.fromCharCode(10)
 const NL2 = String.fromCharCode(10, 10)
@@ -29,6 +30,10 @@ const nativeRegistry = {
     .map(op => ({ name: op.name, owner: op.owner, legacyExposure: op.legacyExposure })),
 }
 const nativeJson = JSON.stringify(nativeRegistry, null, 2) + NL
+
+// ── registry 身份：Gate B 要求"registry 与 Java gateway 的版本号/哈希在日志或 health 摘要中可核对" ──
+const registryJson = generateRegistryJson()
+const registrySha = createHash('sha256').update(registryJson).digest('hex')
 
 // ── 协议黄金样本：从 TS 实现导出（JVM 必须对每条给出相同判定）──
 const versionCases = []
@@ -59,6 +64,32 @@ const envelopes = events.map(event => ({
 }))
 const sseFrames = envelopes.map(envelope => `data: ${JSON.stringify(envelope)}` + NL2)
 
+// ── Gate C-1：heartbeat / resume / abort 共享协议 fixture（评审 C-1 P1）──
+// heartbeat：SSE 注释帧不产生业务事件、连接保持有效；周期边界 10s（CoreDataServer）/15s（HTTP adapter）
+const heartbeatSamples = [
+  { name: 'comment-only', wire: ': heartbeat' + NL2, expectedEvents: 0, keepsConnection: true },
+  { name: 'comment-between-data', wire: 'data: ' + JSON.stringify(envelopes[0]) + NL2 + ': heartbeat' + NL2, expectedEvents: 1, keepsConnection: true },
+]
+// resume：断线前权威 view revision=10；重连期间缓存事件（revision 9 必须丢弃、11 放行）；resync 后投递序列
+const resumeScenario = {
+  name: 'resync-then-incremental',
+  authoritativeViewRevision: 10,
+  bufferedDuringReconnect: [
+    { revision: 9, type: 'state.changed', shouldDeliver: false, reason: 'revision < authoritative floor' },
+    { revision: 11, type: 'state.changed', shouldDeliver: true, reason: 'revision >= authoritative floor' },
+    { revision: 12, type: 'model.thinking.delta', requestId: 'fx-3', shouldDeliver: true, reason: 'post-resync incremental' },
+  ],
+  finalDeliverableSequence: [11, 12],
+}
+// abort：页面/下游关闭后上游关闭与订阅释放；限时；不得继续投递
+const abortScenario = {
+  name: 'client-abort',
+  commandCancelIsSeparate: true, // 命令 cancel 与流 abort 是两套语义，不得混用
+  upstreamCloseWithinMs: 3000,
+  subscriberReleaseWithinMs: 3000,
+  noFurtherDelivery: true,
+}
+
 const fixtures = {
   fixtureVersion: '1.0.0-gatec',
   protocolVersion: CORE_PROTOCOL_VERSION,
@@ -68,6 +99,9 @@ const fixtures = {
   envelopes,
   rawEvents: events,
   sseFrames,
+  heartbeat: heartbeatSamples,
+  resume: resumeScenario,
+  abort: abortScenario,
   receipts: [
     { requestId: 'r1', status: 'accepted', revision: 8, view: { protocolVersion: '1.1', revision: 8 } },
     { requestId: 'r2', status: 'rejected', error: { code: 'command_failed', message: 'boom' } },
@@ -79,6 +113,9 @@ const fixtures = {
     bridgeTimeoutMs: 20000,
     binderHardLimitBytes: 64 * 1024,
     unsupportedCapabilityError: { code: 'unsupported_capability', message: 'not supported on this surface' },
+    // Gate B：构建期 registry 身份，Java 侧核对（RouteRegistry.registryVersion()/sha256() 必须一致）
+    registryVersion: REGISTRY_VERSION,
+    registrySha256: registrySha,
   },
 }
 const fixturesJson = JSON.stringify(fixtures, null, 2) + NL

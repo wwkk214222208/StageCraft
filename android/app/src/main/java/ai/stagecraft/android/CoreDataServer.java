@@ -55,6 +55,16 @@ public final class CoreDataServer {
         /** GET /api/core/view 的权威视图（可能经桥异步；返回 null 表示尚未就绪）。 */
         String view();
         void cancel(String requestId);
+        /**
+         * W4 合流：协议端点转发（commands/cancel/ui-action 的统一入口）。
+         * 携带 method/path/headers/body（含 x-core-protocol-version 等协议上下文），
+         * 由 Core WebView 内的可移植 handler（CoreProtocolPortableHandler）处理并回执。
+         * 回调交付 {@code {"status":<http>, "body":"<json text>"}}；实现方保证只回调一次。
+         */
+        default void forwardApi(String method, String path, Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+            // 默认退化为原 forward（兼容旧实现）：不携带协议上下文，语义由各实现方决定。
+            forward(bodyJson, resultConsumer);
+        }
     }
 
     /**
@@ -230,17 +240,9 @@ public final class CoreDataServer {
                     respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
                     return;
                 }
-                // 命令转发经 executor（Android 主线程）进 WebView；连接线程等结果后自行写回。
-                final String[] result = new String[1];
-                java.util.concurrent.CountDownLatch responded = new java.util.concurrent.CountDownLatch(1);
-                executor.execute(() -> forwarder.forward(body, json -> { result[0] = json; responded.countDown(); }));
-                if (!responded.await(BRIDGE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                    respond(socket, 504, "application/json", "{\"error\":{\"code\":\"bridge_timeout\",\"message\":\"core bridge did not respond within " + BRIDGE_TIMEOUT_MS + "ms\"}}");
-                    return;
-                }
-                respond(socket, 200, "application/json", result[0] == null
-                    ? "{\"error\":{\"code\":\"bridge_no_result\",\"message\":\"core bridge returned no result\"}}"
-                    : result[0]);
+                // W4 合流：协议端点经 forwardApi 转发（携带 method/path/headers/body），
+                // 由 Core WebView 内可移植 handler 处理（1.1 receipt / 1.0 旧形状）。
+                forwardApiAndRespond(socket, "POST", "/api/core/commands", headers, body, forwarder);
                 return;
             }
             if ("/api/core/cancel".equals(path) && "POST".equals(method)) {
@@ -254,17 +256,9 @@ public final class CoreDataServer {
                     respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
                     return;
                 }
-                try {
-                    String requestId = new JSONObject(body).optString("requestId", "");
-                    if (requestId.isEmpty()) {
-                        respond(socket, 400, "application/json", "{\"error\":{\"code\":\"invalid_request\",\"message\":\"cancel requires requestId\"}}");
-                        return;
-                    }
-                    forwarder.cancel(requestId);
-                    respond(socket, 200, "application/json", "{\"ok\":true,\"requestId\":\"" + requestId.replace("\"", "") + "\"}");
-                } catch (Exception error) {
-                    respond(socket, 400, "application/json", "{\"error\":{\"code\":\"invalid_request\",\"message\":\"invalid cancel body\"}}");
-                }
+                // W4 合流：cancel 语义由可移植 handler 承载（requestId 校验 + core.cancel）。
+                // 传输层保留 content-type/body 上限校验。
+                forwardApiAndRespond(socket, "POST", "/api/core/cancel", headers, body, forwarder);
                 return;
             }
             // W5：core owner 的协议面扩展端点（registry handlerId core.ui.action）。
@@ -281,16 +275,8 @@ public final class CoreDataServer {
                     respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
                     return;
                 }
-                final String[] result = new String[1];
-                java.util.concurrent.CountDownLatch responded = new java.util.concurrent.CountDownLatch(1);
-                executor.execute(() -> forwarder.forward(body, json -> { result[0] = json; responded.countDown(); }));
-                if (!responded.await(BRIDGE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                    respond(socket, 504, "application/json", "{\"error\":{\"code\":\"bridge_timeout\",\"message\":\"core bridge did not respond within " + BRIDGE_TIMEOUT_MS + "ms\"}}");
-                    return;
-                }
-                respond(socket, 200, "application/json", result[0] == null
-                    ? "{\"error\":{\"code\":\"bridge_no_result\",\"message\":\"core bridge returned no result\"}}"
-                    : result[0]);
+                // W4 合流：ui/action 语义由可移植 handler 承载（invokeUiAction）。
+                forwardApiAndRespond(socket, "POST", "/api/core/ui/action", headers, body, forwarder);
                 return;
             }
             // 未知路径/未知方法：先查 registry——登记为 core owner 但未挂载的路由返回稳定
@@ -316,13 +302,43 @@ public final class CoreDataServer {
                 }
             }
             respond(socket, 404, "application/json", "{\"error\":{\"code\":\"not_found\",\"message\":\"unknown core data path\"}}");
-        } catch (InterruptedException latchWait) {
-            Thread.currentThread().interrupt();
         } catch (Throwable error) {
             lastError = error.getClass().getSimpleName() + ": " + error.getMessage();
             logger.w("core data error: " + lastError);
             try { respond(socket, 500, "application/json", "{\"error\":{\"code\":\"data_server_internal\",\"message\":\"" + lastError.replace("\"", "'") + "\"}}"); } catch (Exception ignored) { }
             try { socket.close(); } catch (IOException ignored) { }
+        }
+    }
+
+    /**
+     * W4 合流：经 CommandForwarder.forwardApi 转发协议端点请求并写回响应。
+     * 回调交付 {"status":<http>, "body":"<json>"}；超时回 504。
+     */
+    private void forwardApiAndRespond(Socket socket, String method, String path, Map<String, String> headers, String body, CommandForwarder forwarder) {
+        final String[] result = new String[1];
+        java.util.concurrent.CountDownLatch responded = new java.util.concurrent.CountDownLatch(1);
+        executor.execute(() -> forwarder.forwardApi(method, path, headers, body, json -> { result[0] = json; responded.countDown(); }));
+        try {
+            if (!responded.await(BRIDGE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                respond(socket, 504, "application/json", "{\"error\":{\"code\":\"bridge_timeout\",\"message\":\"core bridge did not respond within " + BRIDGE_TIMEOUT_MS + "ms\"}}");
+                return;
+            }
+        } catch (InterruptedException latchWait) {
+            Thread.currentThread().interrupt();
+            respond(socket, 504, "application/json", "{\"error\":{\"code\":\"bridge_timeout\",\"message\":\"core bridge interrupted\"}}");
+            return;
+        }
+        if (result[0] == null) {
+            respond(socket, 503, "application/json", "{\"error\":{\"code\":\"bridge_no_result\",\"message\":\"core bridge returned no result\"}}");
+            return;
+        }
+        try {
+            JSONObject wrapped = new JSONObject(result[0]);
+            int status = wrapped.optInt("status", 200);
+            String bodyText = wrapped.optString("body", "");
+            respond(socket, status, "application/json", bodyText.isEmpty() ? "{}" : bodyText);
+        } catch (Exception error) {
+            respond(socket, 502, "application/json", "{\"error\":{\"code\":\"bridge_bad_result\",\"message\":\"core bridge returned malformed result\"}}");
         }
     }
 

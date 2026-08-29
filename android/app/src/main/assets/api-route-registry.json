@@ -17,6 +17,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": "CoreHealth@1.1",
       "handlerId": "core.health",
@@ -35,6 +45,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": "CoreViewSnapshot@1",
@@ -55,6 +75,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": "HumanCommand@1",
       "responseSchema": "CommandReceipt@1.1",
       "handlerId": "core.commands",
@@ -73,6 +103,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -103,6 +143,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": "CancelRequest@1",
       "responseSchema": null,
       "handlerId": "core.cancel",
@@ -121,6 +171,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": "CoreCapabilityList@1",
@@ -141,6 +201,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": "UiActionRequest@1",
       "responseSchema": "UiActionResult@1",
       "handlerId": "core.ui.action",
@@ -159,6 +229,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": "PublicRoomSnapshot@1",
@@ -179,6 +259,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": "RoomConfigRequest@1",
       "responseSchema": null,
       "handlerId": "room.config",
@@ -197,6 +287,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -217,6 +317,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "room.lore",
@@ -235,6 +345,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": "TurnRequest@1",
       "responseSchema": null,
@@ -255,6 +375,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "turn.cancel",
@@ -273,6 +403,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -293,6 +433,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "workflow.consult",
@@ -311,6 +461,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -331,6 +491,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "workflow.redraft",
@@ -349,6 +519,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -369,6 +549,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "workflow.world-change.approve",
@@ -387,6 +577,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -407,6 +607,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "state.rollback",
@@ -425,6 +635,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -445,6 +665,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "state.scene-revision",
@@ -463,6 +693,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -483,6 +723,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "chat.speak-all",
@@ -501,6 +751,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -521,6 +781,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "chat.approve-speech",
@@ -539,6 +809,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -559,6 +839,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "chat.director-chat",
@@ -577,6 +867,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -597,6 +897,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "director.proceed",
@@ -615,6 +925,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -635,6 +955,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "director.setting",
@@ -653,6 +983,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -673,6 +1013,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.delete",
@@ -691,6 +1041,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -711,6 +1071,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.presence",
@@ -729,6 +1099,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -749,6 +1129,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.state",
@@ -767,6 +1157,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -787,6 +1187,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.thinking",
@@ -805,6 +1215,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": "RoleMemories@1",
@@ -825,6 +1245,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.memories.upsert",
@@ -843,6 +1273,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -863,6 +1303,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.memories.retract",
@@ -881,6 +1331,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -901,6 +1361,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "role.memories.update",
@@ -919,6 +1389,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -939,6 +1419,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "player.avatar",
@@ -957,6 +1447,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": "ProviderMetaView@1",
@@ -977,6 +1477,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "provider.save",
@@ -995,6 +1505,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1015,6 +1535,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "provider.discover",
@@ -1033,6 +1563,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1053,6 +1593,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "provider.director",
@@ -1071,6 +1621,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1091,6 +1651,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "billing.summary",
@@ -1109,6 +1679,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1129,6 +1709,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "billing.prices.put",
@@ -1147,6 +1737,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1167,6 +1767,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "billing.usage",
@@ -1185,6 +1795,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1205,6 +1825,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.create",
@@ -1223,6 +1853,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1243,6 +1883,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.get",
@@ -1261,6 +1911,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1281,6 +1941,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.save-as",
@@ -1299,6 +1969,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1319,6 +1999,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.export",
@@ -1337,6 +2027,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1357,6 +2057,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "story.sync-roles",
@@ -1375,6 +2085,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1395,6 +2115,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.presets.put",
@@ -1413,6 +2143,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1433,6 +2173,18 @@
       "authPolicy": {
         "kind": "local-open"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "deprecated-adapter",
+          "auth": "local",
+          "errorCode": "route_deprecated"
+        },
+        "androidRemote": {
+          "action": "deprecated-adapter",
+          "auth": "local",
+          "errorCode": "route_deprecated"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.presets.post",
@@ -1451,6 +2203,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1471,6 +2233,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.private-toggles.get",
@@ -1489,6 +2261,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1509,6 +2291,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "prompt.import-st",
@@ -1527,6 +2319,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1547,6 +2349,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "archive.list",
@@ -1565,6 +2377,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1585,6 +2407,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "archive.load",
@@ -1603,6 +2435,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1623,6 +2465,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "archive.import",
@@ -1641,6 +2493,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1661,6 +2523,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "creator.apply",
@@ -1679,6 +2551,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "core-nonce"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1699,6 +2581,16 @@
       "authPolicy": {
         "kind": "core-nonce"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "proxy-core",
+          "auth": "core-nonce"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "creator.st-cards.import",
@@ -1717,6 +2609,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "local-open"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "host-handler",
+          "auth": "local"
+        },
+        "androidRemote": {
+          "action": "host-handler",
+          "auth": "local"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1737,6 +2639,16 @@
       "authPolicy": {
         "kind": "local-open"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "host-handler",
+          "auth": "local"
+        },
+        "androidRemote": {
+          "action": "host-handler",
+          "auth": "local"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.remote.revoke",
@@ -1755,6 +2667,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "local-open"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "host-handler",
+          "auth": "local"
+        },
+        "androidRemote": {
+          "action": "host-handler",
+          "auth": "local"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1775,6 +2697,16 @@
       "authPolicy": {
         "kind": "local-open"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "host-handler",
+          "auth": "local"
+        },
+        "androidRemote": {
+          "action": "host-handler",
+          "auth": "local"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.remote.sync.put",
@@ -1793,6 +2725,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "local-open"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "host-handler",
+          "auth": "local"
+        },
+        "androidRemote": {
+          "action": "host-handler",
+          "auth": "local"
+        }
       },
       "requestSchema": null,
       "responseSchema": "VersionInfo@1",
@@ -1813,6 +2755,16 @@
       "authPolicy": {
         "kind": "local-open"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "host-handler",
+          "auth": "local"
+        },
+        "androidRemote": {
+          "action": "host-handler",
+          "auth": "local"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.update.check",
@@ -1831,6 +2783,16 @@
       "auth": "none",
       "authPolicy": {
         "kind": "local-open"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "host-handler",
+          "auth": "local"
+        },
+        "androidRemote": {
+          "action": "host-handler",
+          "auth": "local"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1851,6 +2813,16 @@
       "authPolicy": {
         "kind": "local-open"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "host-handler",
+          "auth": "local"
+        },
+        "androidRemote": {
+          "action": "host-handler",
+          "auth": "local"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "host.restart",
@@ -1869,6 +2841,18 @@
       "auth": "none",
       "authPolicy": {
         "kind": "remote-paired"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "stable-unsupported",
+          "auth": "none",
+          "errorCode": "unsupported_capability"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired",
+          "errorCode": "unsupported_capability"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1889,6 +2873,18 @@
       "authPolicy": {
         "kind": "remote-paired"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "stable-unsupported",
+          "auth": "none",
+          "errorCode": "unsupported_capability"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired",
+          "errorCode": "unsupported_capability"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.session.get",
@@ -1907,6 +2903,18 @@
       "auth": "none",
       "authPolicy": {
         "kind": "remote-paired"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "stable-unsupported",
+          "auth": "none",
+          "errorCode": "unsupported_capability"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired",
+          "errorCode": "unsupported_capability"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1927,6 +2935,18 @@
       "authPolicy": {
         "kind": "remote-paired"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "stable-unsupported",
+          "auth": "none",
+          "errorCode": "unsupported_capability"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired",
+          "errorCode": "unsupported_capability"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.session.delete",
@@ -1945,6 +2965,18 @@
       "auth": "none",
       "authPolicy": {
         "kind": "remote-paired"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "stable-unsupported",
+          "auth": "none",
+          "errorCode": "unsupported_capability"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired",
+          "errorCode": "unsupported_capability"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -1965,6 +2997,18 @@
       "authPolicy": {
         "kind": "remote-paired"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "stable-unsupported",
+          "auth": "none",
+          "errorCode": "unsupported_capability"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired",
+          "errorCode": "unsupported_capability"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.history",
@@ -1983,6 +3027,18 @@
       "auth": "none",
       "authPolicy": {
         "kind": "remote-paired"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "stable-unsupported",
+          "auth": "none",
+          "errorCode": "unsupported_capability"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired",
+          "errorCode": "unsupported_capability"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -2003,6 +3059,18 @@
       "authPolicy": {
         "kind": "remote-paired"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "stable-unsupported",
+          "auth": "none",
+          "errorCode": "unsupported_capability"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired",
+          "errorCode": "unsupported_capability"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.model",
@@ -2021,6 +3089,18 @@
       "auth": "none",
       "authPolicy": {
         "kind": "remote-paired"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "stable-unsupported",
+          "auth": "none",
+          "errorCode": "unsupported_capability"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired",
+          "errorCode": "unsupported_capability"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -2041,6 +3121,18 @@
       "authPolicy": {
         "kind": "remote-paired"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "stable-unsupported",
+          "auth": "none",
+          "errorCode": "unsupported_capability"
+        },
+        "androidRemote": {
+          "action": "proxy-core",
+          "auth": "remote-paired",
+          "errorCode": "unsupported_capability"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "agent.context",
@@ -2059,6 +3151,18 @@
       "auth": "none",
       "authPolicy": {
         "kind": "local-open"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "deprecated-adapter",
+          "auth": "local",
+          "errorCode": "route_deprecated"
+        },
+        "androidRemote": {
+          "action": "deprecated-adapter",
+          "auth": "local",
+          "errorCode": "route_deprecated"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,
@@ -2088,6 +3192,18 @@
       "authPolicy": {
         "kind": "local-open"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "deprecated-adapter",
+          "auth": "local",
+          "errorCode": "route_deprecated"
+        },
+        "androidRemote": {
+          "action": "deprecated-adapter",
+          "auth": "local",
+          "errorCode": "route_deprecated"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "legacy.events",
@@ -2116,6 +3232,18 @@
       "authPolicy": {
         "kind": "local-open"
       },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "deprecated-adapter",
+          "auth": "local",
+          "errorCode": "route_deprecated"
+        },
+        "androidRemote": {
+          "action": "deprecated-adapter",
+          "auth": "local",
+          "errorCode": "route_deprecated"
+        }
+      },
       "requestSchema": null,
       "responseSchema": null,
       "handlerId": "legacy.thinking-events",
@@ -2143,6 +3271,18 @@
       "auth": "none",
       "authPolicy": {
         "kind": "local-open"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "deprecated-adapter",
+          "auth": "local",
+          "errorCode": "route_deprecated"
+        },
+        "androidRemote": {
+          "action": "deprecated-adapter",
+          "auth": "local",
+          "errorCode": "route_deprecated"
+        }
       },
       "requestSchema": null,
       "responseSchema": null,

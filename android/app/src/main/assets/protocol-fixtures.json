@@ -127,6 +127,56 @@
     "data: {\"protocolVersion\":\"1.1\",\"roomId\":\"fixture-room\",\"revision\":7,\"requestId\":\"fx-1\",\"type\":\"model.thinking.delta\",\"payload\":{\"type\":\"model.thinking.delta\",\"revision\":7,\"requestId\":\"fx-1\",\"text\":\"思\"},\"createdAt\":\"2026-08-29T00:00:00.000Z\"}\n\n",
     "data: {\"protocolVersion\":\"1.1\",\"roomId\":\"fixture-room\",\"revision\":2,\"requestId\":\"fx-2\",\"type\":\"error\",\"payload\":{\"type\":\"error\",\"revision\":2,\"message\":\"boom\",\"requestId\":\"fx-2\"},\"createdAt\":\"2026-08-29T00:00:00.000Z\"}\n\n"
   ],
+  "heartbeat": [
+    {
+      "name": "comment-only",
+      "wire": ": heartbeat\n\n",
+      "expectedEvents": 0,
+      "keepsConnection": true
+    },
+    {
+      "name": "comment-between-data",
+      "wire": "data: {\"protocolVersion\":\"1.1\",\"roomId\":\"fixture-room\",\"revision\":4,\"type\":\"state.changed\",\"payload\":{\"type\":\"state.changed\",\"revision\":4,\"transition\":{\"revision\":4,\"events\":[],\"changes\":[]}},\"createdAt\":\"2026-08-29T00:00:00.000Z\"}\n\n: heartbeat\n\n",
+      "expectedEvents": 1,
+      "keepsConnection": true
+    }
+  ],
+  "resume": {
+    "name": "resync-then-incremental",
+    "authoritativeViewRevision": 10,
+    "bufferedDuringReconnect": [
+      {
+        "revision": 9,
+        "type": "state.changed",
+        "shouldDeliver": false,
+        "reason": "revision < authoritative floor"
+      },
+      {
+        "revision": 11,
+        "type": "state.changed",
+        "shouldDeliver": true,
+        "reason": "revision >= authoritative floor"
+      },
+      {
+        "revision": 12,
+        "type": "model.thinking.delta",
+        "requestId": "fx-3",
+        "shouldDeliver": true,
+        "reason": "post-resync incremental"
+      }
+    ],
+    "finalDeliverableSequence": [
+      11,
+      12
+    ]
+  },
+  "abort": {
+    "name": "client-abort",
+    "commandCancelIsSeparate": true,
+    "upstreamCloseWithinMs": 3000,
+    "subscriberReleaseWithinMs": 3000,
+    "noFurtherDelivery": true
+  },
   "receipts": [
     {
       "requestId": "r1",
@@ -162,7 +212,9 @@
     "unsupportedCapabilityError": {
       "code": "unsupported_capability",
       "message": "not supported on this surface"
-    }
+    },
+    "registryVersion": "1.0.0-gateb",
+    "registrySha256": "99cb2c2eb6efaa8d021205dc0aeb21ee510ff45c2d01d6c41ed8065166d1fdfc"
   },
-  "sha256": "4d1f07bf0e5fbeb4806be388def0c21608f8e9cc9e9c19a2959ecfeb650a4426"
+  "sha256": "cacca05326a7c54d5b6828cc2cba02a5513e73c60aa4204c22ea1fefdb4c5d00"
 }

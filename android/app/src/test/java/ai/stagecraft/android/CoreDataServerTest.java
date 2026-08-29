@@ -108,10 +108,15 @@ public final class CoreDataServerTest {
     @Test public void commandForwardsAndReturnsReceipt() throws Exception {
         CoreDataServer server = startServer("secret");
         final String[] received = new String[1];
+        final String[] receivedPath = new String[1];
+        final String[] receivedMethod = new String[1];
         server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
-            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApi(String method, String path, java.util.Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
                 received[0] = bodyJson;
-                resultConsumer.accept("{\"requestId\":\"r1\",\"status\":\"accepted\",\"revision\":8}");
+                receivedPath[0] = path;
+                receivedMethod[0] = method;
+                resultConsumer.accept("{\"status\":200,\"body\":\"{\\\"requestId\\\":\\\"r1\\\",\\\"status\\\":\\\"accepted\\\",\\\"revision\\\":8}\"}");
             }
             @Override public String view() { return null; }
             @Override public void cancel(String requestId) { }
@@ -121,6 +126,7 @@ public final class CoreDataServerTest {
             connection.setRequestMethod("POST");
             connection.setRequestProperty("x-core-nonce", "secret");
             connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("x-core-protocol-version", "1.1");
             connection.setDoOutput(true);
             byte[] body = "{\"id\":\"c1\",\"type\":\"submit-text\"}".getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(body.length);
@@ -132,6 +138,8 @@ public final class CoreDataServerTest {
             connection.disconnect();
             assertNotNull(received[0]);
             assertTrue(received[0].contains("c1"));
+            assertEquals("/api/core/commands", receivedPath[0]);
+            assertEquals("POST", receivedMethod[0]);
         } finally {
             server.stop();
         }
@@ -318,7 +326,7 @@ public final class CoreDataServerTest {
         // 注入 registry：POST /api/turn 是 core owner（未挂载）
         server.setRouteRegistry(RouteRegistry.parse(
             "{\"registryVersion\":\"test\",\"routes\":["
-                + "{\"order\":0,\"method\":\"POST\",\"pattern\":\"/api/turn\",\"owner\":\"core\",\"capability\":\"room.command\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"handlerId\":\"turn.start\"}"
+                + "{\"order\":0,\"method\":\"POST\",\"pattern\":\"/api/turn\",\"owner\":\"core\",\"capability\":\"room.command\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"stable-unsupported\",\"auth\":\"none\",\"errorCode\":\"handler_not_mounted\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"turn.start\"}"
                 + "]}" , null));
         try {
             HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/turn").openConnection();
@@ -348,7 +356,7 @@ public final class CoreDataServerTest {
         CoreDataServer server = startServer("secret");
         server.setRouteRegistry(RouteRegistry.parse(
             "{\"registryVersion\":\"test\",\"routes\":["
-                + "{\"order\":0,\"method\":\"GET\",\"pattern\":\"/api/agent/capability\",\"owner\":\"desktop-only\",\"capability\":\"agent.dsh\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"remote-paired\"},\"handlerId\":\"agent.capability\"}"
+                + "{\"order\":0,\"method\":\"GET\",\"pattern\":\"/api/agent/capability\",\"owner\":\"desktop-only\",\"capability\":\"agent.dsh\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"remote-paired\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"stable-unsupported\",\"auth\":\"none\",\"errorCode\":\"unsupported_capability\"},\"androidRemote\":{\"action\":\"host-handler\",\"auth\":\"remote-paired\"}},\"handlerId\":\"agent.capability\"}"
                 + "]}" , null));
         try {
             HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/agent/capability").openConnection();
@@ -414,8 +422,9 @@ public final class CoreDataServerTest {
         final boolean[] gateOpen = new boolean[] { true }; // ready：门禁开放
         server.setCommandGate(() -> gateOpen[0]);
         server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
-            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
-                resultConsumer.accept("{\"requestId\":\"r1\",\"status\":\"accepted\"}");
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApi(String method, String path, java.util.Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                resultConsumer.accept("{\"status\":200,\"body\":\"{\\\"requestId\\\":\\\"r1\\\",\\\"status\\\":\\\"accepted\\\"}\"}");
             }
             @Override public String view() { return "{}"; }
             @Override public void cancel(String requestId) { }
@@ -443,8 +452,9 @@ public final class CoreDataServerTest {
         final boolean[] gateOpen = new boolean[] { true }; // 初始 ready
         server.setCommandGate(() -> gateOpen[0]);
         server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
-            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
-                resultConsumer.accept("{\"status\":\"accepted\"}");
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApi(String method, String path, java.util.Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                resultConsumer.accept("{\"status\":200,\"body\":\"{\\\"status\\\":\\\"accepted\\\"}\"}");
             }
             @Override public String view() { return "{}"; }
             @Override public void cancel(String requestId) { }
@@ -498,10 +508,16 @@ public final class CoreDataServerTest {
     @Test public void cancelEndpointForwardsRequestId() throws Exception {
         CoreDataServer server = startServer("secret");
         final String[] cancelled = new String[1];
+        final String[] cancelledPath = new String[1];
         server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
             @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApi(String method, String path, java.util.Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                cancelled[0] = bodyJson;
+                cancelledPath[0] = path;
+                resultConsumer.accept("{\"status\":200,\"body\":\"{\\\"ok\\\":true,\\\"requestId\\\":\\\"req-9\\\"}\"}");
+            }
             @Override public String view() { return null; }
-            @Override public void cancel(String requestId) { cancelled[0] = requestId; }
+            @Override public void cancel(String requestId) { }
         });
         try {
             HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/core/cancel").openConnection();
@@ -513,8 +529,12 @@ public final class CoreDataServerTest {
             connection.setFixedLengthStreamingMode(body.length);
             try (OutputStream output = connection.getOutputStream()) { output.write(body); }
             assertEquals(200, connection.getResponseCode());
+            String response = readAll(connection.getInputStream());
+            assertTrue(response.contains("\"ok\":true"));
             connection.disconnect();
-            assertEquals("req-9", cancelled[0]);
+            assertNotNull(cancelled[0]);
+            assertTrue(cancelled[0].contains("req-9"));
+            assertEquals("/api/core/cancel", cancelledPath[0]);
         } finally {
             server.stop();
         }

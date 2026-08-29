@@ -15,6 +15,7 @@ import { createModelStreamAccumulator, createRealWorkers, parseModelCompleteResp
 import { resolveProviderForRequest, type ProviderRoutingEntry } from '../provider-routing.ts'
 import { setPromptStorage } from '../prompts.ts'
 import { createAndroidPromptStorage } from './android-prompt-storage.ts'
+import { CoreProtocolPortableHandler, handlePortableApi, type ApiRequest, type ApiResponse } from './api-handler.ts'
 
 export const ANDROID_CORE_BUNDLE_VERSION = '1.1.0'
 export const ANDROID_CORE_BRIDGE_VERSION = '1'
@@ -323,6 +324,48 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     approve: (draftId: string, text: string, stateUpdates: Record<string, string>, sceneUpdates?: { time?: string; location?: string }): void => requireComposition().director.approve(LOCAL_ROOM_ID, draftId, text, stateUpdates, sceneUpdates),
   }
 
+  // ── W4 合流：可移植 API handler（Core 协议端点语义单一来源）──
+  // 组合根 core（CoreRuntimeSkeleton）即 CoreRuntimePort：dispatch/getView/cancel/subscribe/invokeUiAction。
+  // health/capabilities 由 Java 侧 CoreDataServer 承载（真实 bundle 身份/能力矩阵），handler 的可选链
+  // getHealth/getCapabilities 不调用（Android 侧不提供），commands/cancel/ui-action 语义与桌面完全同构。
+  let portableHandler: CoreProtocolPortableHandler | undefined
+  const requirePortableHandler = (): CoreProtocolPortableHandler => {
+    let handler = portableHandler
+    if (!handler) {
+      const core = requireComposition().core
+      handler = new CoreProtocolPortableHandler(core, { roomId: () => LOCAL_ROOM_ID })
+      portableHandler = handler
+    }
+    return handler
+  }
+  /** 供 core-host-bridge 调用的协议端点分发：返回 Promise<{status, body}>（body 为 JSON 文本）。 */
+  const handlePortableRequest = async (method: string, path: string, headersJson: string, bodyJson: string): Promise<{ status: number; body: string }> => {
+    const headers: Record<string, string> = {}
+    try {
+      const parsed = JSON.parse(headersJson || '{}') as Record<string, unknown>
+      for (const [name, value] of Object.entries(parsed)) {
+        if (typeof value === 'string') headers[name.toLowerCase()] = value
+      }
+    } catch { /* 非法 headers 按空表处理 */ }
+    const request: ApiRequest = {
+      method,
+      url: path,
+      headers,
+      body: bodyJson ? new TextEncoder().encode(bodyJson) : undefined,
+      signal: AbortSignal.timeout(20_000),
+    }
+    let response: ApiResponse
+    try {
+      response = await handlePortableApi([requirePortableHandler()], request)
+    } catch (error) {
+      return { status: 500, body: JSON.stringify({ error: { code: 'internal_error', message: error instanceof Error ? error.message : String(error) } }) }
+    }
+    if (response.body instanceof Uint8Array) {
+      return { status: response.status, body: new TextDecoder().decode(response.body) }
+    }
+    return { status: response.status, body: '' }
+  }
+
   const localCore = Object.assign({
     bundleVersion: ANDROID_CORE_BUNDLE_VERSION,
     bridgeVersion: ANDROID_CORE_BRIDGE_VERSION,
@@ -335,6 +378,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     dispatch: (commandJson: string): void => dispatch(commandJson),
     cancel: (requestId?: string): void => { void composition?.cancel(requestId).catch(() => {}) },
     dispose: (): void => { composition?.dispose(); composition = undefined; sink = undefined },
+    /** W4 合流：协议端点分发（core-host-bridge 调用）。 */
+    handlePortableRequest,
   }, facade)
   global.StageCraftLocalCore = Object.freeze(localCore)
 

@@ -88,3 +88,40 @@ test('W5 非阻塞项：CoreNativeBridge 超时必须调用取消句柄且输出
   assert.match(source, /getBytes\(StandardCharsets\.UTF_8\)\.length > MAX_OUTPUT_BYTES/,
     '输出上限必须按 UTF-8 字节口径（评审非阻塞项 2）')
 })
+
+test('W4 合流：CoreDataServer 协议端点必须经 forwardApi 转发（可移植 handler 语义单一来源）', () => {
+  const server = read('java', 'ai', 'stagecraft', 'android', 'CoreDataServer.java')
+  assert.match(server, /default void forwardApi\(String method, String path, Map<String, String> headers, String bodyJson, java\.util\.function\.Consumer<String> resultConsumer\)/,
+    'CommandForwarder 必须提供 forwardApi 扩展（W4 合流契约）')
+  const commands = (server.match(/forwardApiAndRespond\(socket, "POST", "\/api\/core\/commands"/g) ?? []).length
+  const cancel = (server.match(/forwardApiAndRespond\(socket, "POST", "\/api\/core\/cancel"/g) ?? []).length
+  const uiAction = (server.match(/forwardApiAndRespond\(socket, "POST", "\/api\/core\/ui\/action"/g) ?? []).length
+  assert.equal(commands, 1, `commands 必须走 forwardApi（实际 ${commands}）`)
+  assert.equal(cancel, 1, `cancel 必须走 forwardApi（实际 ${cancel}）`)
+  assert.equal(uiAction, 1, `ui/action 必须走 forwardApi（实际 ${uiAction}）`)
+  assert.match(server, /case 504 -> "Gateway Timeout"/, '超时语义保留')
+  // 传输层职责仍在：nonce/415/413/门禁不因合流移除
+  assert.match(server, /!nonce\.equals\(headers\.get\("x-core-nonce"\)\)/, 'nonce 校验保留')
+  assert.match(server, /needsCommandGate && !commandGate\.canSubmitCommands\(\)/, '命令门禁保留')
+})
+
+test('W4 合流：CoreService 必须实现 forwardApi（pending 表 + protocol-result 桥回传）', () => {
+  const service = read('java', 'ai', 'stagecraft', 'android', 'CoreService.java')
+  assert.match(service, /pendingApi\.put\(requestId, resultConsumer\)/, 'pending 请求必须登记')
+  assert.match(service, /case "protocol-result"/, '桥消息必须处理 protocol-result')
+  assert.match(service, /dispatchRequest\(/, 'JS 侧必须调用 dispatchRequest')
+  assert.match(service, /pendingApi\.remove\(requestId\)/, '结果到达必须移除 pending')
+  // Core 进程桥只暴露 core-native allowlist（Gate B）——合流不得绕过
+  assert.match(service, /CoreNativeBridge bridge;/, '桥实例必须存在')
+})
+
+test('W4 合流：Core WebView JS 必须暴露协议端点分发（可移植 handler 在组合根侧）', () => {
+  const bridge = read('assets', 'web', 'core-host-bridge.js')
+  assert.match(bridge, /dispatchRequest: function/, 'CoreHostBridge 必须暴露 dispatchRequest')
+  assert.match(bridge, /protocol-result/, '结果必须经桥消息 protocol-result 回传')
+  assert.match(bridge, /handlePortableRequest/, '必须调用组合根的 handlePortableRequest')
+  const localCore = read('..', '..', '..', '..', 'src', 'portable', 'android-local-core.ts')
+  assert.match(localCore, /handlePortableRequest/, 'android-local-core 必须暴露 handlePortableRequest')
+  assert.match(localCore, /CoreProtocolPortableHandler/, '必须实例化 W4 可移植 handler')
+  assert.match(localCore, /handlePortableApi\(/, '必须经 handlePortableApi 分发')
+})

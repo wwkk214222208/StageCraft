@@ -202,10 +202,22 @@ public class GateASpikeActivity extends Activity {
     }
 
     private void startGateway() {
-        gateway = new GateAGatewayServer("spike");
+        // Gate B 收口：gateway 持有同一份构建期 registry（与 health 校验同一实例，防两份状态漂移）
+        RouteRegistry registry;
+        try (java.io.InputStream input = getAssets().open("api-route-registry.json")) {
+            java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) >= 0) output.write(buffer, 0, read);
+            registry = RouteRegistry.parse(output.toString("UTF-8"), null);
+        } catch (Exception error) {
+            log("registry load FAILED: " + error);
+            return;
+        }
+        gateway = new GateAGatewayServer("spike", registry);
         try {
             gateway.start();
-            log("gateway listening on 127.0.0.1:" + gateway.getPort());
+            log("gateway listening on 127.0.0.1:" + gateway.getPort() + " registry=" + registry.registryVersion());
         } catch (Exception error) {
             log("gateway start FAILED: " + error);
         }

@@ -218,6 +218,18 @@ public class GateACoreService extends Service {
                     health.put("coreBundleHash", verifiedArtifact == null ? "" : verifiedArtifact.sha256());
                     health.put("pluginSetHash", "spike");
                     health.put("stateSchemaVersion", "spike");
+                    // Gate B：registry 版本/哈希随 health 下发，供日志与主进程核对（构建期资产身份）
+                    try (java.io.InputStream registryInput = getAssets().open("api-route-registry.json")) {
+                        byte[] registryBytes = new byte[registryInput.available()];
+                        int registryRead = registryInput.read(registryBytes);
+                        String registryJson = new String(registryBytes, 0, Math.max(0, registryRead), StandardCharsets.UTF_8);
+                        RouteRegistry registry = RouteRegistry.parse(registryJson, null);
+                        health.put("apiRouteRegistryVersion", registry.registryVersion());
+                        health.put("apiRouteRegistrySha256", registry.sha256());
+                    } catch (Exception registryError) {
+                        health.put("apiRouteRegistryVersion", "unavailable");
+                        health.put("apiRouteRegistrySha256", "");
+                    }
                     health.put("status", "ready");
                     health.put("pid", corePid);
                     health.put("startedAt", startedAt);

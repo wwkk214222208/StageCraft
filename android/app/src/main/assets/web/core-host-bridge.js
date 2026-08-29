@@ -140,6 +140,37 @@
       return JSON.stringify({ requestId: request.requestId, error: 'unknown command ' + request.command })
     },
 
+    /**
+     * W4 合流：协议端点分发（method/path/headers/body → 可移植 handler → 标准回执）。
+     * handlePortableApi 是异步的（core.dispatch 是 async），结果经 CoreHostBridgePort
+     * 以 {type:'protocol-result', requestId, status, body} 回传，Java 侧唤醒 pending。
+     */
+    dispatchRequest: function (requestId, method, path, headersJson, bodyJson) {
+      if (!localCore || typeof localCore.handlePortableRequest !== 'function') {
+        if (window.CoreHostBridgePort) {
+          window.CoreHostBridgePort.send({
+            type: 'protocol-result', requestId: requestId, status: 503,
+            body: JSON.stringify({ error: { code: 'core_not_ready', message: 'core is not started' } }),
+          })
+        }
+        return
+      }
+      localCore.handlePortableRequest(method, path, headersJson, bodyJson).then(function (result) {
+        if (window.CoreHostBridgePort) {
+          window.CoreHostBridgePort.send({
+            type: 'protocol-result', requestId: requestId, status: result.status, body: result.body,
+          })
+        }
+      }).catch(function (error) {
+        if (window.CoreHostBridgePort) {
+          window.CoreHostBridgePort.send({
+            type: 'protocol-result', requestId: requestId, status: 500,
+            body: JSON.stringify({ error: { code: 'internal_error', message: error.message || String(error) } }),
+          })
+        }
+      })
+    },
+
     /** 供 CoreService currentView() 调用：返回权威 CoreView 文本。 */
     view: function () {
       if (!localCore) return null

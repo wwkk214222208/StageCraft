@@ -18,6 +18,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -48,9 +49,12 @@ public final class CoreService extends Service {
     private int corePid;
     private JSONObject launchPlan = new JSONObject();
 
+    /** W4 合流：pending 协议请求表（requestId → 等待 forwardApi 结果的消费者）。 */
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.function.Consumer<String>> pendingApi = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicLong pendingApiSequence = new java.util.concurrent.atomic.AtomicLong();
+
     /** W5-R1-2：Binder 控制面纯 Java 执行体（Stub 只做一行委托；JVM 可测）。 */
-    private final CoreControlBinder controlBinder = new CoreControlBinder(
-        // 端点提供者：ready/degraded 且 dataServer 就绪时返回端点 JSON
+    private final CoreControlBinder controlBinder = new CoreControlBinder(        // 端点提供者：ready/degraded 且 dataServer 就绪时返回端点 JSON
         () -> {
             if (dataServer == null || dataServer.getPort() < 0) return null;
             CoreLifecycle.State state = stateMachine.state();
@@ -170,6 +174,10 @@ public final class CoreService extends Service {
                 @Override public void cancel(String requestId) {
                     forwardCommand("{\"command\":\"cancel\",\"requestId\":\"" + requestId.replace("\"", "") + "\"}", result -> { });
                 }
+
+                @Override public void forwardApi(String method, String path, Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                    forwardApiRequest(method, path, headers, bodyJson, resultConsumer);
+                }
             });
             dataServer.start();
 
@@ -237,6 +245,19 @@ public final class CoreService extends Service {
                 case "core-event" -> {
                     if (dataServer != null) dataServer.publishCoreEvent(message.getJSONObject("event"));
                 }
+                case "protocol-result" -> {
+                    // W4 合流：可移植 handler 的结果回传（requestId → 唤醒等待的 forwardApi）
+                    String requestId = message.optString("requestId", "");
+                    if (!requestId.isEmpty()) {
+                        java.util.function.Consumer<String> consumer = pendingApi.remove(requestId);
+                        if (consumer != null) {
+                            JSONObject wrapped = new JSONObject()
+                                .put("status", message.optInt("status", 200))
+                                .put("body", message.optString("body", "{}"));
+                            consumer.accept(wrapped.toString());
+                        }
+                    }
+                }
                 case "log" -> GateALog.i("core-host: " + message.optString("text"));
                 default -> GateALog.w("unknown bridge message type: " + type);
             }
@@ -284,6 +305,40 @@ public final class CoreService extends Service {
             endpoint = null;
         }
         if (endpoint != null) broadcastEndpoint(endpoint);
+    }
+
+    /**
+     * W4 合流：协议端点请求转发——经桥把 method/path/headers/body 交给 Core WebView 内
+     * 可移植 handler（CoreProtocolPortableHandler），结果以 protocol-result 桥消息回传。
+     */
+    private void forwardApiRequest(String method, String path, Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+        if (coreWebView == null) {
+            resultConsumer.accept("{\"status\":503,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"core_not_ready\\\",\\\"message\\\":\\\"core webview is not available\\\"}}\"}");
+            return;
+        }
+        final String requestId = "api-" + System.currentTimeMillis() + "-" + pendingApiSequence.incrementAndGet();
+        pendingApi.put(requestId, resultConsumer);
+        try {
+            String headersJson = new JSONObject(headers).toString();
+            main.post(() -> {
+                if (coreWebView == null) {
+                    java.util.function.Consumer<String> consumer = pendingApi.remove(requestId);
+                    if (consumer != null) consumer.accept("{\"status\":503,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"core_not_ready\\\",\\\"message\\\":\\\"core webview is not available\\\"}}\"}");
+                    return;
+                }
+                coreWebView.evaluateJavascript(
+                    "window.CoreHostBridge && window.CoreHostBridge.dispatchRequest("
+                        + JSONObject.quote(requestId) + ","
+                        + JSONObject.quote(method) + ","
+                        + JSONObject.quote(path) + ","
+                        + JSONObject.quote(headersJson) + ","
+                        + JSONObject.quote(bodyJson) + ")",
+                    null);
+            });
+        } catch (Exception error) {
+            java.util.function.Consumer<String> consumer = pendingApi.remove(requestId);
+            if (consumer != null) consumer.accept("{\"status\":500,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"bridge_failed\\\",\\\"message\\\":\\\"" + error.getMessage() + "\\\"}}\"}");
+        }
     }
 
     /** POST /api/core/commands → 进程内桥 → 回执。 */
