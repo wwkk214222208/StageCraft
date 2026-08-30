@@ -443,14 +443,39 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
 
   // ── 补挂：存档（经原生端口）──
   { handlerId: 'archive.list', impl: facade => { const result = facade.invokeSync('archive.list', {}) as { files?: unknown[] } | null; return ok(result ?? { files: [] }) } },
-  // 桌面契约 archive.save → {ok:true, name, files:[...]}
+  // 桌面契约 archive.save → {ok:true, name, files:[...]}；存档内容为完整房间快照（exportArchive 同构：{version, exportedAt, room}）
   { handlerId: 'archive.save', impl: (facade, body) => {
-    const name = stringOf(body, 'name') || '存档-' + new Date().toISOString().slice(0, 10)
-    facade.invokeSync('archive.save', { name, archive: body.archive ?? {} })
+    let name = stringOf(body, 'name')
+    if (!name) {
+      // 默认命名：剧本名-模式-编号（与桌面 app-boot 同规则，避免覆盖）
+      const room = facade.getRoom() as { title?: string; storyId?: string; mode?: string } | null
+      const title = ((room?.title ?? '').trim() || room?.storyId || '剧本')
+      const mode = room?.mode === 'chat' ? '群聊' : '导演'
+      const base = `${title}-${mode}-`
+      const existing = (facade.invokeSync('archive.list', {}) as { files?: string[] } | null)?.files ?? []
+      const samePrefix = existing.filter(file => file.startsWith(base)).length
+      name = `${base}${String(samePrefix + 1).padStart(2, '0')}`
+    }
+    name = name.replace(/[\\/:*?"<>|]/g, '_').trim() || `存档-${Date.now()}`
+    const room = facade.getRoom() as Record<string, unknown> | null
+    if (!room) return err('房间状态不可用，无法存档。')
+    const archive = { version: 1, exportedAt: new Date().toISOString(), room }
+    facade.invokeSync('archive.save', { name, archive })
     const files = (facade.invokeSync('archive.list', {}) as { files?: string[] } | null)?.files ?? []
     return ok({ ok: true, name, files })
   } },
-  { handlerId: 'archive.load', impl: (facade, body) => { const result = facade.invokeSync('archive.load', { name: stringOf(body, 'name') }); return ok(result ?? { ok: true }) } },
+  // 桌面契约 archive.load → 写入 Core state 后 {ok:true}（registry note：必须由 Core 串行执行）
+  { handlerId: 'archive.load', impl: (facade, body) => {
+    const name = stringOf(body, 'name')
+    if (!name) return err('存档名缺失')
+    const result = facade.invokeSync('archive.load', { name }) as Record<string, unknown> | null
+    if (!result) return err('存档不存在。')
+    const archive = (result as { archive?: unknown }).archive ?? result
+    if (!archive || typeof archive !== 'object') return err('存档格式无效。')
+    // 经组合根 repository 的 importRoom 写回房间（与桌面 dispatchManagement('import-archive') 同语义）
+    facade.invokeSync('stagecraft.repository', { method: 'importRoom', args: [stringOf(body, 'name'), archive] })
+    return ok({ ok: true })
+  } },
   // 桌面契约 archive.delete → {ok:true, files:[...]}
   { handlerId: 'archive.delete', impl: (facade, body) => {
     const name = stringOf(body, 'name')
