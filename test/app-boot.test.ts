@@ -110,6 +110,13 @@ test('startTavern 启动自包含 HTTP 服务并响应 API 与静态资源', asy
     assert.equal(saved.prices.rates[0].model, '测试模型')
     assert.equal(saved.prices.rates[0].inputPerMillion, 1)
     assert.equal(saved.stats.requests, 0)
+    // GET /api/billing/prices：裸价格表（与 Android 共享 handler 形状一致；桌面此前 404，现补齐）
+    const priceGet = await fetch(`${base}/api/billing/prices`)
+    assert.equal(priceGet.status, 200)
+    const prices = await priceGet.json() as { version: number; rates: Array<{ provider: string; model: string }> }
+    assert.equal(prices.version, 1)
+    assert.equal(prices.rates.length, 1)
+    assert.equal(prices.rates[0].provider, '测试源')
     const usageRes = await fetch(`${base}/api/usage`)
     assert.equal(usageRes.status, 200)
     const usage = await usageRes.json() as { billing?: { totalCost: number; requests: number } }

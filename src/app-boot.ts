@@ -713,6 +713,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       }
       if (url.pathname === '/api/usage') { const usage = gateway?.usage(true) ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake' }; return json(response, 200, { ...usage, billing: billing.getStats() }) }
       if (url.pathname === '/api/billing' && request.method === 'GET') return json(response, 200, { prices: billing.getPrices(), stats: billing.getStats() })
+      if (url.pathname === '/api/billing/prices' && request.method === 'GET') return json(response, 200, billing.getPrices())
       if (url.pathname === '/api/billing/prices' && request.method === 'PUT') { const body = await readJson(request); return json(response, 200, { prices: billing.savePrices(body), stats: billing.getStats() }) }
       if (url.pathname === '/api/billing/reset' && request.method === 'POST') { billing.resetStats(); return json(response, 200, billing.getStats()) }
       if (url.pathname === '/api/prompts/presets' && request.method === 'GET') { const presetState = getPromptPresetState(promptsFilePath); return json(response, 200, { ...presetState, presets: mergePrivateToggles(presetState.presets, loadPrivateToggles(promptsFilePath)), modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }], gameplayScenarios: Object.fromEntries(userEditableScopes(promptsFilePath).map(scope => [scope, loadGameplayScenario(scope, promptsFilePath)])) }) }
