@@ -42,7 +42,7 @@ test('director turn player input and decision approval use Core interactions', a
   }
 })
 
-test('director mode always records player speech as a bubble scene; hidePlayerSpeech is a UI-only flag', async () => {
+test('director mode records player speech only on publish; hidePlayerSpeech is a UI-only flag', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-director-turn-'))
   let store: Store | undefined
   let container: import('../src/core/container.ts').DefaultCorePluginContainer | undefined
@@ -59,22 +59,32 @@ test('director mode always records player speech as a bubble scene; hidePlayerSp
     core.attachWorkflowStore({ save: (id, instance) => store!.saveWorkflowInstance(id, instance), list: id => store!.listWorkflowInstances(id) })
     core.projectRoom(store.getRoom(roomId))
 
-    // 默认：提交行动 → 玩家发言以气泡（speaker=player）记入正文
+    // 提交行动：玩家发言只作为回合上下文暂存（playerContribution），不落盘正文
     await runtime.submitTurn(roomId, { text: '我推开木门。' })
-    const firstLast = store.getRoom(roomId).scenes.at(-1)
-    assert.equal(firstLast?.speaker, 'player')
-    assert.equal(firstLast?.text, '我推开木门。')
-    // 走完本回合：批准决策 → 草稿 → 拒绝草稿 → 回等待输入
+    let snap = store.getRoom(roomId)
+    assert.equal(snap.scenes.at(-1)?.speaker, undefined, '提交阶段不写玩家气泡')
+    assert.equal(snap.playerContribution, '我推开木门。', '发言暂存为本回合上下文')
+    // 拒绝草稿（取消本回合）→ 玩家发言随之消失，不残留
     await runtime.proceedToDraft(roomId)
     await runtime.rejectDraft(roomId)
     assert.equal(store.getRoom(roomId).phase, 'awaiting-player-input')
-    // 开启「隐藏玩家发言」（仅 UI 隐藏显示）→ 仍始终记录
+    assert.equal(store.getRoom(roomId).playerContribution, undefined)
+    assert.equal(store.getRoom(roomId).scenes.some(scene => scene.speaker === 'player'), false, '取消回合后玩家发言不残留')
+    // 开启「隐藏玩家发言」（仅 UI 隐藏显示）→ 正式发布时仍记录
     store.setRoomConfig(roomId, { hidePlayerSpeech: true })
     assert.equal(store.getRoom(roomId).hidePlayerSpeech, true)
     await runtime.submitTurn(roomId, { text: '我后退一步。' })
-    const hiddenLast = store.getRoom(roomId).scenes.at(-1)
-    assert.equal(hiddenLast?.speaker, 'player')
-    assert.equal(hiddenLast?.text, '我后退一步。')
+    await runtime.proceedToDraft(roomId)
+    const draft = store.getRoom(roomId).draft
+    assert.ok(draft, '草稿已生成')
+    runtime.approve(roomId, draft.id, draft.text, draft.stateUpdates)
+    const published = store.getRoom(roomId).scenes
+    const playerScene = published.find(scene => scene.speaker === 'player')
+    assert.ok(playerScene, '正式成稿发布时玩家发言随正文落盘')
+    assert.equal(playerScene.text, '我后退一步。')
+    const narrationScene = published.find(scene => scene.speaker === undefined && scene.kind === 'narration')
+    assert.ok(narrationScene, '导演正文发布')
+    assert.ok(narrationScene.createdAt >= playerScene.createdAt, '玩家气泡先于导演正文发布')
   } finally {
     await container?.dispose()
     store?.close()

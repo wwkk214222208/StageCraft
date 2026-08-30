@@ -32,6 +32,12 @@ public final class NativeBridge implements AutoCloseable {
     /** W6-2：主进程插件管理（desired/effective/quarantined 读写；MainActivity 注入）。 */
     private volatile PluginManager pluginManager;
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
+    /**
+     * 模型请求专用并发池：模型流式读是阻塞操作，且 submitTurn 的角色决策本就并发发起。
+     * 若与配对/同步等原生操作挤在单线程 networkExecutor 上，会被串行化并被无关任务阻塞
+     * （模型请求迟迟不发、并发角色决策排队），故必须独立出队。
+     */
+    private final ExecutorService modelExecutor = Executors.newCachedThreadPool();
     private final AtomicLong connectionGeneration = new AtomicLong();
     private final AtomicLong operationGeneration = new AtomicLong();
     private final AtomicLong fileGeneration = new AtomicLong();
@@ -53,7 +59,7 @@ public final class NativeBridge implements AutoCloseable {
         this.webView = webView;
         this.sessionStore = sessionStore;
         this.embeddedCore = embeddedCore;
-        this.compositionOperations = new AndroidCompositionOperations(activity, new AndroidSqliteRepository(activity), new AndroidSecretStore(activity), networkExecutor);
+        this.compositionOperations = new AndroidCompositionOperations(activity, new AndroidSqliteRepository(activity), new AndroidSecretStore(activity), modelExecutor);
     }
 
     @JavascriptInterface public boolean localCoreAllowed() {
@@ -797,5 +803,6 @@ public final class NativeBridge implements AutoCloseable {
         unregisterInstallResultReceiver();
         compositionOperations.close();
         networkExecutor.shutdownNow();
+        modelExecutor.shutdownNow();
     }
 }
