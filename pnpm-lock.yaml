@@ -7,13 +7,14 @@ settings:
 importers:
 
   .:
-    devDependencies:
+    dependencies:
       '@deepseek-ai/cordis':
         specifier: npm:cordis@4.0.0-rc.8
         version: cordis@4.0.0-rc.8
       '@deepseek-ai/schemastery':
         specifier: 3.18.1
         version: 3.18.1
+    devDependencies:
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
