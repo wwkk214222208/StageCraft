@@ -41,9 +41,11 @@ import javax.net.ServerSocketFactory;
 public final class CoreDataServer {
     public static final int MAX_BODY_BYTES = 64 * 1024;
     private static final long SSE_QUEUE_LIMIT = 256;
-    // Business handlers may legitimately await one or more model calls. Keep the bridge request
-    // alive beyond provider connect/read latency; model-level cancellation still closes it early.
-    private static final int BRIDGE_TIMEOUT_MS = 5 * 60_000;
+    // Business handlers may legitimately await one or more model calls. Model-level idle/total
+    // timeouts (AndroidModelTransport: 120s idle / 10min total, aligned with desktop) bound the
+    // request; keep the bridge deadline at the same 10-minute ceiling so a slow-but-alive stream
+    // is never killed early, while a truly hung bridge still returns 504.
+    private static final int BRIDGE_TIMEOUT_MS = 10 * 60_000;
 
     public interface Subscriber {
         /** 返回 false 表示订阅者已断开。 */

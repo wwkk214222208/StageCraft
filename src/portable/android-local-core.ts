@@ -199,10 +199,31 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   const modelRequest = (request: ModelRequest, hooks?: { onThinking?: (text: string) => void }): Promise<ModelResult> => {
     const config = readProvider(request)
     if (!config) return Promise.reject(new Error('未配置模型供应商：点击「连接」→ 管理供应商，新建供应商并填写接口地址、API Key 与模型名。'))
-    const stream = createModelStreamAccumulator({ onThinking: hooks?.onThinking })
-    return invokeAsync('model.request', { requestId: request.requestId, endpoint: endpointFor(config.baseUrl), apiKey: config.apiKey, ...toOpenAiBody(request, config) }, { onStreamPayload: payload => stream.push(payload) }).then(value => {
+    // 空闲超时 + 总上限（与桌面 ModelGateway.completeStreaming 同构）：
+    // 连续 IDLE_TIMEOUT_MS 无新流数据（卡住/断流/首字节迟迟不来）才掐断；
+    // 总上限 10 分钟防止无限缓慢吐字永不结束。收到任何数据（thinking/content）即重置空闲计时。
+    const abort = new AbortController()
+    const idleTimeoutMs = 120_000
+    const totalTimeoutMs = Math.max(idleTimeoutMs * 5, 600_000)
+    let idleTimer = setTimeout(() => abort.abort(), idleTimeoutMs)
+    const totalTimer = setTimeout(() => abort.abort(), totalTimeoutMs)
+    const resetIdle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => abort.abort(), idleTimeoutMs) }
+    const streamWithTimeout = createModelStreamAccumulator({
+      onThinking: text => { resetIdle(); hooks?.onThinking?.(text) },
+      onContent: () => resetIdle(),
+    })
+    const resultPromise = invokeAsync('model.request', { requestId: request.requestId, endpoint: endpointFor(config.baseUrl), apiKey: config.apiKey, ...toOpenAiBody(request, config) }, {
+      onStreamPayload: payload => {
+        if (abort.signal.aborted) return
+        const parsed = streamWithTimeout.push(payload)
+        if (parsed.done) { clearTimeout(idleTimer); clearTimeout(totalTimer) }
+      },
+    }).then(value => {
+      clearTimeout(idleTimer)
+      clearTimeout(totalTimer)
+      if (abort.signal.aborted) throw new Error(`模型流请求超时：连续 ${idleTimeoutMs / 1000}s 无新数据（或超过 ${totalTimeoutMs / 1000}s 总时长）。`)
       if (value && typeof value === 'object' && (value as ResultValue).streamComplete === true) {
-        const complete = stream.result()
+        const complete = streamWithTimeout.result()
         const output = complete.toolArguments || complete.content
         return normalizeModelResult({
           requestId: request.requestId,
@@ -227,6 +248,11 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       }
       return normalizeModelResult(value)
     }) as Promise<ModelResult>
+    // 空闲超时触发：立即取消底层模型请求（Java transport request-scoped cancel）
+    abort.signal.addEventListener('abort', () => {
+      try { void requireComposition().core.cancel(request.requestId).catch(() => {}) } catch { /* no-op */ }
+    })
+    return resultPromise
   }
 
   /** 模型返回解析：与桌面 ModelGateway 同一套容错（剥围栏/截取片段），避免裸 JSON.parse 抛原生错误。 */
@@ -462,12 +488,9 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       } catch { /* 组合根未启动 */ }
       try { void requireComposition().core.cancel(cancelKey).catch(() => {}) } catch { /* no-op */ }
     })
-    // Director drafting and multi-role turns legitimately span several model calls. The old
-    // 20-second transport timeout aborted the service, whose cancelTurn() removes room.draft and
-    // resets the phase to awaiting-player-input — observed as “拟定草稿无效/成稿消失”. Keep this
-    // aligned with CoreDataServer's long business-request timeout; explicit client cancellation
-    // still aborts immediately through cancelPortableRequest().
-    const timeout = setTimeout(() => controller.abort(), 5 * 60_000)
+    // 业务请求不设整请求硬超时（对齐桌面 /api/turn：无服务端硬超时，模型层
+    // AndroidModelTransport 已带 120s 空闲 + 10 分钟总上限兜底）。显式取消仍通过
+    // cancelPortableRequest 立即 abort，不依赖超时。
     const request: ApiRequest = {
       method,
       url: path,
@@ -482,7 +505,6 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     } catch (error) {
       return { status: 500, body: JSON.stringify({ error: { code: 'internal_error', message: error instanceof Error ? error.message : String(error) } }) }
     } finally {
-      clearTimeout(timeout)
       if (cancelKey) {
         pendingPortableCancels.delete(cancelKey)
         cancelledTransportIds.delete(cancelKey) // 请求完成：清理 tombstone（防泄漏）
