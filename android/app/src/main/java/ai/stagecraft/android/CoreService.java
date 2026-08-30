@@ -665,7 +665,7 @@ public final class CoreService extends Service {
             "secret.get", "secret.set", "secret.remove",
             "core-state.commit", "core-state.restore",
             "stagecraft.room.get", "stagecraft.repository", "stories.list", "story.read", "preset.list",
-            "preset.active-scope.set", "preset.save", "preset.delete",
+            "preset.active-scope.set", "preset.save", "preset.delete", "prompt.gameplay.list",
             "story.create", "story.save", "story.saveAs", "story.delete",
             "archive.save", "archive.list", "archive.load", "archive.delete",
             "model.cancel",
