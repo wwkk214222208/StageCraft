@@ -58,7 +58,7 @@ public final class CoreHostAssetLoader extends WebViewClient {
 
     @Override
     public void onPageFinished(WebView view, String url) {
-        GateALog.i("core host page finished: " + url);
+        AppLog.i("core host page finished: " + url);
         if (pageLoadListener != null) pageLoadListener.onPageFinished(view, url);
     }
 

@@ -65,9 +65,9 @@ public final class PluginManager {
                     }
                 }
             }
-            GateALog.i("plugin catalog loaded: " + catalog.size() + " plugins");
+            AppLog.i("plugin catalog loaded: " + catalog.size() + " plugins");
         } catch (Exception error) {
-            GateALog.w("plugin catalog load failed: " + error);
+            AppLog.w("plugin catalog load failed: " + error);
         }
     }
 

@@ -1,12 +1,12 @@
 /**
- * W0 Gate A spike 源码契约测试（JVM/harness 级；真机证据另由 gatea-report.json 提供）。
+ * spike 组件源码契约测试（JVM/harness 级；真机证据另由 spike-report.json 提供）。
  *
  * 锚定计划与答疑的硬边界：
  *  - manifest 声明 :core 进程服务；
  *  - :core 进程 WebView suffix 唯一初始化入口先于 WebView 使用；
  *  - CoreDataServer 强制 nonce、请求体上限；gateway 逐块 flush 透传；
- *  - Binder 控制面只交换小消息（Q8 契约方法齐备）；
- *  - 进程内桥不复用 StageCraftNative（Q1/Q9）；
+ *  - Binder 控制面只交换小消息（契约方法齐备）；
+ *  - 进程内桥不复用 StageCraftNative（独立命名）；
  *  - core-host 禁止 file:// 与外发业务请求。
  */
 
@@ -21,12 +21,12 @@ const read = (...segments: string[]) => readFileSync(path.join(ROOT, 'android', 
 
 test('manifest：spike 组件 debug-only 隔离（评审第 8 条：release 剔除自杀入口）', () => {
   const mainManifest = read('AndroidManifest.xml')
-  assert.doesNotMatch(mainManifest, /GateASpikeActivity/, 'release 主 manifest 不得含 spike 入口')
-  assert.doesNotMatch(mainManifest, /GateACoreService/, 'release 主 manifest 不得含 spike 服务')
+  assert.doesNotMatch(mainManifest, /SpikeActivity/, 'release 主 manifest 不得含 spike 入口')
+  assert.doesNotMatch(mainManifest, /SpikeCoreService/, 'release 主 manifest 不得含 spike 服务')
   const debugManifest = readFileSync(path.join(ROOT, 'android', 'app', 'src', 'debug', 'AndroidManifest.xml'), 'utf8')
-  assert.match(debugManifest, /android:name="\.GateACoreService"/)
+  assert.match(debugManifest, /android:name="\.SpikeCoreService"/)
   assert.match(debugManifest, /android:process=":core"/)
-  assert.match(debugManifest, /android:name="\.GateASpikeActivity"/)
+  assert.match(debugManifest, /android:name="\.SpikeActivity"/)
   assert.doesNotMatch(mainManifest, /android:debuggable/, 'debuggable 由 buildType 管理，不得写入 manifest')
 })
 
@@ -34,18 +34,18 @@ test('WebView suffix：唯一初始化入口先于 WebView 使用（§5.1）', (
   const guard = read('java', 'ai', 'stagecraft', 'android', 'ProcessGuard.java')
   assert.match(guard, /setDataDirectorySuffix/)
   assert.match(guard, /AtomicBoolean/, 'suffix 只允许设置一次（幂等守卫）')
-  const service = read('java', 'ai', 'stagecraft', 'android', 'GateACoreService.java')
+  const service = read('java', 'ai', 'stagecraft', 'android', 'SpikeCoreService.java')
   const onCreate = service.slice(service.indexOf('void onCreate'), service.indexOf('private void boot'))
   assert.match(onCreate, /ProcessGuard\.init/, ':core 进程入口 onCreate 首行必须走唯一初始化入口')
-  assert.ok(service.indexOf('GateACoreService') < service.indexOf('new WebView'), '声明先于使用')
+  assert.ok(service.indexOf('SpikeCoreService') < service.indexOf('new WebView'), '声明先于使用')
   assert.ok(service.indexOf('ProcessGuard.init') < service.indexOf('new WebView'), 'suffix 初始化必须先于 WebView 创建')
-  const activity = read('java', 'ai', 'stagecraft', 'android', 'GateASpikeActivity.java')
+  const activity = read('java', 'ai', 'stagecraft', 'android', 'SpikeActivity.java')
   const activityOnCreate = activity.slice(activity.indexOf('void onCreate'), activity.indexOf('private void buildUi'))
   assert.match(activityOnCreate, /ProcessGuard\.init/, '主进程入口同样走唯一初始化入口')
 })
 
 test('CoreDataServer：nonce 强制、body 上限、SSE 逐条 flush', () => {
-  const server = read('java', 'ai', 'stagecraft', 'android', 'GateACoreDataServer.java')
+  const server = read('java', 'ai', 'stagecraft', 'android', 'SpikeCoreDataServer.java')
   assert.match(server, /x-core-nonce/, '必须校验 nonce 请求头')
   assert.match(server, /401/, '缺 nonce 拒绝')
   assert.match(server, /MAX_BODY_BYTES/, '请求体大小上限存在')
@@ -56,7 +56,7 @@ test('CoreDataServer：nonce 强制、body 上限、SSE 逐条 flush', () => {
 })
 
 test('Gateway：字节流透传、取消传播、nonce 只由 gateway 注入', () => {
-  const gateway = read('java', 'ai', 'stagecraft', 'android', 'GateAGatewayServer.java')
+  const gateway = read('java', 'ai', 'stagecraft', 'android', 'SpikeGatewayServer.java')
   assert.match(gateway, /x-core-nonce/, 'gateway 注入 nonce')
   assert.match(gateway, /downstream\.flush\(\)/, '逐块 flush 透传')
   assert.match(gateway, /upstreamClosedByClient/, '页面断开 → 关闭上游（取消传播计数）')
@@ -65,7 +65,7 @@ test('Gateway：字节流透传、取消传播、nonce 只由 gateway 注入', (
 })
 
 test('Gateway：Gate B 收口——registry 消费、owner 决策、content-type 透传、断开探测', () => {
-  const gateway = read('java', 'ai', 'stagecraft', 'android', 'GateAGatewayServer.java')
+  const gateway = read('java', 'ai', 'stagecraft', 'android', 'SpikeGatewayServer.java')
   assert.match(gateway, /RouteRegistry registry/, 'gateway 必须持有 registry')
   assert.match(gateway, /registry\.match\(request\.method, request\.path\)/, '请求必须按 registry 匹配产生决策')
   assert.match(gateway, /route_not_registered/, '未登记 method/path 稳定拒绝')
@@ -74,50 +74,50 @@ test('Gateway：Gate B 收口——registry 消费、owner 决策、content-type
   assert.match(gateway, /host_handler_unavailable/, 'main-host 进入宿主分派占位')
   assert.match(gateway, /dispatchPolicy/, '按 dispatchPolicy 决策（machine-readable，非注释）')
   assert.match(gateway, /content-type/, 'content-type 必须透传（Core 数据服务 415 校验依赖）')
-  assert.match(gateway, /isClientGone/, 'SSE 空闲期必须探测客户端断开（评审 C-3）')
-  const server = read('java', 'ai', 'stagecraft', 'android', 'GateACoreDataServer.java')
+  assert.match(gateway, /isClientGone/, 'SSE 空闲期必须探测客户端断开')
+  const server = read('java', 'ai', 'stagecraft', 'android', 'SpikeCoreDataServer.java')
   assert.match(server, /isSseClientGone/, 'Core 侧 SSE 写循环必须探测客户端断开（有界释放 subscriber）')
-  const activity = read('java', 'ai', 'stagecraft', 'android', 'GateASpikeActivity.java')
+  const activity = read('java', 'ai', 'stagecraft', 'android', 'SpikeActivity.java')
   assert.match(activity, /RouteRegistry\.parse/, 'gateway 启动必须加载同一构建期 registry 资产')
 })
 
 test('Binder 发送侧 64KiB 断言 + 客户端 linkToDeath + 幂等重绑（评审第 1 条）', () => {
-  const service = read('java', 'ai', 'stagecraft', 'android', 'GateACoreService.java')
+  const service = read('java', 'ai', 'stagecraft', 'android', 'SpikeCoreService.java')
   assert.match(service, /enforceBinderLimit/, '发送侧 64KiB 硬断言存在')
   assert.match(service, /64 \* 1024/, '上限字面量')
   assert.match(service, /maxBinderPayloadBytes/, '最大单条字节观测记录')
-  const activity = read('java', 'ai', 'stagecraft', 'android', 'GateASpikeActivity.java')
+  const activity = read('java', 'ai', 'stagecraft', 'android', 'SpikeActivity.java')
   assert.match(activity, /linkToDeath/, '客户端 death recipient（RemoteCallbackList 不覆盖客户端）')
   assert.match(activity, /rebindPending/, '幂等重绑守卫（三种死亡通知去重）')
 })
 
 test('数据服务与 gateway：超时护栏 / 溢出关闭信号 / 明确 502（评审第 5 条+实现风险）', () => {
-  const server = read('java', 'ai', 'stagecraft', 'android', 'GateACoreDataServer.java')
+  const server = read('java', 'ai', 'stagecraft', 'android', 'SpikeCoreDataServer.java')
   assert.match(server, /bridgeTimeoutMs/, 'latch 必须带超时（防连接线程泄漏；生产默认 20s，测试可注入短值）')
   assert.match(server, /504/, '桥超时返回明确错误')
   assert.match(server, /overflowClosed/, 'SSE 溢出通知写循环关闭连接')
   assert.match(server, /: connected/, '订阅确认行（消除 setTimeout(0) 竞态）')
-  const gateway = read('java', 'ai', 'stagecraft', 'android', 'GateAGatewayServer.java')
+  const gateway = read('java', 'ai', 'stagecraft', 'android', 'SpikeGatewayServer.java')
   assert.match(gateway, /502/, '上游失败且未写出字节时返回明确 502')
   assert.match(gateway, /downstreamBytes\[0\] == 0/, '502 仅在零字节写出时注入（防响应协议损坏）')
-  const alog = read('java', 'ai', 'stagecraft', 'android', 'GateALog.java')
-  assert.match(alog, /gatea-log-/, '日志必须落盘（华为 logcat 抑制的替代证据通道）')
+  const alog = read('java', 'ai', 'stagecraft', 'android', 'AppLog.java')
+  assert.match(alog, /app-log-/, '日志必须落盘（华为 logcat 抑制的替代证据通道）')
 })
 
-test('Binder 控制面：Q8 最小契约经 AIDL 冻结（真机实测修复 BinderProxy 强转）', () => {
+test('Binder 控制面：最小契约经 AIDL 冻结（真机实测修复 BinderProxy 强转）', () => {
   const control = read('aidl', 'ai', 'stagecraft', 'android', 'ICoreControl.aidl')
   for (const method of ['getEndpoint', 'requestStop', 'getStatusSummary', 'registerCallback']) {
-    assert.match(control, new RegExp(method), `缺少 Q8 契约方法 ${method}`)
+    assert.match(control, new RegExp(method), `缺少 契约方法 ${method}`)
   }
   const callback = read('aidl', 'ai', 'stagecraft', 'android', 'ICoreControlCallback.aidl')
   assert.match(callback, /onStatus/)
   assert.match(callback, /onEndpointReady/)
-  const service = read('java', 'ai', 'stagecraft', 'android', 'GateACoreService.java')
+  const service = read('java', 'ai', 'stagecraft', 'android', 'SpikeCoreService.java')
   assert.match(service, /ICoreControl\.Stub/, '服务端实现 AIDL Stub')
   assert.match(service, /RemoteCallbackList/, '跨进程回调列表（死亡自动清理）')
   assert.match(service, /failureCode/, '崩溃原因进入状态摘要')
-  assert.match(service, /enforceBinderLimit\(GateACoreService\.this\.getStatusSummary\(\)\.toString\(\)\)/, 'getStatusSummary 出口同样过 64KiB 断言（评审：并非所有出口都有断言）')
-  const activity = read('java', 'ai', 'stagecraft', 'android', 'GateASpikeActivity.java')
+  assert.match(service, /enforceBinderLimit\(SpikeCoreService\.this\.getStatusSummary\(\)\.toString\(\)\)/, 'getStatusSummary 出口同样过 64KiB 断言（评审：并非所有出口都有断言）')
+  const activity = read('java', 'ai', 'stagecraft', 'android', 'SpikeActivity.java')
   assert.match(activity, /ICoreControl\.Stub\.asInterface/, '跨进程必须 asInterface（真机实锤：强转 BinderProxy 崩溃）')
   assert.match(activity, /rebindPending[.]set[(]false[)]/, 'rebindPending 必须在绑定完成后清零（评审：清零过早有重复重绑窗口）')
   assert.match(activity, /rendererGoneStatusAt/, 'onRenderProcessGone 时刻必须被捕获为证据')
@@ -125,23 +125,23 @@ test('Binder 控制面：Q8 最小契约经 AIDL 冻结（真机实测修复 Bin
   assert.doesNotMatch(activity, /findRendererPid/, 'isolated UID 下进程枚举不可用（真机实测），不得保留死代码路径')
 })
 
-test('进程内桥：独立命名 CoreNative，不得复用 StageCraftNative（Q1/Q9）', () => {
-  const service = read('java', 'ai', 'stagecraft', 'android', 'GateACoreService.java')
+test('进程内桥：独立命名 CoreNative，不得复用 StageCraftNative', () => {
+  const service = read('java', 'ai', 'stagecraft', 'android', 'SpikeCoreService.java')
   assert.match(service, /"CoreNative"/)
   // 只断言实际注册行为：接口名不得是 StageCraftNative（注释提及不视为违规）
   assert.match(service, /addJavascriptInterface\(new CoreNativeMeasure\(\), \"CoreNative\"\)/)
   assert.doesNotMatch(service, /addJavascriptInterface\([^)]*StageCraftNative/)
-  assert.match(service, /createWebMessageChannel/, 'Q1 优先 WebMessagePort')
+  assert.match(service, /createWebMessageChannel/, '优先 WebMessagePort')
 })
 
 test('core-host：appassets 加载、禁 file://、零外发业务请求', () => {
   const loader = read('java', 'ai', 'stagecraft', 'android', 'CoreHostAssetLoader.java')
   assert.match(loader, /appassets\.androidplatform\.net/)
   assert.match(loader, /shouldOverrideUrlLoading/, '外部导航一律拒绝')
-  assert.match(loader, /onRenderProcessGone/, 'renderer 崩溃钩子（Gate A 项）')
+  assert.match(loader, /onRenderProcessGone/, 'renderer 崩溃钩子（spike 项）')
   const html = read('assets', 'core-host.html')
-  assert.doesNotMatch(html, /file:\/\//, '禁止 file://（Q7）')
-  assert.doesNotMatch(html, /fetch\(/, 'core host 页面零外发业务请求（Q7）')
+  assert.doesNotMatch(html, /file:\/\//, '禁止 file://')
+  assert.doesNotMatch(html, /fetch\(/, 'core host 页面零外发业务请求')
   assert.match(html, /core-host-bridge\.js/)
   const bridge = read('assets', 'web', 'core-host-bridge.js')
   assert.doesNotMatch(bridge, /fetch\(/, '桥脚本同样零外发请求')

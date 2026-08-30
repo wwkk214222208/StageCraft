@@ -101,7 +101,7 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
                         }
                     } catch (java.io.IOException openFailed) {
                         // 单个资产打开失败：记录并跳过（该文件缺失等价空态；不阻断其他场景）
-                        GateALog.w("gameplay asset open failed: " + file);
+                        AppLog.w("gameplay asset open failed: " + file);
                     }
                 }
             }

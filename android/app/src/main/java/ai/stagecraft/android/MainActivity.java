@@ -87,7 +87,7 @@ public final class MainActivity extends Activity {
                 // page-ready 证据（评审 R6）：进度 100 且 URL 含 mode=remote 时落盘——
                 // 恢复链验证以此证明远程页"完成加载"而非仅调用了 loadUrl
                 if (newProgress >= 100 && view.getUrl() != null && view.getUrl().contains("mode=remote")) {
-                    GateALog.i("main webview page ready: " + view.getUrl());
+                    AppLog.i("main webview page ready: " + view.getUrl());
                 }
             }
         };
@@ -101,7 +101,7 @@ public final class MainActivity extends Activity {
                 gatewayServer = new CoreGatewayServer(this, registry);
                 gatewayServer.setHostHandlers(this::hostHandlerFor);
             } catch (Exception initFailure) {
-                GateALog.w("core gateway init failed: " + initFailure);
+                AppLog.w("core gateway init failed: " + initFailure);
                 gatewayServer = null;
             }
         }
@@ -134,7 +134,7 @@ public final class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     String url = webView == null ? "" : String.valueOf(webView.getUrl());
                     if (url.contains("index.html") && url.contains("mode=remote") && gateway != null) {
-                        GateALog.i("core recovered; returning to local UI");
+                        AppLog.i("core recovered; returning to local UI");
                         showLocalUi();
                     }
                 });
@@ -142,7 +142,7 @@ public final class MainActivity extends Activity {
 
             @Override public void onStatus(JSONObject summary) {
                 lastCoreStatus = summary.optString("status", "");
-                GateALog.i("core status: " + lastCoreStatus);
+                AppLog.i("core status: " + lastCoreStatus);
                 // W6-2：隔离记录变化（plugin_quarantined）→ 主动刷新 quarantine → PluginManager 回写
                 if ("plugin_quarantined".equals(summary.optString("failureCode"))) {
                     fetchQuarantineFromCore();
@@ -151,7 +151,7 @@ public final class MainActivity extends Activity {
 
             @Override public void onCoreDisconnected() {
                 coreReady = false;
-                GateALog.w("core disconnected; recovery path available");
+                AppLog.w("core disconnected; recovery path available");
                 // W6 恢复联动：Core 断连后延迟探测——BIND_AUTO_CREATE 通常自动重建并快速握手；
                 // 若 3 秒内未恢复，且页面当前在本地 UI（非恢复页），自动导航恢复页
                 // （配对页不依赖 Core：远程模式/配对/诊断导出可用）。
@@ -162,7 +162,7 @@ public final class MainActivity extends Activity {
                         String url = String.valueOf(webView.getUrl());
                         boolean onRecovery = url.contains("mode=remote") || url.contains("index.html");
                         if (!onRecovery) {
-                            GateALog.w("core still unavailable; navigating to recovery page");
+                            AppLog.w("core still unavailable; navigating to recovery page");
                             showPairingPage();
                         }
                     });
@@ -173,17 +173,17 @@ public final class MainActivity extends Activity {
         // through the existing native bridge and can be exposed by a redesigned UI later.
         // Deep link：携带 OPEN_REMOTE_ENTRY extra 的启动（如 Core 不可用时的恢复页"远程模式入口"）
         // 直接打开远程/配对页，而非默认本地完整 UI。
-        if ("remote-entry".equals(getIntent().getStringExtra("gatea_entry"))) {
+        if ("remote-entry".equals(getIntent().getStringExtra("app_entry"))) {
             showPairingPage();
         } else {
             showLocalUi();
         }
-        GateALog.init(this);
-        GateALog.i("main activity ready (entry=" + getIntent().getStringExtra("gatea_entry") + ")");
+        AppLog.init(this);
+        AppLog.i("main activity ready (entry=" + getIntent().getStringExtra("app_entry") + ")");
         // W6：绑定 CoreService 并握手（endpoint/nonce → gateway；launch plan → :core）
         coreConnection.bind();
         if (registry != null && gateway != null) {
-            GateALog.i("core gateway listening on " + gateway.baseUrl() + " registry=" + registry.registryVersion());
+            AppLog.i("core gateway listening on " + gateway.baseUrl() + " registry=" + registry.registryVersion());
         }
     }
 
@@ -194,7 +194,7 @@ public final class MainActivity extends Activity {
             int read = input.read(bytes);
             return RouteRegistry.parse(new String(bytes, 0, Math.max(0, read), java.nio.charset.StandardCharsets.UTF_8), null);
         } catch (Exception error) {
-            GateALog.w("route registry load failed: " + error);
+            AppLog.w("route registry load failed: " + error);
             return null;
         }
     }
@@ -316,7 +316,7 @@ public final class MainActivity extends Activity {
         try {
             if (gateway != null) {
                 gateway.setCoreEndpoint(endpoint.optInt("port"), endpoint.optString("nonce"));
-                GateALog.i("core endpoint ready: port=" + endpoint.optInt("port") + " pid=" + endpoint.optInt("pid") + " nonce=<native-only>");
+                AppLog.i("core endpoint ready: port=" + endpoint.optInt("port") + " pid=" + endpoint.optInt("pid") + " nonce=<native-only>");
             }
             coreReady = true;
             // 传递 PluginLaunchPlan（主进程配置 → :core；不可变；插件配置变更后 regenerate 并重启）
@@ -326,7 +326,7 @@ public final class MainActivity extends Activity {
             // W6：异步读取 Core health 的 quarantine（组合根 plugin-report 回报 → health）→ PluginManager
             fetchQuarantineFromCore();
         } catch (Exception error) {
-            GateALog.w("endpoint ready handling failed: " + error);
+            AppLog.w("endpoint ready handling failed: " + error);
         }
     }
 
@@ -345,10 +345,10 @@ public final class MainActivity extends Activity {
                 org.json.JSONArray quarantine = health.optJSONArray("quarantine");
                 if (quarantine != null && pluginManager != null) {
                     pluginManager.updateQuarantine(quarantine);
-                    GateALog.i("core quarantine updated: " + quarantine.length() + " plugins");
+                    AppLog.i("core quarantine updated: " + quarantine.length() + " plugins");
                 }
             } catch (Exception error) {
-                GateALog.i("quarantine fetch skipped: " + error.getClass().getSimpleName());
+                AppLog.i("quarantine fetch skipped: " + error.getClass().getSimpleName());
             }
         }, "core-quarantine-fetch").start();
     }
@@ -390,7 +390,7 @@ public final class MainActivity extends Activity {
         } else {
             localUrl = StageCraftWebViewClient.LOCAL_ORIGIN + "/web/local.html";
         }
-        GateALog.i("main webview load: " + localUrl);
+        AppLog.i("main webview load: " + localUrl);
         webView.loadUrl(localUrl);
     }
 
@@ -402,7 +402,7 @@ public final class MainActivity extends Activity {
 
     /** 会话失效 / 清除后：回到本地配对页（远程模式）。 */
     void showPairingPage() {
-        GateALog.i("main webview load: " + StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html?mode=remote");
+        AppLog.i("main webview load: " + StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html?mode=remote");
         webView.loadUrl(StageCraftWebViewClient.LOCAL_ORIGIN + "/index.html?mode=remote");
     }
 

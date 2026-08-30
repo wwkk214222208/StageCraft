@@ -31,7 +31,7 @@ import javax.net.ServerSocketFactory;
  * 不进入页面/URL/日志/协议 payload）。支持 POST JSON 透传、SSE 逐事件 flush、
  * 请求体大小上限、客户端断开即时清理。不做业务解析。
  */
-public final class GateACoreDataServer {
+public final class SpikeCoreDataServer {
     public static final int MAX_BODY_BYTES = 64 * 1024;
     private static final long SSE_QUEUE_LIMIT = 256;
 
@@ -58,7 +58,7 @@ public final class GateACoreDataServer {
     private volatile String lastError = "";
     private final AtomicLong connections = new AtomicLong();
     private final AtomicLong rejected = new AtomicLong();
-    /** 由 GateACoreService 注入：把 HTTP POST 转发到 Core WebView JS（进程内桥量测）。 */
+    /** 由 SpikeCoreService 注入：把 HTTP POST 转发到 Core WebView JS（进程内桥量测）。 */
     private volatile CommandForwarder commandForwarder;
 
     public interface CommandForwarder {
@@ -75,16 +75,16 @@ public final class GateACoreDataServer {
         void dispatch(Runnable task);
     }
 
-    public GateACoreDataServer(String nonce) {
+    public SpikeCoreDataServer(String nonce) {
         this(nonce, null, 20_000);
     }
 
     /** JVM 边界测试用：允许注入直执行 dispatcher 与短桥超时，避免 android.jar stub 的 Looper 依赖。 */
-    GateACoreDataServer(String nonce, RunnableDispatcher dispatcher) {
+    SpikeCoreDataServer(String nonce, RunnableDispatcher dispatcher) {
         this(nonce, dispatcher, 20_000);
     }
 
-    GateACoreDataServer(String nonce, RunnableDispatcher dispatcher, long bridgeTimeoutMs) {
+    SpikeCoreDataServer(String nonce, RunnableDispatcher dispatcher, long bridgeTimeoutMs) {
         this.nonce = java.util.Objects.requireNonNull(nonce, "nonce");
         this.bridgeTimeoutMs = bridgeTimeoutMs;
         // 生产路径（dispatcher==null）用主线程 Handler；测试注入直执行器时不再触碰 Looper
@@ -99,7 +99,7 @@ public final class GateACoreDataServer {
     public long getRejectedCount() { return rejected.get(); }
 
     public void start() throws IOException {
-        // 显式 IPv4 回环（与 gateway 的 127.0.0.1 连接一致，见 GateAGatewayServer 注释）
+        // 显式 IPv4 回环（与 gateway 的 127.0.0.1 连接一致，见 SpikeGatewayServer 注释）
         server = ServerSocketFactory.getDefault().createServerSocket(0, 64, InetAddress.getByName("127.0.0.1"));
         port = server.getLocalPort();
         Thread acceptor = new Thread(this::acceptLoop, "gatea-core-data-accept");
@@ -123,7 +123,7 @@ public final class GateACoreDataServer {
             } catch (SocketException closed) {
                 return; // server.stop() 触发
             } catch (IOException error) {
-                GateALog.w("core data accept failed: " + error);
+                AppLog.w("core data accept failed: " + error);
             }
         }
     }
@@ -204,7 +204,7 @@ public final class GateACoreDataServer {
         } catch (Throwable error) {
             // 华为设备 logcat 受抑制：把异常如实回写进响应体并记录到 lastError（health 可见）
             lastError = error.getClass().getSimpleName() + ": " + error.getMessage();
-            GateALog.w("core data error: " + lastError);
+            AppLog.w("core data error: " + lastError);
             try { respond(socket, 500, "application/json", "{\"error\":{\"code\":\"data_server_internal\",\"message\":\"" + lastError.replace("\"", "'") + "\"}}"); } catch (Exception ignored) { }
             try { socket.close(); } catch (IOException ignored) { }
         }
@@ -261,7 +261,7 @@ public final class GateACoreDataServer {
         } catch (InterruptedException stopSignal) {
             Thread.currentThread().interrupt();
         } catch (IOException clientGone) {
-            GateALog.i("core sse client disconnected");
+            AppLog.i("core sse client disconnected");
         } finally {
             subscribers.remove(subscriber);
             try { socket.close(); } catch (IOException ignored) { }
@@ -327,7 +327,7 @@ public final class GateACoreDataServer {
             output.flush();
             socket.shutdownOutput();
         } catch (IOException error) {
-            GateALog.w("core data respond failed: " + error.getClass().getSimpleName());
+            AppLog.w("core data respond failed: " + error.getClass().getSimpleName());
         }
     }
 

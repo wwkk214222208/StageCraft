@@ -28,12 +28,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 启动 nonce 数据服务 → 发布状态摘要。Binder 只交换 port/nonce/health/lifecycle 小消息（≤8KiB）。
  * 该服务是 spike 原型；Gate A 通过后由 W5/W6 选择性移植为正式 CoreService。
  */
-public class GateACoreService extends Service {
+public class SpikeCoreService extends Service {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final AtomicBoolean disposed = new AtomicBoolean(false);
     private WebView coreWebView;
-    private GateACoreDataServer dataServer;
+    private SpikeCoreDataServer dataServer;
     private String startedAt;
     private String status = "starting";
     private String failureCode;
@@ -61,7 +61,7 @@ public class GateACoreService extends Service {
 
         @Override
         public String getStatusSummary() {
-            return enforceBinderLimit(GateACoreService.this.getStatusSummary().toString());
+            return enforceBinderLimit(SpikeCoreService.this.getStatusSummary().toString());
         }
 
         @Override
@@ -83,7 +83,7 @@ public class GateACoreService extends Service {
             try {
                 if (planJson == null || planJson.length() > 8 * 1024) return;
                 org.json.JSONObject plan = new JSONObject(planJson);
-                GateALog.i("spike acceptLaunchPlan pluginSetHash=" + plan.optString("pluginSetHash"));
+                AppLog.i("spike acceptLaunchPlan pluginSetHash=" + plan.optString("pluginSetHash"));
             } catch (Exception ignored) { }
         }
     };
@@ -132,8 +132,8 @@ public class GateACoreService extends Service {
         boolean initializedHere = ProcessGuard.init(processName);
         corePid = Process.myPid();
         startedAt = java.time.Instant.now().toString();
-        GateALog.i("core service onCreate pid=" + corePid + " process=" + processName + " suffixInit=" + initializedHere);
-        GateACrashGuard.install(this);
+        AppLog.i("core service onCreate pid=" + corePid + " process=" + processName + " suffixInit=" + initializedHere);
+        CrashGuard.install(this);
         main.post(this::boot);
     }
 
@@ -146,7 +146,7 @@ public class GateACoreService extends Service {
             }
             verifiedArtifact = artifact;
             nonce = java.util.UUID.randomUUID().toString().replace("-", "");
-            dataServer = new GateACoreDataServer(nonce);
+            dataServer = new SpikeCoreDataServer(nonce);
             dataServer.setCommandForwarder(this::forwardCommand);
             dataServer.start();
 
@@ -168,13 +168,13 @@ public class GateACoreService extends Service {
             coreWebView.setWebChromeClient(new android.webkit.WebChromeClient() {
                 @Override
                 public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
-                    GateALog.i("core-host console [" + message.messageLevel() + "] " + message.message() + " @" + message.sourceId() + ":" + message.lineNumber());
+                    AppLog.i("core-host console [" + message.messageLevel() + "] " + message.message() + " @" + message.sourceId() + ":" + message.lineNumber());
                     return true;
                 }
             });
             coreWebView.addJavascriptInterface(new CoreNativeMeasure(), "CoreNative");
             coreWebView.loadUrl(CoreHostAssetLoader.CORE_ORIGIN + "/assets/core-host.html");
-            GateALog.i("core webview loading appassets core-host");
+            AppLog.i("core webview loading appassets core-host");
         } catch (Throwable error) {
             // 捕获 Throwable：任何 Error（如 NoClassDefFoundError）不得杀掉 :core 进程进重启循环
             fail("boot_failed", error.getClass().getSimpleName() + ": " + error.getMessage());
@@ -195,7 +195,7 @@ public class GateACoreService extends Service {
             }
         });
         coreWebView.postWebMessage(new WebMessage("{\"type\":\"init\",\"bridge\":\"web-message-port\"}", new WebMessagePort[]{pagePort}), Uri.parse(CoreHostAssetLoader.CORE_ORIGIN));
-        GateALog.i("web message bridge posted");
+        AppLog.i("web message bridge posted");
     }
 
     /** 页面 → 宿主消息（:core 主线程）：事件发布 / 就绪上报 / 日志。 */
@@ -241,17 +241,17 @@ public class GateACoreService extends Service {
                 case "core-event" -> {
                     if (dataServer != null) dataServer.publishCoreEvent(message.getJSONObject("event"));
                 }
-                case "log" -> GateALog.i("core-host: " + message.optString("text"));
-                default -> GateALog.w("unknown bridge message type: " + type);
+                case "log" -> AppLog.i("core-host: " + message.optString("text"));
+                default -> AppLog.w("unknown bridge message type: " + type);
             }
         } catch (Exception error) {
-            GateALog.w("bridge message failed: " + error.getClass().getSimpleName());
+            AppLog.w("bridge message failed: " + error.getClass().getSimpleName());
         }
     }
 
     private void publishEndpointReady() {
         // 控制面约定：端点信息只经 Binder 小消息（Q8）；此处直接广播，不经本地 Stub 以免 RemoteException
-        GateALog.i("endpoint ready port=" + dataServer.getPort() + " status=ready");
+        AppLog.i("endpoint ready port=" + dataServer.getPort() + " status=ready");
         String endpoint = null;
         try {
             if (dataServer != null) {
@@ -285,7 +285,7 @@ public class GateACoreService extends Service {
                 }
             }
         } catch (Exception error) {
-            GateALog.w("crash-renderer terminate path failed: " + error);
+            AppLog.w("crash-renderer terminate path failed: " + error);
         }
         coreWebView.evaluateJavascript(
             "window.CoreHostBridge && window.CoreHostBridge.dispatch(" + JSONObject.quote(bodyJson) + ")",
@@ -335,7 +335,7 @@ public class GateACoreService extends Service {
         if ("failed".equals(status) && code.equals(failureCode)) return; // 幂等：重复失败通知不重复迁移
         status = "failed";
         failureCode = code;
-        GateALog.w("core failed code=" + code + " message=" + message);
+        AppLog.w("core failed code=" + code + " message=" + message);
         if ("renderer_gone".equals(code)) {
             // renderer 证据独立落盘（评审：oneway 广播竞态导致主进程侧漏帧）——
             // 本文件由 :core 进程在 onRenderProcessGone 处理路径内同步写入，先于 stopSelf

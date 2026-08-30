@@ -75,7 +75,7 @@ public final class PluginConfigStore {
             if (file.exists()) file.delete();
             temporary.renameTo(file);
         } catch (Exception error) {
-            GateALog.w("plugin config store persist failed: " + error);
+            AppLog.w("plugin config store persist failed: " + error);
         }
     }
 

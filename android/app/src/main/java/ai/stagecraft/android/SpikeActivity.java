@@ -42,13 +42,13 @@ import java.util.List;
  *
  * 证据：屏幕日志 + logcat(GATEA) + getExternalFilesDir/gatea-report.json。
  */
-public class GateASpikeActivity extends Activity {
+public class SpikeActivity extends Activity {
     private static final String CORE_HOST_URL = "http://127.0.0.1:%d%s";
     private TextView logView;
     private ScrollView scroll;
     private final List<String> screenLog = new ArrayList<>();
     private final List<JSONObject> checks = new ArrayList<>();
-    private GateAGatewayServer gateway;
+    private SpikeGatewayServer gateway;
     private ICoreControl core;
     private volatile JSONObject endpoint;
     /** :core 上报 fail(renderer_gone) 的时刻（onRenderProcessGone 证据，评审第 4 条）。 */
@@ -118,7 +118,7 @@ public class GateASpikeActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        GateACrashGuard.install(this);
+        CrashGuard.install(this);
         ProcessGuard.init(ProcessGuard.currentProcessName());
         startedAtMillis = System.currentTimeMillis();
         buildUi();
@@ -167,7 +167,7 @@ public class GateASpikeActivity extends Activity {
             remoteEntryOpened = true;
             Intent remote = new Intent(this, MainActivity.class);
             remote.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            remote.putExtra("gatea_entry", "remote-entry");
+            remote.putExtra("app_entry", "remote-entry");
             startActivity(remote);
         });
         recoveryPanel.addView(recoveryRemoteEntryButton);
@@ -194,7 +194,7 @@ public class GateASpikeActivity extends Activity {
     private void restartCoreFromRecovery() {
         JSONObject current = endpoint;
         if (current != null && current.optInt("pid") > 0) {
-            GateALog.i("recovery restart: killing core pid=" + current.optInt("pid"));
+            AppLog.i("recovery restart: killing core pid=" + current.optInt("pid"));
             android.os.Process.killProcess(current.optInt("pid"));
         } else {
             scheduleRebindOnce("recovery-restart");
@@ -214,7 +214,7 @@ public class GateASpikeActivity extends Activity {
             log("registry load FAILED: " + error);
             return;
         }
-        gateway = new GateAGatewayServer("spike", registry);
+        gateway = new SpikeGatewayServer("spike", registry);
         try {
             gateway.start();
             log("gateway listening on 127.0.0.1:" + gateway.getPort() + " registry=" + registry.registryVersion());
@@ -224,7 +224,7 @@ public class GateASpikeActivity extends Activity {
     }
 
     private void bindCoreService() {
-        Intent intent = new Intent(this, GateACoreService.class);
+        Intent intent = new Intent(this, SpikeCoreService.class);
         if (!bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
             log("bindService FAILED");
         } else {
@@ -277,12 +277,12 @@ public class GateASpikeActivity extends Activity {
         runId = java.util.UUID.randomUUID().toString().substring(0, 8);
         // 防陈旧证据：序列开始即重置报告文件 + 删除上一轮 renderer 证据 + 截断每轮日志
         try {
-            File stale = new File(getExternalFilesDir(null), "gatea-report.json");
+            File stale = new File(getExternalFilesDir(null), "spike-report.json");
             try (java.io.FileOutputStream output = new java.io.FileOutputStream(stale)) {
                 output.write(("{\"status\":\"running\",\"runId\":\"" + runId + "\"}").getBytes(StandardCharsets.UTF_8));
             }
-            new File(getExternalFilesDir(null), "gatea-renderer-gone.txt").delete();
-            GateALog.resetExternalLogs();
+            new File(getExternalFilesDir(null), "spike-renderer-gone.txt").delete();
+            AppLog.resetExternalLogs();
         } catch (Exception ignored) { }
         new Thread(() -> {
             try {
@@ -522,7 +522,7 @@ public class GateASpikeActivity extends Activity {
                 if (!mainActivityAtTop) Thread.sleep(200);
             }
             // 回到 spike 界面继续
-            startActivity(new Intent(this, GateASpikeActivity.class));
+            startActivity(new Intent(this, SpikeActivity.class));
         } catch (Exception error) {
             mainActivityOk = false;
         }
@@ -620,7 +620,7 @@ public class GateASpikeActivity extends Activity {
         }
         // 3. 回到恢复视图 → 点击重新启动 Core → Core 重启 → 页面重连（ready）
         runOnUiThread(() -> {
-            startActivity(new Intent(this, GateASpikeActivity.class));
+            startActivity(new Intent(this, SpikeActivity.class));
             recoveryPanel.setVisibility(View.VISIBLE);
         });
         Thread.sleep(1_000);
@@ -737,7 +737,7 @@ public class GateASpikeActivity extends Activity {
     /** 读取主进程文件日志（验证远程页实际加载，评审 R5）。 */
     private String readMainProcessLog() {
         try {
-            File log = new File(getFilesDir(), "gatea-log-" + getPackageName() + ".txt");
+            File log = new File(getFilesDir(), "spike-log-" + getPackageName() + ".txt");
             if (!log.exists()) return "";
             try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(log))) {
                 StringBuilder builder = new StringBuilder();
@@ -754,7 +754,7 @@ public class GateASpikeActivity extends Activity {
     /** 读取 :core 落盘的 renderer-gone 证据文件（与主进程 oneway 竞态无关）。 */
     private String readRendererGoneEvidence() {
         try {
-            File evidence = new File(getExternalFilesDir(null), "gatea-renderer-gone.txt");
+            File evidence = new File(getExternalFilesDir(null), "spike-renderer-gone.txt");
             if (!evidence.exists()) return null;
             try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(evidence))) {
                 StringBuilder builder = new StringBuilder();
@@ -889,9 +889,9 @@ public class GateASpikeActivity extends Activity {
             for (JSONObject check : checks) allPass &= check.optBoolean("pass");
             report.put("allPass", allPass);
         } catch (Exception ignored) { }
-        GateALog.result(report.toString());
+        AppLog.result(report.toString());
         try {
-            File output = new File(getExternalFilesDir(null), "gatea-report.json");
+            File output = new File(getExternalFilesDir(null), "spike-report.json");
             java.io.FileWriter writer = new java.io.FileWriter(output);
             writer.write(report.toString(2));
             writer.close();
@@ -940,7 +940,7 @@ public class GateASpikeActivity extends Activity {
 
     private void log(String message) {
         String stamped = java.time.LocalTime.now() + "  " + message;
-        GateALog.i(stamped);
+        AppLog.i(stamped);
         runOnUiThread(() -> {
             screenLog.add(stamped);
             if (screenLog.size() > 200) screenLog.remove(0);

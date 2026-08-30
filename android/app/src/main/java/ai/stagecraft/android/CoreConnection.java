@@ -63,7 +63,7 @@ public final class CoreConnection {
             try {
                 // 客户端 death recipient（评审第 1 条）：RemoteCallbackList 只覆盖服务端，客户端必须 linkToDeath
                 binder.linkToDeath(() -> {
-                    GateALog.i("core connection: binder death recipient fired");
+                    AppLog.i("core connection: binder death recipient fired");
                     handleDisconnect("death-recipient");
                 }, 0);
                 core.registerCallback(new ICoreControlCallback.Stub() {
@@ -81,19 +81,19 @@ public final class CoreConnection {
                         } catch (Exception ignored) { }
                     }
                 });
-                GateALog.i("core connection: service connected, callback registered");
+                AppLog.i("core connection: service connected, callback registered");
             } catch (Exception error) {
-                GateALog.w("core connection: registerCallback failed: " + error);
+                AppLog.w("core connection: registerCallback failed: " + error);
             }
         }
 
         @Override public void onServiceDisconnected(ComponentName name) {
-            GateALog.i("core connection: service disconnected (core process died?)");
+            AppLog.i("core connection: service disconnected (core process died?)");
             handleDisconnect("onServiceDisconnected");
         }
 
         @Override public void onBindingDied(ComponentName name) {
-            GateALog.i("core connection: binding died");
+            AppLog.i("core connection: binding died");
             handleDisconnect("onBindingDied");
         }
     };
@@ -110,10 +110,10 @@ public final class CoreConnection {
     private void scheduleRebindOnce(String source) {
         if (!rebindPending.compareAndSet(false, true)) {
             rebindDedupedCount.incrementAndGet();
-            GateALog.i("core connection: rebind already pending, deduped source=" + source);
+            AppLog.i("core connection: rebind already pending, deduped source=" + source);
             return;
         }
-        GateALog.i("core connection: rebind scheduled (source=" + source + ")");
+        AppLog.i("core connection: rebind scheduled (source=" + source + ")");
         new Thread(() -> {
             try { Thread.sleep(300); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
             try { context.unbindService(connection); } catch (Exception ignored) { }
@@ -129,12 +129,12 @@ public final class CoreConnection {
         Intent intent = new Intent(context, CoreService.class);
         try {
             if (context.bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
-                GateALog.i("core connection: bound :core service (BIND_AUTO_CREATE)");
+                AppLog.i("core connection: bound :core service (BIND_AUTO_CREATE)");
             } else {
-                GateALog.w("core connection: bindService FAILED");
+                AppLog.w("core connection: bindService FAILED");
             }
         } catch (Exception error) {
-            GateALog.w("core connection: bindService exception: " + error);
+            AppLog.w("core connection: bindService exception: " + error);
         }
     }
 
@@ -152,13 +152,13 @@ public final class CoreConnection {
         if (current == null || plan == null) return;
         try {
             if (plan.toString().length() > 8 * 1024) {
-                GateALog.w("core connection: launch plan too large, rejected");
+                AppLog.w("core connection: launch plan too large, rejected");
                 return;
             }
             current.acceptLaunchPlan(plan.toString());
-            GateALog.i("core connection: launch plan accepted (pluginSetHash=" + plan.optString("pluginSetHash") + ")");
+            AppLog.i("core connection: launch plan accepted (pluginSetHash=" + plan.optString("pluginSetHash") + ")");
         } catch (Exception error) {
-            GateALog.w("core connection: acceptLaunchPlan failed: " + error);
+            AppLog.w("core connection: acceptLaunchPlan failed: " + error);
         }
     }
 

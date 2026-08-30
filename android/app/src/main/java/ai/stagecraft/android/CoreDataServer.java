@@ -36,7 +36,7 @@ import javax.net.ServerSocketFactory;
  * 组合根。socket I/O 全部留在连接线程（主线程写 loopback 触发 NetworkOnMainThreadException，
  * Gate A 真机实测根因）。
  *
- * JVM 可测性：executor 与 logger 可注入（Android 默认主线程 Handler + GateALog；
+ * JVM 可测性：executor 与 logger 可注入（Android 默认主线程 Handler + AppLog；
  * 测试注入直接执行器与 no-op logger）。
  */
 public final class CoreDataServer {
@@ -113,13 +113,13 @@ public final class CoreDataServer {
     private final CopyOnWriteArrayList<Subscriber> subscribers = new CopyOnWriteArrayList<>();
     private volatile String lastError = "";
 
-    /** Android 默认：主线程 executor + GateALog。 */
+    /** Android 默认：主线程 executor + AppLog。 */
     public CoreDataServer(String nonce) {
         this(nonce,
             new android.os.Handler(android.os.Looper.getMainLooper())::post,
             new Logger() {
-                @Override public void i(String message) { GateALog.i(message); }
-                @Override public void w(String message) { GateALog.w(message); }
+                @Override public void i(String message) { AppLog.i(message); }
+                @Override public void w(String message) { AppLog.w(message); }
             });
     }
 

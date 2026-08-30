@@ -271,7 +271,7 @@ public class GateBcClosureTest {
     @Test
     public void boundaryConstantsMatchFixture() throws Exception {
         JSONObject boundaries = fixtures().getJSONObject("boundaries");
-        assertEquals(boundaries.getInt("maxBodyBytes"), GateACoreDataServer.MAX_BODY_BYTES);
+        assertEquals(boundaries.getInt("maxBodyBytes"), SpikeCoreDataServer.MAX_BODY_BYTES);
         assertEquals(boundaries.getInt("bridgeTimeoutMs"), 20000);
     }
 
@@ -332,7 +332,7 @@ public class GateBcClosureTest {
     // ── Gate C：真实 HTTP 边界行为（JVM 直连 CoreDataServer，驱动 401/413/415/404/200/SSE/超时）──
 
     /** 直执行 dispatcher：命令转发回调同步完成（模拟 :core 主线程立即回执），避免 Handler/Looper 依赖。 */
-    private static final GateACoreDataServer.RunnableDispatcher DIRECT = Runnable::run;
+    private static final SpikeCoreDataServer.RunnableDispatcher DIRECT = Runnable::run;
 
     private static String httpRequest(int port, String method, String path, java.util.Map<String, String> headers, String body) throws Exception {
         try (Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), port)) {
@@ -360,8 +360,8 @@ public class GateBcClosureTest {
         }
     }
 
-    private static GateACoreDataServer startBoundaryServer() throws Exception {
-        GateACoreDataServer server = new GateACoreDataServer("test-nonce", DIRECT);
+    private static SpikeCoreDataServer startBoundaryServer() throws Exception {
+        SpikeCoreDataServer server = new SpikeCoreDataServer("test-nonce", DIRECT);
         server.setHealthJson("{\"protocolVersion\":\"1.1\",\"status\":\"ready\"}");
         server.setCommandForwarder((body, callback) -> callback.accept("{\"requestId\":\"rq\",\"status\":\"accepted\",\"revision\":8}"));
         server.start();
@@ -370,7 +370,7 @@ public class GateBcClosureTest {
 
     @Test
     public void coreDataServerBoundaryBehaviors() throws Exception {
-        GateACoreDataServer server = startBoundaryServer();
+        SpikeCoreDataServer server = startBoundaryServer();
         try {
             int port = server.getPort();
             // 401：缺 nonce
@@ -391,7 +391,7 @@ public class GateBcClosureTest {
             // 413：body 超限（MAX_BODY_BYTES+1）
             String oversized = httpRequest(port, "POST", "/api/core/commands",
                 java.util.Map.of("x-core-nonce", "test-nonce", "content-type", "application/json"),
-                "{\"x\":\"" + "a".repeat(GateACoreDataServer.MAX_BODY_BYTES) + "\"}");
+                "{\"x\":\"" + "a".repeat(SpikeCoreDataServer.MAX_BODY_BYTES) + "\"}");
             assertTrue("超限 body 必须 413", oversized.contains("413"));
             assertTrue("413 必须带稳定错误码 payload_too_large", oversized.contains("payload_too_large"));
             // 415：POST 但 content-type 非 JSON
@@ -420,7 +420,7 @@ public class GateBcClosureTest {
 
     @Test
     public void coreDataServerSseStreamingAndContentType() throws Exception {
-        GateACoreDataServer server = startBoundaryServer();
+        SpikeCoreDataServer server = startBoundaryServer();
         try {
             int port = server.getPort();
             try (Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), port)) {
@@ -478,7 +478,7 @@ public class GateBcClosureTest {
     @Test
     public void coreDataServerBridgeTimeoutIsBounded() throws Exception {
         // 桥回调永不返回：连接线程必须在有界时间内回 504，不得泄漏（注入 500ms 短超时避免拖慢测试）
-        GateACoreDataServer server = new GateACoreDataServer("test-nonce", DIRECT, 500);
+        SpikeCoreDataServer server = new SpikeCoreDataServer("test-nonce", DIRECT, 500);
         server.setHealthJson("{\"protocolVersion\":\"1.1\",\"status\":\"ready\"}");
         server.setCommandForwarder((body, callback) -> { /* 故意不回调 */ });
         server.start();
@@ -499,17 +499,17 @@ public class GateBcClosureTest {
     // ── Gate B-2 / C-2：真实 gateway 消费 registry（评审 B-2 P1 / C-2 P1）──
 
     private static final class GatewayFixture implements AutoCloseable {
-        final GateACoreDataServer core;
-        final GateAGatewayServer gateway;
+        final SpikeCoreDataServer core;
+        final SpikeGatewayServer gateway;
         final int gatewayPort;
 
         GatewayFixture() throws Exception {
-            core = new GateACoreDataServer("test-nonce", DIRECT);
+            core = new SpikeCoreDataServer("test-nonce", DIRECT);
             core.setHealthJson("{\"protocolVersion\":\"1.1\",\"status\":\"ready\"}");
             core.setCommandForwarder((body, callback) -> callback.accept("{\"requestId\":\"rq\",\"status\":\"accepted\",\"revision\":8}"));
             core.start();
             RouteRegistry registry = RouteRegistry.parse(readAsset("api-route-registry.json"), null);
-            gateway = new GateAGatewayServer("test", registry);
+            gateway = new SpikeGatewayServer("test", registry);
             gateway.start();
             gateway.setCoreEndpoint(core.getPort(), "test-nonce");
             gatewayPort = gateway.getPort();

@@ -9,26 +9,26 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * W0 spike 崩溃捕获：主进程与 :core 进程的任何未捕获 Throwable 都写入
- * files/gatea-crash-<进程名>.txt 并打 logcat（GATEA_CRASH），随后仍交给系统默认处理。
+ * files/app-crash-<进程名>.txt 并打 logcat（APP_CRASH），随后仍交给系统默认处理。
  * 目的：用户端闪退时无需 adb 也能拿回确切堆栈。
  */
-public final class GateACrashGuard {
-    private GateACrashGuard() {}
+public final class CrashGuard {
+    private CrashGuard() {}
 
     public static void install(Context context) {
-        GateALog.init(context);
+        AppLog.init(context);
         String processName = processName();
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             try {
                 String stack = stackOf(thread, throwable);
-                GateALog.w("CRASH in " + processName + ": " + throwable);
-                File output = new File(context.getFilesDir(), "gatea-crash-" + safe(processName) + ".txt");
+                AppLog.w("CRASH in " + processName + ": " + throwable);
+                File output = new File(context.getFilesDir(), "app-crash-" + safe(processName) + ".txt");
                 writeStack(output, stack);
                 // 同时写一份到外部存储，便于无需 root 直接 adb pull / 文件管理器分享
                 File external = context.getExternalFilesDir(null);
                 if (external != null) {
-                    writeStack(new File(external, "gatea-crash-" + safe(processName) + ".txt"), stack);
+                    writeStack(new File(external, "app-crash-" + safe(processName) + ".txt"), stack);
                 }
             } catch (Throwable ignored) { }
             if (previous != null) previous.uncaughtException(thread, throwable);

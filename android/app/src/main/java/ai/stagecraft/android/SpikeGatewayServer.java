@@ -30,7 +30,7 @@ import org.json.JSONObject;
  * 未知 method/path → 稳定拒绝。SSE 必须逐块透传（不得整包缓冲）；页面断开立即关闭上游 socket，
  * 上游断开立即结束下游（有界结束）。不解析业务 payload。
  */
-public final class GateAGatewayServer {
+public final class SpikeGatewayServer {
     private static final int PIPE_BUFFER = 8 * 1024;
 
     private final String hostTag;
@@ -45,7 +45,7 @@ public final class GateAGatewayServer {
     private final AtomicLong rejectedByPolicy = new AtomicLong();
     private final Map<Long, Socket> activeUpstreams = new ConcurrentHashMap<>();
 
-    public GateAGatewayServer(String hostTag, RouteRegistry registry) {
+    public SpikeGatewayServer(String hostTag, RouteRegistry registry) {
         this.hostTag = hostTag;
         this.registry = java.util.Objects.requireNonNull(registry, "registry");
     }
@@ -88,7 +88,7 @@ public final class GateAGatewayServer {
             } catch (SocketException closed) {
                 return;
             } catch (IOException error) {
-                GateALog.w(hostTag + " gateway accept failed: " + error);
+                AppLog.w(hostTag + " gateway accept failed: " + error);
             }
         }
     }
@@ -168,7 +168,7 @@ public final class GateAGatewayServer {
                 throw upstreamFailure;
             }
         } catch (IOException error) {
-            GateALog.i(hostTag + " gateway connection ended: " + error.getClass().getSimpleName());
+            AppLog.i(hostTag + " gateway connection ended: " + error.getClass().getSimpleName());
         } finally {
             if (upstream != null) {
                 closeQuietly(upstream);
@@ -192,7 +192,7 @@ public final class GateAGatewayServer {
                     // 空闲期探测客户端是否断开（FIN → read EOF）：断开后必须停止转发并关闭上游
                     if (isClientGone(clientSocket)) {
                         upstreamClosedByClient.incrementAndGet();
-                        GateALog.i(hostTag + " client disconnected (idle poll), closing upstream conn=" + connectionId);
+                        AppLog.i(hostTag + " client disconnected (idle poll), closing upstream conn=" + connectionId);
                         return;
                     }
                     continue;
@@ -203,10 +203,10 @@ public final class GateAGatewayServer {
                 downstreamBytes[0] += read;
             }
             downstreamClosedByUpstream.incrementAndGet();
-            GateALog.i(hostTag + " upstream closed stream normally conn=" + connectionId);
+            AppLog.i(hostTag + " upstream closed stream normally conn=" + connectionId);
         } catch (IOException clientDisconnected) {
             upstreamClosedByClient.incrementAndGet();
-            GateALog.i(hostTag + " client disconnected, closing upstream conn=" + connectionId);
+            AppLog.i(hostTag + " client disconnected, closing upstream conn=" + connectionId);
             throw clientDisconnected;
         }
     }

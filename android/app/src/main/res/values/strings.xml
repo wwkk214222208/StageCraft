@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">StageCraft</string>
-    <string name="gatea_label">StageCraft GateA</string>
+    <string name="spike_label">StageCraft Spike</string>
     <string name="core_service_description">StageCraft Core 独立进程：承载剧本运行时、存档与模型路由。由主进程按需启动，崩溃时主进程进入恢复页。</string>
 </resources>

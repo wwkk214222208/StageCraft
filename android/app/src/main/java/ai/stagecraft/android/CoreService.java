@@ -103,7 +103,7 @@ public final class CoreService extends Service {
                 // 限定外层方法：本匿名类同名方法会遮蔽外层 acceptLaunchPlan(JSONObject)
                 CoreService.this.acceptLaunchPlan(new JSONObject(planJson));
             } catch (Exception error) {
-                GateALog.w("acceptLaunchPlan rejected: " + error);
+                AppLog.w("acceptLaunchPlan rejected: " + error);
             }
         }
     };
@@ -141,8 +141,8 @@ public final class CoreService extends Service {
         boolean initializedHere = ProcessGuard.init(processName);
         corePid = Process.myPid();
         startedAt = java.time.Instant.now().toString();
-        GateALog.i("core service onCreate pid=" + corePid + " process=" + processName + " suffixInit=" + initializedHere);
-        GateACrashGuard.install(this);
+        AppLog.i("core service onCreate pid=" + corePid + " process=" + processName + " suffixInit=" + initializedHere);
+        CrashGuard.install(this);
         bridge = loadBridge();
         main.post(this::boot);
     }
@@ -242,13 +242,13 @@ public final class CoreService extends Service {
             }));
             coreWebView.setWebChromeClient(new android.webkit.WebChromeClient() {
                 @Override public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
-                    GateALog.i("core-host console [" + message.messageLevel() + "] " + message.message() + " @" + message.sourceId() + ":" + message.lineNumber());
+                    AppLog.i("core-host console [" + message.messageLevel() + "] " + message.message() + " @" + message.sourceId() + ":" + message.lineNumber());
                     return true;
                 }
             });
             coreWebView.addJavascriptInterface(new CoreNative(), "CoreNative");
             coreWebView.loadUrl(CoreHostAssetLoader.CORE_ORIGIN + "/assets/core-host.html");
-            GateALog.i("core webview loading appassets core-host");
+            AppLog.i("core webview loading appassets core-host");
         } catch (Throwable error) {
             // 捕获 Throwable：任何 Error 不得杀掉 :core 进程进重启循环
             fail("boot_failed", error.getClass().getSimpleName() + ": " + error.getMessage());
@@ -268,7 +268,7 @@ public final class CoreService extends Service {
             }
         });
         coreWebView.postWebMessage(new WebMessage("{\"type\":\"init\",\"bridge\":\"web-message-port\"}", new WebMessagePort[]{pagePort}), Uri.parse(CoreHostAssetLoader.CORE_ORIGIN));
-        GateALog.i("web message bridge posted");
+        AppLog.i("web message bridge posted");
     }
 
     /** 页面 → 宿主消息（:core 主线程）：事件发布 / 就绪上报 / 日志。 */
@@ -280,7 +280,7 @@ public final class CoreService extends Service {
                 case "core-ready" -> {
                     // 幂等状态迁移：重复 ready 不重复广播
                     if (!stateMachine.onBridgeReady()) {
-                        GateALog.w("core-ready ignored in state " + stateMachine.state().wire);
+                        AppLog.w("core-ready ignored in state " + stateMachine.state().wire);
                         return;
                     }
                     JSONObject health = buildHealth(message.optJSONObject("measure"));
@@ -306,7 +306,7 @@ public final class CoreService extends Service {
                 case "plugin-report" -> {
                     // W6：组合根 launch plan 隔离记录回报 → 存 health（主进程经数据面读取）
                     pluginQuarantine = message.optJSONArray("quarantine");
-                    GateALog.i("plugin-report ok=" + message.optBoolean("ok", false)
+                    AppLog.i("plugin-report ok=" + message.optBoolean("ok", false)
                         + " quarantine=" + (pluginQuarantine == null ? 0 : pluginQuarantine.length()));
                     // 有隔离记录 → degraded（计划 §6.3：失败插件使 Core 降级，管理器仍可用）；
                     // 无隔离 → 保持当前状态（ready 幂等；degraded 由后续 core-ready 恢复）
@@ -319,11 +319,11 @@ public final class CoreService extends Service {
                     // W6-2：事件驱动——隔离记录变化经 Binder status 广播（主进程 onStatus 触发 fetch）
                     broadcastStatus();
                 }
-                case "log" -> GateALog.i("core-host: " + message.optString("text"));
-                default -> GateALog.w("unknown bridge message type: " + type);
+                case "log" -> AppLog.i("core-host: " + message.optString("text"));
+                default -> AppLog.w("unknown bridge message type: " + type);
             }
         } catch (Exception error) {
-            GateALog.w("bridge message failed: " + error.getClass().getSimpleName());
+            AppLog.w("bridge message failed: " + error.getClass().getSimpleName());
         }
     }
 
@@ -354,7 +354,7 @@ public final class CoreService extends Service {
     }
 
     private void publishEndpointReady() {
-        GateALog.i("endpoint ready port=" + dataServer.getPort() + " status=ready");
+        AppLog.i("endpoint ready port=" + dataServer.getPort() + " status=ready");
         String endpoint = null;
         try {
             if (dataServer != null) {
@@ -426,7 +426,7 @@ public final class CoreService extends Service {
                 }
             }
         } catch (Exception error) {
-            GateALog.w("crash-renderer terminate path failed: " + error);
+            AppLog.w("crash-renderer terminate path failed: " + error);
         }
         coreWebView.evaluateJavascript(
             "window.CoreHostBridge && window.CoreHostBridge.dispatch(" + JSONObject.quote(bodyJson) + ")",
@@ -509,18 +509,18 @@ public final class CoreService extends Service {
                 dataServer.setHealthJson(buildHealth(null).toString());
             }
         } catch (Exception error) {
-            GateALog.w("launch plan rejected: " + error);
+            AppLog.w("launch plan rejected: " + error);
         }
     }
 
     private void fail(String code, String message) {
         stateMachine.onFailure(code);
-        GateALog.w("core failed code=" + code + " message=" + message);
+        AppLog.w("core failed code=" + code + " message=" + message);
         if ("renderer_gone".equals(code)) {
             // renderer 证据独立落盘（评审：oneway 广播竞态导致主进程侧漏帧）——
             // 本文件由 :core 进程在 onRenderProcessGone 处理路径内同步写入，先于 stopSelf
             try {
-                File evidence = new File(getExternalFilesDir(null), "gatea-renderer-gone.txt");
+                File evidence = new File(getExternalFilesDir(null), "app-renderer-gone.txt");
                 String payload = new JSONObject()
                     .put("event", "onRenderProcessGone")
                     .put("failureCode", code)
@@ -636,7 +636,7 @@ public final class CoreService extends Service {
             String json = new String(bytes, 0, Math.max(0, read), StandardCharsets.UTF_8);
             return RouteRegistry.parse(json, null);
         } catch (Exception error) {
-            GateALog.w("route registry load failed: " + error);
+            AppLog.w("route registry load failed: " + error);
             return null;
         }
     }

@@ -200,7 +200,7 @@ public final class CoreGatewayServer implements AutoCloseable {
                 throw upstreamFailure;
             }
         } catch (IOException error) {
-            GateALog.i("core gateway connection ended: " + error.getClass().getSimpleName());
+            AppLog.i("core gateway connection ended: " + error.getClass().getSimpleName());
         } finally {
             if (upstream != null) {
                 closeQuietly(upstream);
@@ -226,7 +226,7 @@ public final class CoreGatewayServer implements AutoCloseable {
             String payload = parsed.optString("body", "{}");
             writeResponse(connection, status, "application/json", payload);
         } catch (Exception error) {
-            GateALog.w("host handler failed: " + error);
+            AppLog.w("host handler failed: " + error);
             writeResponse(connection, 500, "application/json", errorBody("host_handler_error", error.getMessage() == null ? "host handler failed" : error.getMessage()));
         }
     }
@@ -288,7 +288,7 @@ public final class CoreGatewayServer implements AutoCloseable {
                     read = upstreamInput.read(buffer);
                 } catch (java.net.SocketTimeoutException idle) {
                     if (isClientGone(clientSocket)) {
-                        GateALog.i("core gateway: client disconnected (idle poll), closing upstream conn=" + connectionId);
+                        AppLog.i("core gateway: client disconnected (idle poll), closing upstream conn=" + connectionId);
                         return;
                     }
                     continue;
@@ -297,9 +297,9 @@ public final class CoreGatewayServer implements AutoCloseable {
                 downstream.write(buffer, 0, read);
                 downstream.flush(); // 逐块 flush 是"逐条送达"的关键，不得整包缓冲
             }
-            GateALog.i("core gateway: upstream closed stream normally conn=" + connectionId);
+            AppLog.i("core gateway: upstream closed stream normally conn=" + connectionId);
         } catch (IOException clientDisconnected) {
-            GateALog.i("core gateway: client disconnected, closing upstream conn=" + connectionId);
+            AppLog.i("core gateway: client disconnected, closing upstream conn=" + connectionId);
             throw clientDisconnected;
         }
     }
