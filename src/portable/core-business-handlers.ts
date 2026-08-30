@@ -188,7 +188,11 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     const config: { mode?: string; autoPublish?: boolean; speechMode?: string; hidePlayerSpeech?: boolean } = {}
     if (typeof body.mode === 'string') config.mode = body.mode
     if (typeof body.autoPublish === 'boolean') config.autoPublish = body.autoPublish
-    if (typeof body.speechMode === 'string') config.speechMode = body.speechMode
+    if (typeof body.speechMode === 'string') {
+      // 桌面契约：manual/director/all 三值白名单（app-boot.ts 与 store.setRoomConfig 同源）
+      if (!['manual', 'director', 'all'].includes(body.speechMode)) return err('无效的群聊发言模式。')
+      config.speechMode = body.speechMode
+    }
     if (typeof body.hidePlayerSpeech === 'boolean') config.hidePlayerSpeech = body.hidePlayerSpeech
     facade.setRoomConfig(config)
     return ok({ ok: true })
