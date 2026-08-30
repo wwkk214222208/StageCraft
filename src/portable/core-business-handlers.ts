@@ -86,6 +86,35 @@ const unsupported = (message: string): { status: number; body: unknown } => ({
 })
 const stringOf = (body: Record<string, unknown>, key: string): string => typeof body[key] === 'string' ? body[key] as string : ''
 
+const MAX_AVATAR_BYTES = 8 * 1024 * 1024
+
+/**
+ * 头像落盘（对齐桌面 saveAvatar 语义，Android 经 asset.write 原生端口写资产库）：
+ * - dataUrl（image/png|jpeg|gif|webp;base64）→ 解码 → asset.write → 返回 /assets/avatar-<safeId>-<ts>.<ext>
+ * - 远程 url：Android 无服务端拉取通道，返回明确错误（前端应先转 dataUrl 再传）
+ * - 直接 portraitRef 路径字符串：原样透传（已落盘或外部地址）
+ */
+function resolveAvatar(facade: CoreFacade, body: Record<string, unknown>): string {
+  const dataUrl = stringOf(body, 'dataUrl')
+  const url = stringOf(body, 'url')
+  const portraitRef = stringOf(body, 'portraitRef')
+  if (dataUrl) {
+    const match = dataUrl.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/s)
+    if (!match) throw new Error('不支持的头像格式（仅 png/jpeg/gif/webp）。')
+    const buffer = Uint8Array.from(atob(match[2]), char => char.charCodeAt(0))
+    if (buffer.byteLength === 0) throw new Error('头像数据为空。')
+    if (buffer.byteLength > MAX_AVATAR_BYTES) throw new Error('头像超过 8MB 上限。')
+    const ext = match[1] === 'image/jpeg' ? '.jpg' : match[1].replace('image/', '.')
+    const safeId = (stringOf(body, 'roleId') || 'avatar').replace(/[^a-zA-Z0-9_-]/g, '_')
+    const fileName = `avatar-${safeId}-${Date.now()}${ext}`
+    const base64 = match[2]
+    facade.invokeSync('asset.write', { path: `assets/${fileName}`, data: base64, contentType: match[1] })
+    return `/assets/${fileName}`
+  }
+  if (url) throw new Error('远程头像在 Android 端不支持直接拉取，请先转为 dataUrl 上传。')
+  return portraitRef
+}
+
 /** 读供应商 meta（secret local.provider.meta → {providers, defaults}）。 */
 function readProviderMeta(facade: CoreFacade): { providers: unknown[]; defaults: Record<string, unknown> } {
   const raw = facade.invokeSync('secret.get', { key: 'local.provider.meta' }) as { found?: boolean; value?: string } | null
@@ -275,7 +304,13 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     facade.interveneRole(stringOf(body, 'roleId'), stringOf(body, 'selfModel'), config)
     return ok({ ok: true })
   } },
-  { handlerId: 'role.avatar', impl: (facade, body) => { facade.setRoleAvatar(stringOf(body, 'roleId'), stringOf(body, 'portraitRef')); return ok({ ok: true }) } },
+  { handlerId: 'role.avatar', impl: (facade, body) => {
+    // 桌面契约：dataUrl/url → 落盘 → {ok:true, portraitRef}；skipDispatch 时只落盘不更新运行时角色
+    const roleId = stringOf(body, 'roleId')
+    const portraitRef = resolveAvatar(facade, body)
+    if (body.skipDispatch !== true) facade.setRoleAvatar(roleId, portraitRef)
+    return ok({ ok: true, portraitRef })
+  } },
   { handlerId: 'role.memories.upsert', impl: (facade, body) => {
     facade.storeNpcMemories(stringOf(body, 'roleId'), Array.isArray(body.entries) ? body.entries : [])
     return ok({ ok: true })
@@ -303,7 +338,12 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     })
     return ok({ ok: true })
   } },
-  { handlerId: 'player.avatar', impl: (facade, body) => { facade.setPlayerAvatar(stringOf(body, 'portraitRef')); return ok({ ok: true }) } },
+  { handlerId: 'player.avatar', impl: (facade, body) => {
+    // 桌面契约：dataUrl/url → 落盘 → {ok:true, portraitRef}
+    const portraitRef = resolveAvatar(facade, body)
+    facade.setPlayerAvatar(portraitRef)
+    return ok({ ok: true, portraitRef })
+  } },
 
   // ── 供应商 ──
   // 桌面契约 {providers: [{id,name,baseUrl,models,selectedModel,hasApiKey,responseFormat}], defaults: {...}}
