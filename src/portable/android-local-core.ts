@@ -462,7 +462,12 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       } catch { /* 组合根未启动 */ }
       try { void requireComposition().core.cancel(cancelKey).catch(() => {}) } catch { /* no-op */ }
     })
-    const timeout = setTimeout(() => controller.abort(), 20_000)
+    // Director drafting and multi-role turns legitimately span several model calls. The old
+    // 20-second transport timeout aborted the service, whose cancelTurn() removes room.draft and
+    // resets the phase to awaiting-player-input — observed as “拟定草稿无效/成稿消失”. Keep this
+    // aligned with CoreDataServer's long business-request timeout; explicit client cancellation
+    // still aborts immediately through cancelPortableRequest().
+    const timeout = setTimeout(() => controller.abort(), 5 * 60_000)
     const request: ApiRequest = {
       method,
       url: path,

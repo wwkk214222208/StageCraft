@@ -43,9 +43,12 @@ class NativeCoreLlmRouter implements CoreLlmRouterPlugin {
     if (!this.host) throw new Error('Android model router is disposed.')
     const publish = (event: import('../core/protocol.ts').CoreEvent): void => this.host?.publishModelEvent(event)
     publish({ type: 'model.started', revision: 0, request })
+    const correlation = request.metadata?.correlation && typeof request.metadata.correlation === 'object'
+      ? request.metadata.correlation as import('../core/protocol.ts').ModelEventCorrelation
+      : undefined
     let thinking = ''
     const result = await this.transport.request(request, {
-      onThinking: (text: string) => { thinking += text; publish({ type: 'model.thinking.delta', revision: 0, requestId: request.requestId, text }) },
+      onThinking: (text: string) => { thinking += text; publish({ type: 'model.thinking.delta', revision: 0, requestId: request.requestId, text, ...(correlation ? { correlation } : {}) }) },
     })
     // 传输层通常已在最终结果里带上 reasoning；仅在缺失时用累计值兜底，语义与桌面端一致。
     const includeTelemetry = request.metadata?.includeTelemetry === true

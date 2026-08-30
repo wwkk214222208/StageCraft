@@ -269,6 +269,14 @@ export interface CoreView {
   ui?: UiRenderResult
 }
 
+export interface ModelEventCorrelation {
+  mode?: string
+  roomId?: string
+  turnId?: string
+  actor?: 'role' | 'director'
+  roleId?: string
+}
+
 export type CoreEvent =
   | { type: 'state.changed'; revision: number; transition: StateTransition }
   | { type: 'domain.event'; revision: number; event: DomainEvent }
@@ -276,9 +284,10 @@ export type CoreEvent =
   | { type: 'interaction.created'; revision: number; interaction: InteractionRequest }
   | { type: 'interaction.resolved'; revision: number; interactionId: string; command: HumanCommand }
   | { type: 'model.started'; revision: number; request: ModelRequest }
-  | { type: 'model.thinking.delta'; revision: number; requestId: string; text: string }
-  | { type: 'model.completed'; revision: number; result: ModelResult }
-  | { type: 'error'; revision: number; message: string; requestId?: string }
+  | { type: 'model.thinking.delta'; revision: number; requestId: string; text: string; correlation?: ModelEventCorrelation }
+  | { type: 'model.thinking.completed'; revision: number; text?: string; correlation?: ModelEventCorrelation }
+  | { type: 'model.completed'; revision: number; result: ModelResult; correlation?: ModelEventCorrelation }
+  | { type: 'error'; revision: number; message: string; requestId?: string; correlation?: ModelEventCorrelation }
   | { type: 'ui.manifest.changed'; revision: number; manifestId: string; operation: 'registered' | 'unregistered'; sequence: number }
 
 export type CoreEventListener = (event: CoreEvent) => void

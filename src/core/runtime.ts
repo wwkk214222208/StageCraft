@@ -122,7 +122,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
   private stateRepository?: CoreStateRepository
   private lastRoom?: RoomSnapshot
   private solutionBindingCounter = 0
-  private readonly modelWaiters = new Map<string, { resolve: (result: ModelResult) => void; reject: (error: unknown) => void; bindingId: number }>()
+  private readonly modelWaiters = new Map<string, { resolve: (result: ModelResult) => void; reject: (error: unknown) => void; bindingId: number; correlation?: import('./protocol.ts').ModelEventCorrelation }>()
   private readonly cancelledModelRequests = new Map<string, number>()
   private readonly clock: Clock
   private readonly ids: IdFactory
@@ -1021,7 +1021,10 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         return this.submitModelResult(result)
       },
       publishModelEvent: event => {
-        if (active) this.emit(event)
+        // Router adapters use revision 0 because they do not own Core state. Stamp the current
+        // authoritative revision here; browser consumers otherwise discard live deltas below
+        // their resync revision floor and only see the final persisted thinking text.
+        if (active) this.emit({ ...event, revision: this.revision })
       },
     })
     const binding: Disposable = {
@@ -1079,7 +1082,10 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
         this.emit({ type: 'error', revision: this.revision, requestId: request.requestId, message: error instanceof Error ? error.message : String(error) })
         reject(error)
       }
-      this.modelWaiters.set(request.requestId, { resolve: resolveResult, reject: rejectRequest, bindingId })
+      const correlation = request.metadata?.correlation && typeof request.metadata.correlation === 'object'
+        ? request.metadata.correlation as import('./protocol.ts').ModelEventCorrelation
+        : undefined
+      this.modelWaiters.set(request.requestId, { resolve: resolveResult, reject: rejectRequest, bindingId, ...(correlation ? { correlation } : {}) })
       const router = this.llmRouter
       if (!router) { rejectRequest(new Error('Core has no LLM router.')); return }
       try {
@@ -1119,6 +1125,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
     const cancelledUntil = this.cancelledModelRequests.get(result.requestId)
     if (cancelledUntil && cancelledUntil > this.clockTimestamp()) { this.cancelledModelRequests.delete(result.requestId); return }
     const waiter = this.modelWaiters.get(result.requestId)
+    const correlation = waiter?.correlation
     if (waiter) {
       this.modelWaiters.delete(result.requestId)
       waiter.resolve(result)
@@ -1131,8 +1138,8 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
       if (roomId) this.workflowStore?.save(roomId, next)
       this.emit({ type: 'workflow.changed', revision: this.revision, workflow: next })
     }
-    this.emit({ type: 'model.completed', revision: this.revision, result })
-    if (result.error) this.emit({ type: 'error', revision: this.revision, requestId: result.requestId, message: result.error })
+    this.emit({ type: 'model.completed', revision: this.revision, result, ...(correlation ? { correlation } : {}) })
+    if (result.error) this.emit({ type: 'error', revision: this.revision, requestId: result.requestId, message: result.error, ...(correlation ? { correlation } : {}) })
   }
 
   private availableCommands(): Array<{ type: HumanCommand['type']; label: string; enabled: boolean }> {

@@ -1951,21 +1951,50 @@ function scheduleCoreRoomRefresh() {
   clearTimeout(coreRoomRefreshTimer)
   coreRoomRefreshTimer = setTimeout(() => refreshRoom().catch(error => console.error('[StageCraft] Core event room refresh failed', error)), 80)
 }
-coreClient.subscribe(event => {
+coreClient.subscribe(message => {
+  // 1.1 SSE 把 CoreEvent 包在 {type:'core.event', event} 中；resync 则是顶层消息。
+  const event = message.type === 'core.event' && message.event ? message.event : message
   if (event.type === 'core.resync') scheduleCoreRoomRefresh()
-  if (event.revision == null || !coreClient.view) return
-  if (event.type === 'state.changed' || event.type === 'workflow.changed' || event.type === 'interaction.created') {
+  // Android gateway 的实时思维链只存在于权威 Core Event 通道；旧 /api/stream 在此平台返回 410。
+  if (event.type === 'model.thinking.delta') {
+    const correlation = event.correlation ?? {}
+    applyThinkingEvent({
+      actor: correlation.actor === 'role' ? 'role' : 'director',
+      ...(correlation.roleId ? { roleId: correlation.roleId } : {}),
+      turnId: correlation.turnId ?? '',
+      text: event.text ?? '',
+      done: false,
+    })
+  }
+  if (event.type === 'model.thinking.completed' || event.type === 'model.completed' || event.type === 'error') {
+    const correlation = event.correlation ?? {}
+    applyThinkingEvent({
+      actor: correlation.actor === 'role' ? 'role' : 'director',
+      ...(correlation.roleId ? { roleId: correlation.roleId } : {}),
+      turnId: correlation.turnId ?? '',
+      text: event.text ?? '',
+      done: true,
+    })
+  }
+  if (event.revision != null && coreClient.view && (event.type === 'state.changed' || event.type === 'workflow.changed' || event.type === 'interaction.created')) {
     coreClient.getView().catch(() => {})
   }
   // domain/model/error events cover successful speech, auto-publish and generation failure.
   if (event.type === 'domain.event' || event.type === 'model.completed' || event.type === 'error') scheduleCoreRoomRefresh()
 })
 
-// ── 思维链订阅与设置（thinking 事件已并入 /api/stream）──
-$('#show-thinking').checked = thinkingPrefs.show
-$('#auto-expand-thinking').checked = thinkingPrefs.autoExpand
-$('#show-thinking').addEventListener('change', event => { thinkingPrefs.show = event.target.checked; localStorage.setItem(THINKING_PREFS_KEY, JSON.stringify(thinkingPrefs)); renderThinkingPanel(); if (room) render(room) })
-$('#auto-expand-thinking').addEventListener('change', event => { thinkingPrefs.autoExpand = event.target.checked; localStorage.setItem(THINKING_PREFS_KEY, JSON.stringify(thinkingPrefs)); renderThinkingPanel(); if (room) render(room) })
+// ── 思维链订阅与设置 ──
+const showThinkingInput = $('#show-thinking')
+const autoExpandThinkingInput = $('#auto-expand-thinking')
+function saveThinkingPrefs() { try { localStorage.setItem(THINKING_PREFS_KEY, JSON.stringify(thinkingPrefs)) } catch (error) { console.warn('[StageCraft] unable to persist thinking preferences', error) } }
+if (showThinkingInput) {
+  showThinkingInput.checked = thinkingPrefs.show
+  showThinkingInput.addEventListener('change', event => { thinkingPrefs.show = event.target.checked; saveThinkingPrefs(); renderThinkingPanel(); if (room) render(room) })
+}
+if (autoExpandThinkingInput) {
+  autoExpandThinkingInput.checked = thinkingPrefs.autoExpand
+  autoExpandThinkingInput.addEventListener('change', event => { thinkingPrefs.autoExpand = event.target.checked; saveThinkingPrefs(); renderThinkingPanel(); if (room) render(room) })
+}
 
 // ── 标题栏中部横幅：八股文循环播放（15s 一换，八股三词加粗换色）──
 let renderWhaleTagline = () => {}

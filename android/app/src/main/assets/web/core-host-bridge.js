@@ -55,12 +55,21 @@
         }
       }
       if (message.type === 'thinking') {
+        const thinkingEvent = message.event || {}
+        const correlation = {
+          actor: thinkingEvent.actor === 'role' ? 'role' : 'director',
+          ...(thinkingEvent.roleId ? { roleId: thinkingEvent.roleId } : {}),
+          ...(thinkingEvent.turnId ? { turnId: thinkingEvent.turnId } : {}),
+          roomId: message.roomId || ((localCore && localCore.roomId) || ''),
+        }
         return {
           protocolVersion: '1.1',
           roomId: (localCore && localCore.roomId) || '',
-          revision: 0,
-          type: 'model.thinking.delta',
-          payload: { type: 'model.thinking.delta', revision: 0, requestId: (message.event && message.event.requestId) || '', text: (message.event && message.event.text) || '' },
+          revision: (localCore && localCore.getView && localCore.getView().revision) || 0,
+          type: thinkingEvent.done ? 'model.thinking.completed' : 'model.thinking.delta',
+          payload: thinkingEvent.done
+            ? { type: 'model.thinking.completed', revision: (localCore && localCore.getView && localCore.getView().revision) || 0, text: thinkingEvent.text || '', correlation }
+            : { type: 'model.thinking.delta', revision: (localCore && localCore.getView && localCore.getView().revision) || 0, requestId: thinkingEvent.requestId || '', text: thinkingEvent.text || '', correlation },
           createdAt: new Date().toISOString(),
         }
       }
