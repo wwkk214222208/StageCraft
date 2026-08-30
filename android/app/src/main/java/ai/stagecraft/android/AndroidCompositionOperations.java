@@ -292,7 +292,61 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         if ("approveSpeech".equals(method)) { JSONObject speech = room.optJSONObject("speech"); if (speech == null) throw new IllegalArgumentException("No speech awaiting approval."); addScene(room, JsonSafety.stringArg(args, 1, 1024 * 1024), speech.optString("roleId"), speech.optString("turnId"), "dialogue"); room.remove("speech"); room.remove("playerContribution"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
         if ("addPlayerScene".equals(method) || "addNarrationScene".equals(method)) { addScene(room, JsonSafety.stringArg(args, 1, 1024 * 1024), "addPlayerScene".equals(method) ? "player" : null, "scene", "addPlayerScene".equals(method) ? "player" : "narration"); bump(room); return JSONObject.NULL; }
         if ("saveWorldChange".equals(method)) { String id = "world-change-" + System.nanoTime(); room.put("pendingWorldChange", JsonSafety.objectArg(args, 1)); room.put("pendingWorldChangeId", id); room.put("phase", "world-change-approval"); bump(room); return id; }
-        if ("approveWorldChange".equals(method)) { String id = room.optString("pendingWorldChangeId", ""); room.remove("pendingWorldChange"); room.remove("pendingWorldChangeId"); room.put("phase", "awaiting-player-input"); bump(room); return id.isEmpty() ? JSONObject.NULL : id; }
+        if ("approveWorldChange".equals(method)) {
+            // 与桌面 store.applyWorldChangeLocked 对齐：批准世界变更须落地场景时间/地点、
+            // 新建角色提议、角色进离场与角色状态，而不只是清空 pending（原实现只清 pending）。
+            JSONObject change = room.optJSONObject("pendingWorldChange");
+            if (change != null) {
+                if (change.has("sceneTime") && !change.optString("sceneTime", "").trim().isEmpty()) room.put("sceneTime", change.optString("sceneTime").trim());
+                if (change.has("sceneLocation") && !change.optString("sceneLocation", "").trim().isEmpty()) room.put("sceneLocation", change.optString("sceneLocation").trim());
+                org.json.JSONArray roles = array(room, "roles");
+                org.json.JSONArray proposals = change.optJSONArray("roleProposals");
+                if (proposals != null) {
+                    for (int i = 0; i < proposals.length(); i++) {
+                        JSONObject proposal = proposals.optJSONObject(i);
+                        if (proposal == null) continue;
+                        String id = proposal.optString("id", "");
+                        String name = proposal.optString("name", "");
+                        String currentState = proposal.optString("currentState", "");
+                        String selfModel = proposal.optString("selfModel", "");
+                        if (id.isEmpty() || name.isEmpty() || currentState.isEmpty() || selfModel.isEmpty()) continue;
+                        if (find(roles, "id", id) != null) continue;
+                        JSONObject role = new JSONObject()
+                            .put("id", id).put("name", name)
+                            .put("portraitRef", proposal.optString("portraitRef", "/assets/default.svg"))
+                            .put("currentState", currentState)
+                            .put("presence", proposal.optString("presence", "present"))
+                            .put("selfModel", selfModel);
+                        org.json.JSONArray memories = proposal.optJSONArray("memories");
+                        if (memories != null) role.put("memories", new org.json.JSONArray(memories.toString()));
+                        roles.put(role);
+                    }
+                }
+                org.json.JSONArray presenceChanges = change.optJSONArray("rolePresence");
+                if (presenceChanges != null) {
+                    for (int i = 0; i < presenceChanges.length(); i++) {
+                        JSONObject item = presenceChanges.optJSONObject(i);
+                        if (item == null) continue;
+                        String presence = item.optString("presence", "");
+                        if (!"present".equals(presence) && !"absent".equals(presence) && !"unavailable".equals(presence)) continue;
+                        JSONObject role = find(roles, "id", item.optString("roleId", ""));
+                        if (role != null) role.put("presence", presence);
+                    }
+                }
+                JSONObject roleStates = change.optJSONObject("roleStates");
+                if (roleStates != null) {
+                    for (java.util.Iterator<String> keys = roleStates.keys(); keys.hasNext(); ) {
+                        String roleId = keys.next();
+                        String currentState = roleStates.optString(roleId, "");
+                        if (currentState.trim().isEmpty()) continue;
+                        JSONObject role = find(roles, "id", roleId);
+                        if (role != null) role.put("currentState", currentState.trim());
+                    }
+                }
+            }
+            String id = room.optString("pendingWorldChangeId", "");
+            room.remove("pendingWorldChange"); room.remove("pendingWorldChangeId"); room.put("phase", "awaiting-player-input"); bump(room); return id.isEmpty() ? JSONObject.NULL : id;
+        }
         if ("rejectWorldChange".equals(method)) { room.remove("pendingWorldChange"); room.remove("pendingWorldChangeId"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
         if ("publish".equals(method)) { JSONObject draft = room.optJSONObject("draft"); if (draft == null) throw new IllegalArgumentException("Draft is no longer available."); String turnId = draft.optString("turnId", "turn"); String contribution = room.optString("playerContribution", ""); if (contribution != null && !contribution.trim().isEmpty()) addScene(room, contribution, "player", turnId, "player"); addScene(room, JsonSafety.stringArg(args, 2, 1024 * 1024), null, turnId, "narration"); room.remove("draft"); room.remove("playerContribution"); room.put("phase", "awaiting-player-input"); bump(room); return JSONObject.NULL; }
         if ("restartRoom".equals(method)) {
