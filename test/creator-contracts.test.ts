@@ -45,7 +45,9 @@ test('creator contracts reject non-JSON values', () => {
 
 test('preview validation delegates candidate authority to StoryPackage validation', () => {
   assert.doesNotThrow(() => validateCreatorPreview(preview()))
-  assert.throws(() => validateCreatorPreview(preview(story({ roles: [] }))), /Invalid story package/)
+  // 空角色剧本（互动式小说：无 NPC）允许通过；非法角色（缺字段）仍被拒。
+  assert.doesNotThrow(() => validateCreatorPreview(preview(story({ roles: [] }))))
+  assert.throws(() => validateCreatorPreview(preview(story({ roles: [{ id: 'x', name: 'X' } as never] }))), /Invalid role in story package/)
 })
 
 test('preview validation enforces version and expiry without persisting content', () => {

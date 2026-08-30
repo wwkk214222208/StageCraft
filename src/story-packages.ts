@@ -232,7 +232,8 @@ export function listStoryPackages(directory: string, extraDirectories: string[] 
 }
 
 export function validateStoryPackage(value: StoryPackage): void {
-  if (!value.id || !value.title || !value.opening || !value.playerCharacter?.name || !value.playerCharacter?.persona || !value.playerCharacter?.currentState || !Array.isArray(value.roles) || value.roles.length === 0) throw new Error('Invalid story package.')
+  // 允许空角色剧本（互动式小说：玩家直接与导演交互，无 NPC）。roles 仍须为数组。
+  if (!value.id || !value.title || !value.opening || !value.playerCharacter?.name || !value.playerCharacter?.persona || !value.playerCharacter?.currentState || !Array.isArray(value.roles)) throw new Error('Invalid story package.')
   const roleIds = new Set<string>()
   for (const role of value.roles) {
     if (!role.id || !role.name || !role.currentState || !role.selfModel || !role.portraitRef) throw new Error(`Invalid role in story package: ${role.id || 'unknown'}`)
