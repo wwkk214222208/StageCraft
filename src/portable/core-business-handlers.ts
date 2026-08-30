@@ -336,8 +336,13 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     let targetId = explicitNewId
     if (!targetId && bodyId && bodyId !== sourceId) targetId = bodyId
     if (!targetId) {
-      // 生成新 ID（时间戳 36 进制 + 随机后缀防碰撞）
-      targetId = 'story-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6)
+      // R8：生成新 ID（时间戳 36 进制 + 随机后缀）；冲突重试（目标键已存在则重生成，最多 5 次）
+      const existing = new Set((facade.stories() as Array<{ id?: string }>).map(item => item.id).filter(Boolean))
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const candidate = 'story-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6)
+        if (!existing.has(candidate)) { targetId = candidate; break }
+      }
+      if (!targetId) return err('无法生成唯一故事 ID（重试耗尽）')
     }
     const title = stringOf(body, 'title') || story?.title || targetId
     const copy = { ...(story ?? {}), id: targetId, title }

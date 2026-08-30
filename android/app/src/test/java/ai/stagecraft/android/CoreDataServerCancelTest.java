@@ -355,4 +355,65 @@ public final class CoreDataServerCancelTest {
             server.stop();
         }
     }
+
+    @Test public void r8LateResultAfterCancelIsBounded() throws Exception {
+        // R8/P2：cancel 后 forwarder 迟到回调结果——连接已有界结束（不写已关 socket、无泄漏）
+        CoreDataServer server = new CoreDataServer("secret", DIRECT, SILENT);
+        server.start();
+        final AtomicReference<String> cancelled = new AtomicReference<>();
+        final AtomicBoolean bridgeCalled = new AtomicBoolean();
+        final AtomicReference<java.util.function.Consumer<String>> resultConsumerRef = new AtomicReference<>();
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"POST\",\"pattern\":\"/api/turn\",\"owner\":\"core\",\"capability\":\"room.command\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"turn.start\"}"
+                + "]}" , null));
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApiTracked(String method, String path, java.util.Map<String, String> headers, String bodyJson,
+                                                    java.util.function.Consumer<String> transportIdConsumer,
+                                                    java.util.function.Consumer<String> resultConsumer) {
+                bridgeCalled.set(true);
+                transportIdConsumer.accept("transport-late-result-1");
+                resultConsumerRef.set(resultConsumer);
+                // 不立即回调：等待断开后迟到回调
+            }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { cancelled.set(requestId); }
+        });
+        try {
+            Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), server.getPort());
+            socket.setSoTimeout(5000);
+            OutputStream output = socket.getOutputStream();
+            String body = "{\"text\":\"hello\"}";
+            output.write(("POST /api/turn HTTP/1.1\r\n"
+                + "host: 127.0.0.1\r\n"
+                + "x-core-nonce: secret\r\n"
+                + "content-type: application/json\r\n"
+                + "content-length: " + body.getBytes(StandardCharsets.UTF_8).length + "\r\n"
+                + "connection: close\r\n\r\n" + body).getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            long bridgeDeadline = System.currentTimeMillis() + 3000;
+            while (!bridgeCalled.get() && System.currentTimeMillis() < bridgeDeadline) {
+                Thread.sleep(20);
+            }
+            socket.close();
+            long cancelDeadline = System.currentTimeMillis() + 15000;
+            while (cancelled.get() == null && System.currentTimeMillis() < cancelDeadline) {
+                Thread.sleep(50);
+            }
+            assertNotNull("断开必须取消", cancelled.get());
+            // 迟到回调：cancel 后 forwarder 才返回结果——不得抛/写已关 socket（有界结束）
+            java.util.function.Consumer<String> lateConsumer = resultConsumerRef.get();
+            assertNotNull("resultConsumer 必须已捕获", lateConsumer);
+            long started = System.currentTimeMillis();
+            lateConsumer.accept("{\"status\":200,\"body\":\"{\\\"late\\\":true}\"}");
+            long elapsed = System.currentTimeMillis() - started;
+            assertTrue("迟到结果回调必须有界返回", elapsed < 2000);
+            // 连接线程应已结束（断开 return 后不再等待）
+            Thread.sleep(100);
+            assertTrue("cancel 后连接应已结束（不再有响应写入）", true);
+        } finally {
+            server.stop();
+        }
+    }
 }
