@@ -195,7 +195,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     }
     if (typeof body.hidePlayerSpeech === 'boolean') config.hidePlayerSpeech = body.hidePlayerSpeech
     facade.setRoomConfig(config)
-    return ok({ ok: true })
+    return ok({ ok: true, room: facade.getRoom() })
   } },
   { handlerId: 'room.scene', impl: (facade, body) => {
     const updates: { time?: string; location?: string } = {}
@@ -617,8 +617,25 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[]; activeByScope?: Record<string, string> } | null
     // gameplayScenarios 从打包资产读取（prompt.gameplay.list 原生端口；非固定空对象）
     const gameplay = facade.invokeSync('prompt.gameplay.list', {}) as { gameplayScenarios?: Record<string, unknown> } | null
+    // 合并 private-toggles 到节点 enabled（对齐桌面 mergePrivateToggles；不写回 preset 存储）
+    const togglesRaw = facade.invokeSync('secret.get', { key: 'local.prompt.private-toggles' }) as { found?: boolean; value?: string } | null
+    let toggles: Record<string, Record<string, boolean>> = {}
+    if (togglesRaw?.found && togglesRaw.value) {
+      try { toggles = JSON.parse(togglesRaw.value) as Record<string, Record<string, boolean>> } catch { /* 损坏按空表 */ }
+    }
+    const presets = (result?.presets ?? [] as unknown[]).map(preset => {
+      const p = preset as { id?: string; scenarios?: Record<string, { nodes?: Array<{ id?: string; enabled?: boolean }> }> }
+      const over = p.id ? toggles[p.id] : undefined
+      if (!over || !p.scenarios) return preset
+      const scenarios: Record<string, unknown> = {}
+      for (const [scope, scenario] of Object.entries(p.scenarios)) {
+        if (!scenario?.nodes?.length) { scenarios[scope] = scenario; continue }
+        scenarios[scope] = { ...scenario, nodes: scenario.nodes.map(node => over[node.id ?? ''] === undefined ? node : { ...node, enabled: over[node.id ?? ''] }) }
+      }
+      return { ...p, scenarios }
+    })
     return ok({
-      presets: result?.presets ?? [],
+      presets,
       activeByScope: result?.activeByScope ?? {},
       modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }],
       gameplayScenarios: gameplay?.gameplayScenarios ?? {},
