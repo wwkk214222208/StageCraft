@@ -1864,14 +1864,33 @@ eventStream.addEventListener('room', event => { try { render(JSON.parse(event.da
 eventStream.addEventListener('thinking', event => { try { applyThinkingEvent(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] thinking event failed', error) } })
 eventStream.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); const detail = item.text.startsWith('模型完整返回') || item.text.startsWith('模型提交提示词'); if (!detail || debugDetailsEnabled) stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
 async function bootApp() {
-  try {
-    const roomResponse = await fetch('/api/room')
-    if (roomResponse.status === 401 && !/^(127\.0\.0\.1|localhost|::1)$/i.test(location.hostname)) { location.replace('/pair'); return }
-    if (!roomResponse.ok) throw new Error(`Room request failed: ${roomResponse.status}`)
-    render(await roomResponse.json())
-  } catch (error) {
-    console.error('[StageCraft] initial room load failed', error)
-    return
+  // 启动竞态（Core 进程启动窗口）：/api/room 可能瞬时 503——有限重试等待 Core 就绪，
+  // 避免"默认剧本不显示/页面空白"（Gate D 真机发现：首次启动 room 503 → bootApp 直接
+  // return，story-select/roles/room-title 全空）。
+  const BOOT_RETRY_LIMIT = 6
+  const BOOT_RETRY_DELAY_MS = 800
+  for (let attempt = 0; attempt < BOOT_RETRY_LIMIT; attempt++) {
+    try {
+      const roomResponse = await fetch('/api/room')
+      if (roomResponse.status === 401 && !/^(127\.0\.0\.1|localhost|::1)$/i.test(location.hostname)) { location.replace('/pair'); return }
+      if (!roomResponse.ok) {
+        if (roomResponse.status === 503 && attempt < BOOT_RETRY_LIMIT - 1) {
+          // Core 尚未就绪：等待后重试（bounded；不无限阻塞）
+          await new Promise(resolve => setTimeout(resolve, BOOT_RETRY_DELAY_MS))
+          continue
+        }
+        throw new Error(`Room request failed: ${roomResponse.status}`)
+      }
+      render(await roomResponse.json())
+      break
+    } catch (error) {
+      if (attempt >= BOOT_RETRY_LIMIT - 1) {
+        console.error('[StageCraft] initial room load failed', error)
+        return
+      }
+      // 网络瞬时失败（gateway 重连窗口）同样有限重试
+      await new Promise(resolve => setTimeout(resolve, BOOT_RETRY_DELAY_MS))
+    }
   }
   // 非核心辅助接口失败不应阻断旧 UI 的操作能力。
   await Promise.allSettled([loadStories(), loadProviders(), loadPromptPresets(), coreInteractionPanel.start()])
