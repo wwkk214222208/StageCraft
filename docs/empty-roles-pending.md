@@ -72,3 +72,25 @@
 - 本批改动覆盖：剧本层校验（双端）、删除约束（桌面）、chat 空角色交互（core）
 - 尚未处理（独立待办，见二.2）：`role.memories.reorder` 空数组清空记忆
 - 观察窗口：建议至少一轮完整功能验证（新建空角色剧本 → 游玩 → 存档 → 导入导出）后再关闭本 PENDING
+
+---
+
+## 六、暂记：provider.director-thinking Android 实现是暂时妥协设计
+
+> 状态：**PENDING（妥协设计，待架构迁移）**。提交 `9d7dc47`（2026-08-30）。
+
+### 背景
+Android `provider.director-thinking` 当前是对桌面功能的**本地模拟**：经 `secret local.provider.meta` 的 `defaults.directorThinkingStrength` 持久化一个值，供 `providerState` 读取。桌面侧 `providerStore.setDirectorThinking` 是真实的供应商配置状态（内存 + providers.json 持久化）。
+
+### 为什么是妥协（缺陷）
+1. **存储分离**：Android 的模型路由层 `readProvider`/`writeProvider`（android-local-core.ts）走 `local.provider.default` 键；而 `director-thinking` 写入 `local.provider.meta.defaults`。两个存储不联动——**写入的 directorThinkingStrength 是否被模型路由层实际消费，未验证**。
+2. **无真实联动**：桌面 `setDirectorThinking` 写入后立即经 `activateProvider` 影响 `createRealWorkers` 的 `directorThinkingStrength` 选项；Android 无对应激活链路，值可能"写了但没用"。
+3. **缺省值硬编码**：缺省 `'standard'` 硬编码在 handler（与桌面 `providerStore` 缺省一致但非同一来源）。
+
+### 待办
+- [ ] 验证 Android `local.provider.meta.defaults.directorThinkingStrength` 是否被模型路由（`readProvider`/`createAndroidComposition` 的 workers 装配）实际消费
+- [ ] 若未消费：要么补联动（模型路由读 meta.defaults），要么将 director-thinking 降级为明确 unsupported（避免假生效）
+- [ ] 未来 Android provider 配置架构（AndroidSecretStore 统一）落地后迁移，消除双存储
+
+### 影响面
+正常 UI 操作可写入并读回（前端 `updateInspectorThinkingOptions` 读 `defaults.directorThinkingStrength` 显示）——**显示层 OK，生效层存疑**。此条与本批"空角色"改动无关，属同批顺手修复中的已知妥协，故单独记录。
