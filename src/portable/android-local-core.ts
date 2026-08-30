@@ -390,6 +390,17 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   // R7：transportId（CoreService 的 api-* id）作为请求身份贯穿——真实页面无 body requestId 时
   // 取消链仍可命中；body 的 requestId/id 作为模型取消 key（core.cancel 需要真实模型 request）。
   const pendingPortableCancels = new Map<string, AbortController>()
+  // R9：已取消 transport ID 的有界 tombstone（≤128 条）——取消可能早于 JS 登记到达
+  // （Java cancel 先移除 pendingApi 再异步投递 evaluateJavascript）；登记时命中 tombstone
+  // 立即 abort，杜绝"取消先到被丢弃、请求继续执行"的竞态。
+  const cancelledTransportIds = new Set<string>()
+  const markCancelled = (transportId: string): void => {
+    cancelledTransportIds.add(transportId)
+    if (cancelledTransportIds.size > 128) {
+      const first = cancelledTransportIds.values().next().value
+      if (first !== undefined) cancelledTransportIds.delete(first)
+    }
+  }
   const handlePortableRequest = async (transportId: string, method: string, path: string, headersJson: string, bodyJson: string): Promise<{ status: number; body: string }> => {
     const headers: Record<string, string> = {}
     try {
@@ -406,29 +417,48 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       modelRequestId = parsed.requestId ?? parsed.id ?? ''
     } catch { /* 非 JSON body（zip 等）：无模型 requestId 可取消 */ }
     const controller = new AbortController()
-    if (cancelKey) pendingPortableCancels.set(cancelKey, controller)
-    // R7/R8：signal abort（断开/超时）时——
-    // 1) body 显式模型 requestId → core.cancel（如有）；
-    // 2) 业务回合取消：按路由类型调 chat.cancel/director.cancel（R8：service cancel 收集并取消
-    //    该房间全部模型 request IDs + 清理 active operation——真实 /api/turn、/api/chat/* 无 body
-    //    requestId 时这是唯一能停止长回合的入口）；
-    // 3) core.cancel(transportId) 兜底（组合根对未知 id 是 no-op）。
-    const isChatRoute = path.startsWith('/api/chat/') || path === '/api/turn' || path === '/api/cancel-turn' || path === '/api/world-change/' || path === '/api/consult'
+    if (cancelKey) {
+      // R9：登记时检查 tombstone——取消先于本请求登记到达时立即 abort 并跳过执行
+      // （不调 handlePortableApi，杜绝模型请求在 abort 后仍发出）
+      if (cancelledTransportIds.has(cancelKey)) {
+        cancelledTransportIds.delete(cancelKey)
+        return { status: 499, body: JSON.stringify({ error: { code: 'request_aborted', message: '请求在登记前已被取消（客户端断开）' } }) }
+      }
+      pendingPortableCancels.set(cancelKey, controller)
+    }
+    // R9：取消分派必须与提交分派同用 mode-aware 判定——/api/turn 的实际业务分派按房间模式
+    // （facade.submitTurn：director 模式 → director.submitTurn；chat 模式 → chat.submitContribution）。
+    // 因此 /api/turn 的取消必须读 room.mode 选对 service；否则导演模式的 chat.cancel 不会清理
+    // director 的 activeOperations/模型请求，导演模型迟到仍可能写状态。
+    const roomMode = (() => {
+      try {
+        const room = requireComposition().getRoom() as { mode?: string } | null
+        return room?.mode ?? ''
+      } catch { return '' }
+    })()
+    const isTurnRoute = path === '/api/turn' || path === '/api/cancel-turn'
+    const isChatRoute = path.startsWith('/api/chat/') || path === '/api/world-change/' || path === '/api/consult'
     const isDirectorRoute = path.startsWith('/api/director/') || path === '/api/approve' || path === '/api/redraft' || path === '/api/reactions/' || path.startsWith('/api/state/')
+    // 静态路由按类型；/api/turn 按 room.mode 动态分派（与提交分派同一判定源）
+    let cancelChat = isChatRoute
+    let cancelDirector = isDirectorRoute
+    if (isTurnRoute) {
+      cancelChat = roomMode === 'chat'
+      cancelDirector = roomMode !== 'chat' // director 或其他模式 → director service
+    }
+    // 无法判定类型的请求保守取消两个服务（防漏）
+    if (!cancelChat && !cancelDirector) {
+      cancelChat = true
+      cancelDirector = true
+    }
     controller.signal.addEventListener('abort', () => {
       if (modelRequestId) {
         try { void requireComposition().core.cancel(modelRequestId).catch(() => {}) } catch { /* no-op */ }
       }
-      // R8：按业务路由类型取消房间服务操作（保守：chat+director 都调；对未启动房间是 no-op）
       try {
         const composition = requireComposition()
-        if (isChatRoute) composition.chat.cancel(LOCAL_ROOM_ID)
-        if (isDirectorRoute) composition.director.cancel(LOCAL_ROOM_ID)
-        // 无法判定类型的请求也保守取消两个服务（防漏）
-        if (!isChatRoute && !isDirectorRoute) {
-          composition.chat.cancel(LOCAL_ROOM_ID)
-          composition.director.cancel(LOCAL_ROOM_ID)
-        }
+        if (cancelChat) composition.chat.cancel(LOCAL_ROOM_ID)
+        if (cancelDirector) composition.director.cancel(LOCAL_ROOM_ID)
       } catch { /* 组合根未启动 */ }
       try { void requireComposition().core.cancel(cancelKey).catch(() => {}) } catch { /* no-op */ }
     })
@@ -448,20 +478,27 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       return { status: 500, body: JSON.stringify({ error: { code: 'internal_error', message: error instanceof Error ? error.message : String(error) } }) }
     } finally {
       clearTimeout(timeout)
-      if (cancelKey) pendingPortableCancels.delete(cancelKey)
+      if (cancelKey) {
+        pendingPortableCancels.delete(cancelKey)
+        cancelledTransportIds.delete(cancelKey) // 请求完成：清理 tombstone（防泄漏）
+      }
     }
     if (response.body instanceof Uint8Array) {
       return { status: response.status, body: new TextDecoder().decode(response.body) }
     }
     return { status: response.status, body: '' }
   }
-  /** R3-5/R7/R8：客户端断开时 abort 对应请求（Java 经桥 protocol-cancel 调用）。幂等：仅首次命中执行。 */
+  /** R3-5/R7/R8/R9：客户端断开时 abort 对应请求（Java 经桥 protocol-cancel 调用）。幂等：仅首次命中执行。 */
   const cancelPortableRequest = (requestId: string): void => {
     if (!requestId) return
     const controller = pendingPortableCancels.get(requestId)
-    if (!controller) return // 已取消或已完成：幂等（重复取消不得重复触发）
-    controller.abort()
+    if (!controller) {
+      // R9：请求尚未登记（dispatch 与 cancel 竞态）——写 tombstone，登记时立即 abort
+      markCancelled(requestId)
+      return
+    }
     pendingPortableCancels.delete(requestId)
+    controller.abort()
     // 组合根模型请求同步取消（abort 监听内已按路由做 service cancel；此处兜底 transportId）
     try {
       void requireComposition().core.cancel(requestId).catch(() => {})

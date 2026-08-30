@@ -265,3 +265,25 @@ test('W6-5/R7 整改：CoreDataServer 客户端断开必须取消底层请求（
   assert.match(server, /forwardApiTracked/, '必须用带 transport 跟踪的转发')
   assert.match(server, /client disconnected while awaiting bridge result/, '必须记录取消事件')
 })
+
+test('R9：/api/turn 取消分派必须 mode-aware（读 room.mode 选 chat/director service）', () => {
+  const localCore = read('..', '..', '..', '..', 'src', 'portable', 'android-local-core.ts')
+  assert.match(localCore, /roomMode/, '必须读 room.mode（与提交分派同一判定源）')
+  assert.match(localCore, /isTurnRoute/, '必须识别 turn 路由')
+  assert.match(localCore, /cancelChat = roomMode === 'chat'/, 'chat 模式取消必须走 chat service')
+  assert.match(localCore, /cancelDirector = roomMode !== 'chat'/, 'director 模式取消必须走 director service')
+})
+
+test('R9：取消早于 JS 登记必须 tombstone（登记时跳过执行）', () => {
+  const localCore = read('..', '..', '..', '..', 'src', 'portable', 'android-local-core.ts')
+  assert.match(localCore, /cancelledTransportIds/, '必须有已取消 transport ID 集合')
+  assert.match(localCore, /markCancelled/, '必须写 tombstone')
+  assert.match(localCore, /request_aborted/, 'tombstone 命中必须返回 aborted（不执行模型请求）')
+})
+
+test('R9：gameplay 损坏 JSON 必须明确拒绝（非静默吞掉）', () => {
+  const operations = read('java', 'ai', 'stagecraft', 'android', 'AndroidCompositionOperations.java')
+  assert.match(operations, /gameplay 资产 JSON 损坏/, '损坏 JSON 必须明确抛错')
+  assert.match(operations, /org\.json\.JSONException malformed/, '必须捕获 JSONException 转明确错误')
+  assert.match(operations, /目录缺失：空态|资产缺失/, '缺失必须区分空态')
+})

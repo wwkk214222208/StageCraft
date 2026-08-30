@@ -67,34 +67,43 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         }
         if ("preset.list".equals(operation)) { org.json.JSONArray presets = new org.json.JSONArray(); for (JSONObject preset : repository.listRecords("prompt-presets")) presets.put(preset); JSONObject meta = repository.getRecord("prompt-meta", "active-by-scope"); JSONObject activeByScope = meta == null ? null : meta.optJSONObject("value"); return new JSONObject().put("presets", presets).put("activeByScope", activeByScope == null ? new JSONObject() : activeByScope); }
         if ("prompt.gameplay.list".equals(operation)) {
-            // R7/R8：gameplay 场景从打包 assets/web/gameplay/*.json 读取（packageWebUi 把 prompts/gameplay 拷入 web/gameplay）。
-            // R8：有界循环读取（available() 不可靠）；损坏/超大资产明确失败（抛错由外层转 400）或空态。
+            // R7/R8/R9：gameplay 场景从打包 assets/web/gameplay/*.json 读取。
+            // R8：有界循环读取（≤256KB）。R9：区分语义——
+            //   目录/资产缺失 → 空态（前端按空处理）；
+            //   发现但内容损坏/超大 → 明确抛错（拒绝该资产，外层转 400），不静默吞掉。
             JSONObject scenarios = new JSONObject();
+            String[] files = null;
             try {
-                String[] files = context.getAssets().list("web/gameplay");
-                if (files != null) {
-                    for (String file : files) {
-                        if (!file.endsWith(".json")) continue;
-                        String scope = file.substring(0, file.length() - 5);
-                        try (java.io.InputStream assetInput = context.getAssets().open("web/gameplay/" + file)) {
-                            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
-                            byte[] chunk = new byte[8192];
-                            int total = 0;
-                            int read;
-                            while ((read = assetInput.read(chunk)) >= 0) {
-                                total += read;
-                                if (total > 256 * 1024) throw new IllegalArgumentException("gameplay 资产过大: " + file);
-                                buffer.write(chunk, 0, read);
-                            }
-                            if (total == 0) continue; // 空资产跳过
-                            scenarios.put(scope, new JSONObject(new String(buffer.toByteArray(), java.nio.charset.StandardCharsets.UTF_8)));
+                files = context.getAssets().list("web/gameplay");
+            } catch (Exception missing) {
+                return new JSONObject().put("gameplayScenarios", new JSONObject()); // 目录缺失：空态
+            }
+            if (files != null) {
+                for (String file : files) {
+                    if (!file.endsWith(".json")) continue;
+                    String scope = file.substring(0, file.length() - 5);
+                    try (java.io.InputStream assetInput = context.getAssets().open("web/gameplay/" + file)) {
+                        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+                        byte[] chunk = new byte[8192];
+                        int total = 0;
+                        int read;
+                        while ((read = assetInput.read(chunk)) >= 0) {
+                            total += read;
+                            if (total > 256 * 1024) throw new IllegalArgumentException("gameplay 资产过大: " + file);
+                            buffer.write(chunk, 0, read);
                         }
+                        if (total == 0) continue; // 空资产跳过
+                        try {
+                            scenarios.put(scope, new JSONObject(new String(buffer.toByteArray(), java.nio.charset.StandardCharsets.UTF_8)));
+                        } catch (org.json.JSONException malformed) {
+                            // R9：内容损坏 → 明确拒绝该资产（不静默吞掉）
+                            throw new IllegalArgumentException("gameplay 资产 JSON 损坏: " + file + " (" + malformed.getMessage() + ")");
+                        }
+                    } catch (java.io.IOException openFailed) {
+                        // 单个资产打开失败：记录并跳过（该文件缺失等价空态；不阻断其他场景）
+                        GateALog.w("gameplay asset open failed: " + file);
                     }
                 }
-            } catch (IllegalArgumentException error) {
-                throw error; // 明确失败（超大/损坏）
-            } catch (Exception error) {
-                // 资产缺失：空态（前端按空处理）
             }
             return new JSONObject().put("gameplayScenarios", scenarios);
         }
