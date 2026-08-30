@@ -747,9 +747,8 @@ export class Store implements MemoryStore {
   }
 
   updatePlayerCharacter(roomId: string, player: { name: string; persona: string; currentState: string }): void {
-    const room = this.db.prepare('SELECT phase FROM rooms WHERE id = ?').get(roomId) as { phase: RoomPhase } | undefined
-    if (!room) throw new Error('Room not found.')
-    if (room.phase !== 'awaiting-player-input') throw new Error('玩家角色只能在空闲阶段修改。')
+    // 允许任意阶段修改玩家角色（审批阶段改玩家设定是正常需求）；SQLite 单连接串行写入，
+    // playerCharacter 仅此一个写者（模型请求写 roles/scenes/speech/draft，字段不重叠），无字段级数据竞争。
     if (!player.name.trim() || !player.persona.trim() || !player.currentState.trim()) throw new Error('玩家角色字段不能为空。')
     this.db.prepare('UPDATE rooms SET player_name = ?, player_persona = ?, player_state = ?, revision = revision + 1 WHERE id = ?').run(player.name.trim(), player.persona.trim(), player.currentState.trim(), roomId)
   }

@@ -335,12 +335,13 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
 
   // ── 玩家 ──
   { handlerId: 'player.character', impl: (facade, body) => {
-    facade.updatePlayerCharacter({
-      name: stringOf(body, 'name'),
-      persona: stringOf(body, 'persona'),
-      currentState: stringOf(body, 'currentState'),
-    })
-    return ok({ ok: true })
+    // 桌面契约：三字段非空校验（store.updatePlayerCharacter）；允许任意阶段修改（审批阶段改玩家设定是正常需求）
+    const name = stringOf(body, 'name')
+    const persona = stringOf(body, 'persona')
+    const currentState = stringOf(body, 'currentState')
+    if (!name.trim() || !persona.trim() || !currentState.trim()) return err('玩家角色字段不能为空。')
+    facade.updatePlayerCharacter({ name, persona, currentState })
+    return ok({ ok: true, room: facade.getRoom() })
   } },
   { handlerId: 'player.avatar', impl: (facade, body) => {
     // 桌面契约：dataUrl/url → 落盘 → {ok:true, portraitRef}
