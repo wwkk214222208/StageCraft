@@ -37,6 +37,7 @@ close-wsl.bat
 .pnpm-store/
 .toolchains/
 .gradle-home/
+.tmp-subagent-debug/
 dsh-web-ui/
 dsh-rp/dist/
 dsh-rp/LICENSE
