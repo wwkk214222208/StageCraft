@@ -43,7 +43,9 @@
     } else if (message.type === 'core.resync' || message.type === 'room.changed') {
       try { publish('room', publicRoomSnapshot(core.getRoom())) } catch { /* 房间尚未就绪 */ }
     } else if (message.type === 'thinking') {
-      publish('thinking', message.event)
+      // 思维链增量已由 Core 事件总线（core.event → model.thinking.delta/completed，含 correlation）
+      // 经 publish('core') 到达前端 applyThinkingEvent；service 层的 thinking 直发是同一批增量的
+      // 冗余通道，若再 publish('thinking') 会导致同一段文本被追加两次（字符重复）。故此处不再转发。
     } else if (message.type === 'core.event') {
       publish('core', message.event)
     } else if (message.type === 'connection.error') {
