@@ -72,7 +72,11 @@ test('packed DSH bundle is self-contained and runs from a temporary install', { 
 
     const port = await freePort()
     const ctx = new Context()
-    const fiber = ctx.plugin(bundleEntry, { port, host: '127.0.0.1' })
+    // R11：显式独立 userDataRoot（tempRoot 子目录）——DSH 不再写共享的
+    // %APPDATA%/stagecraft/data/stagecraft.sqlite；每次运行独立目录，消除
+    // "attempt to write a readonly database"（并发文件锁/共享 DB 竞争）。
+    const userDataRoot = join(tempRoot, 'user-data')
+    const fiber = ctx.plugin(bundleEntry, { port, host: '127.0.0.1', userDataRoot })
     try {
       await fiber
       const response = await fetch('http://127.0.0.1:' + port + '/api/room')
