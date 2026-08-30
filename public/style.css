@@ -655,3 +655,9 @@ html.android-device #story-edit-modal .creator-editor{min-height:0}
 .sync-remote-actions button{font-size:12px;padding:8px 10px;width:100%}
 #sync-remote-row hr{border:none;border-top:1px solid #2f3c58;margin:10px 0}
 #sync-remote-error.error{color:#ffad9d}
+
+/* ── 启动加载提示（bootApp 重试期间；桌面/安卓两端复用）── */
+#boot-loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:var(--bg,#141a26);color:var(--fg,#d7dce6);font-size:15px;z-index:1000;transition:opacity .25s ease}
+#boot-loading[hidden]{display:none}
+.boot-loading-spinner{width:30px;height:30px;border:3px solid rgba(215,220,230,.2);border-top-color:#7aa2f7;border-radius:50%;animation:boot-loading-spin .8s linear infinite}
+@keyframes boot-loading-spin{to{transform:rotate(360deg)}}

@@ -1867,28 +1867,38 @@ async function bootApp() {
   // 启动竞态（Core 进程启动窗口）：/api/room 可能瞬时 503——有限重试等待 Core 就绪，
   // 避免"默认剧本不显示/页面空白"（Gate D 真机发现：首次启动 room 503 → bootApp 直接
   // return，story-select/roles/room-title 全空）。
+  // 加载提示（两端复用：public/index.html 的 #boot-loading，桌面 DSH 与安卓 local 同源）
+  const bootLoading = document.getElementById('boot-loading')
+  const bootLoadingText = document.getElementById('boot-loading-text')
+  const showBootLoading = (text) => { if (bootLoading) { bootLoading.hidden = false; if (bootLoadingText) bootLoadingText.textContent = text } }
+  const hideBootLoading = () => { if (bootLoading) bootLoading.hidden = true }
   const BOOT_RETRY_LIMIT = 6
   const BOOT_RETRY_DELAY_MS = 800
+  showBootLoading('正在加载…')
   for (let attempt = 0; attempt < BOOT_RETRY_LIMIT; attempt++) {
     try {
       const roomResponse = await fetch('/api/room')
       if (roomResponse.status === 401 && !/^(127\.0\.0\.1|localhost|::1)$/i.test(location.hostname)) { location.replace('/pair'); return }
       if (!roomResponse.ok) {
         if (roomResponse.status === 503 && attempt < BOOT_RETRY_LIMIT - 1) {
-          // Core 尚未就绪：等待后重试（bounded；不无限阻塞）
+          // Core 尚未就绪：显示加载反馈并等待后重试（bounded；不无限阻塞）
+          showBootLoading('正在加载…（等待核心就绪 ' + (attempt + 1) + '/' + BOOT_RETRY_LIMIT + '）')
           await new Promise(resolve => setTimeout(resolve, BOOT_RETRY_DELAY_MS))
           continue
         }
         throw new Error(`Room request failed: ${roomResponse.status}`)
       }
       render(await roomResponse.json())
+      hideBootLoading()
       break
     } catch (error) {
       if (attempt >= BOOT_RETRY_LIMIT - 1) {
         console.error('[StageCraft] initial room load failed', error)
+        showBootLoading('加载失败，请检查核心服务后刷新页面。')
         return
       }
       // 网络瞬时失败（gateway 重连窗口）同样有限重试
+      showBootLoading('正在加载…（连接重试 ' + (attempt + 1) + '/' + BOOT_RETRY_LIMIT + '）')
       await new Promise(resolve => setTimeout(resolve, BOOT_RETRY_DELAY_MS))
     }
   }
