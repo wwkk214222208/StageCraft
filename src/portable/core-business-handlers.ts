@@ -140,6 +140,20 @@ const recordOf = (body: Record<string, unknown>, key: string): Record<string, st
  */
 export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   // ── 房间 ──
+  { handlerId: 'room.restart', impl: async (facade, body) => {
+    // R13：重开剧本（业务语义，与桌面一致）——清除当前回合/草稿/已批准正文，
+    // 按 storyId/mode/autoPublish 重开房间。原 Android registry 误映射为
+    // host.restart（重启 Core 进程）导致每次重开=Core 重启+数据面断连，已修正。
+    const storyId = stringOf(body, 'storyId') || ''
+    if (!storyId) return err('storyId 缺失')
+    const story = await facade.story(storyId)
+    if (!story) return err('剧本不存在: ' + storyId)
+    const options: { mode?: string; autoPublish?: boolean } = {}
+    if (body.mode === 'chat' || body.mode === 'director') options.mode = body.mode
+    if (typeof body.autoPublish === 'boolean') options.autoPublish = body.autoPublish
+    facade.restart(story, options)
+    return ok({ ok: true })
+  } },
   { handlerId: 'room.snapshot', impl: facade => ok(facade.getRoom()) },
   { handlerId: 'room.config', impl: (facade, body) => {
     const config: { mode?: string; autoPublish?: boolean; speechMode?: string; hidePlayerSpeech?: boolean } = {}

@@ -144,9 +144,12 @@ public final class CoreDataServer {
         // 显式 IPv4 回环（部分设备 getLoopbackAddress() 返回 ::1 导致拒连——Gate A 实测）
         server = ServerSocketFactory.getDefault().createServerSocket(0, 64, InetAddress.getByName("127.0.0.1"));
         port = server.getLocalPort();
+        logger.i("core data server start: port=" + port + " server=" + server);
         Thread acceptor = new Thread(this::acceptLoop, "core-data-accept");
         acceptor.setDaemon(true);
         acceptor.start();
+        // R13：accept 线程 supervisor（异常死亡自动重启 ≤5 次）
+        ensureAcceptSupervisor();
     }
 
     public void stop() {
@@ -156,6 +159,7 @@ public final class CoreDataServer {
     }
 
     private void acceptLoop() {
+        logger.i("core data accept loop started port=" + port);
         while (server != null && !server.isClosed()) {
             try {
                 Socket socket = server.accept();
@@ -167,8 +171,41 @@ public final class CoreDataServer {
                 return; // stop() 触发
             } catch (IOException error) {
                 logger.w("core data accept failed: " + error);
+            } catch (Throwable fatal) {
+                // R13：accept 线程不得静默死亡——任何非 IOException 异常（如拒绝绑定、
+                // 资源耗尽）都记录；随后外层 supervisor 会重启本线程（防永久断连）。
+                logger.w("core data accept fatal: " + fatal);
+                return;
             }
         }
+    }
+
+    /** R13：accept 线程 supervisor——单次异常死亡后自动重启（≤5 次），
+     * 避免 restart 后 Core 重建时 accept 线程静默消失导致 Gateway 永久 502。 */
+    private final java.util.concurrent.atomic.AtomicBoolean supervisorStarted = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private void ensureAcceptSupervisor() {
+        if (!supervisorStarted.compareAndSet(false, true)) return;
+        Thread supervisor = new Thread(() -> {
+            int restarts = 0;
+            while (restarts < 5 && server != null && !server.isClosed()) {
+                try { Thread.sleep(200); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); return; }
+                boolean acceptAlive = false;
+                for (Thread thread : Thread.getAllStackTraces().keySet()) {
+                    if ("core-data-accept".equals(thread.getName()) && thread.isAlive()) { acceptAlive = true; break; }
+                }
+                if (acceptAlive) continue;
+                // accept 线程缺失（异常死亡/启动失败）→ 若 server 仍监听则重启
+                if (server != null && !server.isClosed()) {
+                    logger.w("core data accept thread missing; restarting (" + (restarts + 1) + ")");
+                    Thread acceptor = new Thread(this::acceptLoop, "core-data-accept");
+                    acceptor.setDaemon(true);
+                    acceptor.start();
+                    restarts++;
+                }
+            }
+        }, "core-data-accept-supervisor");
+        supervisor.setDaemon(true);
+        supervisor.start();
     }
 
     private void handle(Socket socket) {

@@ -171,11 +171,11 @@ test('W6：角色记忆路由调组合根方法', async () => {
   assert.ok(facade.calls.some(call => call.startsWith('storeNpcMemories:')), '必须调用 storeNpcMemories')
 })
 
-test('W6-1：全部 81 条 core 业务路由已挂载（无 handler_not_mounted）', () => {
+test('W6-1：全部 82 条 core 业务路由已挂载（无 handler_not_mounted）', () => {
   const coverage = buildBusinessCoverage(API_ROUTES)
   const unmounted = coverage.filter(item => !item.mounted)
   assert.equal(unmounted.length, 0, `必须全部挂载，未挂载: ${unmounted.map(item => item.handlerId).join(', ')}`)
-  assert.equal(coverage.length, 81, '必须覆盖全部 81 条 core 业务路由')
+  assert.equal(coverage.length, 82, '必须覆盖全部 82 条 core 业务路由（R13：/api/restart 移入 core 业务 = room.restart）')
 })
 
 test('W6-1：逐条裁决的 unsupported 路由返回稳定 unsupported_capability', async () => {

@@ -284,6 +284,16 @@ function thinkingBlockHtml(label, text) {
 function currentDraftText() { return $('#center-draft-text')?.value ?? room?.draft?.text ?? '' }
 function setContribution(text) { const input = $('#contribution'); input.value = input.value ? `${input.value}\n${text}` : text; input.focus() }
 function render(next) {
+  // 数据完整性校验：/api/room 在 Core 重启/数据面切换窗口可能返回错误对象
+  // （如 502 core_unreachable）——显示明确占位而非在 room.roles.filter 处崩溃。
+  if (!next || typeof next !== 'object' || !Array.isArray(next.roles)) {
+    console.error('[StageCraft] render skipped: room payload missing roles', next)
+    const title = document.getElementById('room-title')
+    if (title) title.textContent = next?.error?.code === 'core_unreachable' ? '核心正在重启…' : '房间数据不可用'
+    const rolesEl = document.getElementById('roles')
+    if (rolesEl) rolesEl.innerHTML = `<p class="hint">${escape(next?.error?.message || '房间数据不可用，请稍候。')}</p>`
+    return
+  }
   room = next
   window.stagecraftRoom = next
   focalRoleIds = new Set([...focalRoleIds].filter(id => room.roles.some(role => role.id === id && role.presence === 'present')))
@@ -516,7 +526,32 @@ if (window.__STAGECRAFT_LOCAL__) {
   window.addEventListener('unhandledrejection', event => { event.preventDefault(); showOperationError('本地操作', event.reason) })
   window.addEventListener('error', event => { if (event.error) showOperationError('页面脚本', event.error) })
 }
-async function api(path, body) { const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); const data = await response.json().catch(() => ({})); if (!response.ok || data?.ok === false) { const error = data?.error; alert(typeof error === 'string' ? error : error?.message || '请求失败'); return false }; await refreshRoom(); return data }
+async function api(path, body) {
+  const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data?.ok === false) { const error = data?.error; alert(typeof error === 'string' ? error : error?.message || '请求失败'); return false }
+  // 操作成功后刷新房间；Core 重启/数据面切换窗口（重开剧本等会触发）可能瞬时 502——
+  // 有限重试（bounded），避免 refreshRoom 拿到错误对象导致 UI 空白/报错。
+  await refreshRoomWithRetry()
+  return data
+}
+async function refreshRoomWithRetry() {
+  const RETRY_LIMIT = 5
+  const RETRY_DELAY_MS = 600
+  for (let attempt = 0; attempt < RETRY_LIMIT; attempt++) {
+    try {
+      const response = await fetch('/api/room')
+      if (response.ok) { render(await response.json()); return }
+      if (attempt < RETRY_LIMIT - 1) { await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS)); continue }
+      const data = await response.json().catch(() => ({}))
+      render(data) // 重试耗尽：render 自身对错误对象容错（显示占位不崩溃）
+    } catch (error) {
+      if (attempt < RETRY_LIMIT - 1) { await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS)); continue }
+      console.error('[StageCraft] refreshRoom failed', error)
+      render({ error: { message: error instanceof Error ? error.message : String(error) } })
+    }
+  }
+}
 async function loadStories() {
   const response = await fetch('/api/stories')
   const payload = await response.json().catch(() => ({}))

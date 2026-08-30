@@ -214,7 +214,7 @@
       "message": "not supported on this surface"
     },
     "registryVersion": "1.0.0-gateb",
-    "registrySha256": "99cb2c2eb6efaa8d021205dc0aeb21ee510ff45c2d01d6c41ed8065166d1fdfc"
+    "registrySha256": "ae9f13cfd0b8f50c44e663d399be44595cc37dd6a8e3e0f1faeaa4d05767576c"
   },
-  "sha256": "cacca05326a7c54d5b6828cc2cba02a5513e73c60aa4204c22ea1fefdb4c5d00"
+  "sha256": "b1e886e02061d5a8e3d9db35e9610893b344abbdc569ddd963befd4bd61d7fe8"
 }
