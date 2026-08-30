@@ -202,7 +202,7 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
     private static void validateImportedStory(JSONObject story) throws Exception {
         JsonSafety.requiredString(story, "id", 128); JsonSafety.requiredString(story, "title", 512); JsonSafety.requiredString(story, "opening", 1024 * 1024);
         JSONObject player = JsonSafety.requiredObject(story, "playerCharacter"); JsonSafety.requiredString(player, "name", 512); JsonSafety.requiredString(player, "persona", 1024 * 1024); JsonSafety.requiredString(player, "currentState", 1024 * 1024);
-        org.json.JSONArray roles = JsonSafety.requiredArray(story, "roles"); if (roles.length() == 0 || roles.length() > 256) throw new IllegalArgumentException("剧本角色列表无效。"); java.util.Set<String> ids = new java.util.HashSet<>();
+        org.json.JSONArray roles = JsonSafety.requiredArray(story, "roles"); if (roles.length() > 256) throw new IllegalArgumentException("剧本角色列表无效。"); java.util.Set<String> ids = new java.util.HashSet<>();
         for (int i = 0; i < roles.length(); i++) { JSONObject role = roles.getJSONObject(i); String roleId = JsonSafety.requiredString(role, "id", 128); if (!ids.add(roleId)) throw new IllegalArgumentException("剧本包含重复角色 ID。"); JsonSafety.requiredString(role, "name", 512); JsonSafety.requiredString(role, "portraitRef", 2048); JsonSafety.requiredString(role, "currentState", 1024 * 1024); JsonSafety.requiredString(role, "selfModel", 1024 * 1024); if (!java.util.Arrays.asList("present", "absent", "unavailable").contains(role.optString("presence"))) throw new IllegalArgumentException("剧本角色在场状态无效。"); }
     }
 
