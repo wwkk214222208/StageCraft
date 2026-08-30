@@ -270,7 +270,42 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   } },
 
   // ── 角色 ──
-  { handlerId: 'role.create', impl: (facade, body) => { facade.createRole(body.role ?? body); return ok({ ok: true }) } },
+  { handlerId: 'role.create', impl: (facade, body) => {
+    // 桌面契约（app-boot.ts /api/roles/create）：
+    // 1) id 缺省生成 role-<ts>；2) portraitRef dataURL/URL 落盘；3) presence/currentState 默认值；
+    // 4) goals JSON 字符串解析为数组（前端发 JSON.stringify，Android 存字符串会导致
+    //    前端 (goals ?? []).join('\n') 抛 TypeError，角色设置面板打不开）
+    const raw = (body.role && typeof body.role === 'object' && !Array.isArray(body.role)) ? body.role as Record<string, unknown> : body
+    const id = stringOf(raw, 'id').trim() || `role-${Date.now()}`
+    // portraitRef 落盘：前端把 dataURL/URL 放在 body.portraitRef（app.js），
+    // 与 avatar 路由的 body.dataUrl/url 字段不同——dataURL/URL 时转入 resolveAvatar 落盘
+    const rawPortrait = stringOf(raw, 'portraitRef')
+    let portraitRef: string
+    if (rawPortrait.startsWith('data:image/') || (/^https?:\/\//i.test(rawPortrait) && rawPortrait !== '/assets/default.svg')) {
+      portraitRef = resolveAvatar(facade, { ...raw, dataUrl: rawPortrait.startsWith('data:image/') ? rawPortrait : '', url: rawPortrait.startsWith('data:image/') ? '' : rawPortrait })
+    } else {
+      portraitRef = stringOf(raw, 'portraitRef') || '/assets/default.svg'
+    }
+    let goals: unknown
+    if (typeof raw.goals === 'string' && raw.goals.trim()) {
+      try { goals = JSON.parse(raw.goals) as string[] } catch { /* 非法 JSON 忽略 */ }
+    } else if (Array.isArray(raw.goals)) {
+      goals = raw.goals
+    }
+    const presence = stringOf(raw, 'presence')
+    const role = {
+      id,
+      name: stringOf(raw, 'name').trim(),
+      portraitRef,
+      currentState: stringOf(raw, 'currentState') || '刚刚进入当前场景。',
+      presence: ['present', 'absent', 'unavailable'].includes(presence) ? presence : 'present',
+      selfModel: stringOf(raw, 'selfModel'),
+      ...(Array.isArray(raw.memories) ? { memories: raw.memories } : {}),
+      ...(goals !== undefined ? { goals } : {}),
+    }
+    facade.createRole(role)
+    return ok({ ok: true })
+  } },
   { handlerId: 'role.delete', impl: (facade, body) => { facade.deleteRole(stringOf(body, 'roleId')); return ok({ ok: true }) } },
   { handlerId: 'role.presence', impl: (facade, body) => {
     // 桌面契约：presence 白名单 present/absent/unavailable（app-boot.ts /api/roles/presence）
