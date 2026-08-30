@@ -182,11 +182,11 @@
     return result
   }
 
-  // ── 回退路由表（旧页面内 Core；迁移期兼容入口，Gate D 后保留但 gateway 模式下不使用）──
-  // ⚠ 迁移期标记（R12 评审 #2）：此表是"页面内 Core 直连"的最后防线回退，仅在
-  // Gateway 不可用/旧 UI 触发时生效。Gate D 后不宣称"旧路径已完全移除"——保留为
+  // ── 回退路由表（旧页面内 Core；迁移期兼容入口，legacyCoreBridgeEnabled 翻转后保留但 gateway 模式下不使用）──
+  // ⚠ 迁移期标记：此表是"页面内 Core 直连"的最后防线回退，仅在
+  // Gateway 不可用/旧 UI 触发时生效。翻转后不宣称"旧路径已完全移除"——保留为
   // 兼容入口；:core 进程侧 CoreNativeBridge 已用严格 core-native allowlist（false），
-  // 主进程侧 legacyGenericDispatchEnabled 翻转后此表仍可路由但操作级校验拒绝跨 owner。
+  // 主进程侧 legacyCoreBridgeEnabled 翻转后此表仍可路由但操作级校验拒绝跨 owner。
   const legacyRoutes = {
     /** GET 数据端点 */
     get: {
@@ -539,7 +539,7 @@
       // W6 数据面：直通同源 gateway（CoreGatewayServer 按 registry 分派；nonce 由 gateway 原生注入）
       return originalFetch(input, init)
     }
-    // ── 回退路径：页面内 Core（旧 shim；Gate D 前保留）──
+    // ── 回退路径：页面内 Core（旧 shim；迁移期保留）──
     const method = String(init.method ?? (typeof input === 'object' && input && input.method ? input.method : 'GET')).toUpperCase()
     const pathname = url.pathname
     // SSE（CoreClient 用 fetch 读流）

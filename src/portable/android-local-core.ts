@@ -75,7 +75,7 @@ const SYNC_OPERATIONS = new Set([
 /** WebView 入口：安装本地组合根与富 API 门面。 */
 export function installLocalCore(global: Record<string, unknown> = globalThis as unknown as Record<string, unknown>): void {
   // 主 WebView 用 StageCraftNative（MainActivity）；Core 进程用 CoreNative（CoreService，
-  // Gate B：独立命名只暴露 core-native）。两者形状相同（invokeSync/invokeAsync）。
+  // 独立命名只暴露 core-native）。两者形状相同（invokeSync/invokeAsync）。
   const native = (global.StageCraftNative ?? global.CoreNative ?? {}) as Record<string, unknown>
   if ((global.StageCraftNative === undefined && global.CoreNative === undefined)
       || typeof native.invokeSync !== 'function' || typeof native.invokeAsync !== 'function') {

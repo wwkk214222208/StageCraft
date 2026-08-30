@@ -7,37 +7,37 @@ import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Gate B：native operation allowlist 在真实 Java 分派层的执行器。
+ * native operation allowlist 在真实 Java 分派层的执行器。
  *
  * 规则来源：src/native-operation-registry.ts 经 scripts/generate-gatebc-assets.mjs 生成的
  * native-operation-registry.json（构建期产物，Java 侧不得手写白名单）。
  *
- * 迁移期语义（与 CP-W1 一致）：通用分派入口允许 legacy-main-core 封闭例外集合内的操作；
- * 未登记操作一律拒绝。Gate D 将 legacyGenericDispatchEnabled 翻转为 false 后，通用入口只放行 main-host
+ * 迁移期语义：通用分派入口允许 legacy-main-core 封闭例外集合内的操作；
+ * 未登记操作一律拒绝。legacyCoreBridgeEnabled 翻转为 false 后，通用入口只放行 main-host
  * 语义操作，core-native 全部拒绝。
  *
- * 命名约定：legacyGenericDispatchEnabled=true 表示"legacy 通用入口允许 core-native 操作"（迁移期，
- * 当前生产默认）；false 表示 Gate D 后拒绝跨 owner 调用。语义只随该布尔单向演进（true→false）。
+ * 命名约定：legacyCoreBridgeEnabled=true 表示"legacy 通用入口允许 core-native 操作"（迁移期，
+ * 当前生产默认）；false 表示拒绝跨 owner 调用。语义只随该布尔单向演进（true→false）。
  */
 public final class NativeOperationGuard {
     private final java.util.Set<String> legacyMainCore;
     private final java.util.Set<String> mainHost;
-    private final boolean legacyGenericDispatchEnabled;
+    private final boolean legacyCoreBridgeEnabled;
 
     private NativeOperationGuard(java.util.Set<String> legacyMainCore,
                                  java.util.Set<String> mainHost,
-                                 boolean legacyGenericDispatchEnabled) {
+                                 boolean legacyCoreBridgeEnabled) {
         this.legacyMainCore = legacyMainCore;
         this.mainHost = mainHost;
-        this.legacyGenericDispatchEnabled = legacyGenericDispatchEnabled;
+        this.legacyCoreBridgeEnabled = legacyCoreBridgeEnabled;
     }
 
     /** 同包重建（Holder 翻转时用同一份集合数据，仅翻转语义）。 */
-    NativeOperationGuard rebuild(boolean legacyGenericDispatchEnabled) {
-        return new NativeOperationGuard(legacyMainCore, mainHost, legacyGenericDispatchEnabled);
+    NativeOperationGuard rebuild(boolean legacyCoreBridgeEnabled) {
+        return new NativeOperationGuard(legacyMainCore, mainHost, legacyCoreBridgeEnabled);
     }
 
-    public static NativeOperationGuard parse(String json, boolean legacyGenericDispatchEnabled) {
+    public static NativeOperationGuard parse(String json, boolean legacyCoreBridgeEnabled) {
         try {
             JSONObject root = new JSONObject(json);
             java.util.Set<String> legacy = new java.util.HashSet<>();
@@ -50,18 +50,18 @@ public final class NativeOperationGuard {
             if (mainHostArray != null) {
                 for (int index = 0; index < mainHostArray.length(); index++) mainHost.add(mainHostArray.optString(index));
             }
-            return new NativeOperationGuard(legacy, mainHost, legacyGenericDispatchEnabled);
+            return new NativeOperationGuard(legacy, mainHost, legacyCoreBridgeEnabled);
         } catch (Exception error) {
             throw new IllegalStateException("native-operation-registry.json 解析失败", error);
         }
     }
 
     /** 从应用外部存储/资产目录加载。 */
-    public static NativeOperationGuard load(File asset, boolean legacyGenericDispatchEnabled) {
+    public static NativeOperationGuard load(File asset, boolean legacyCoreBridgeEnabled) {
         try (FileInputStream input = new FileInputStream(asset)) {
             byte[] bytes = new byte[input.available()];
             int read = input.read(bytes);
-            return parse(new String(bytes, 0, Math.max(0, read), StandardCharsets.UTF_8), legacyGenericDispatchEnabled);
+            return parse(new String(bytes, 0, Math.max(0, read), StandardCharsets.UTF_8), legacyCoreBridgeEnabled);
         } catch (Exception error) {
             throw new IllegalStateException("native-operation-registry.json 加载失败", error);
         }
@@ -74,7 +74,7 @@ public final class NativeOperationGuard {
     public String checkGenericDispatch(String operation) {
         if (operation == null || operation.isEmpty()) return "operation is empty";
         if (legacyMainCore.contains(operation)) {
-            return legacyGenericDispatchEnabled ? null : "legacy-main-core 例外已移除（Gate D）：" + operation;
+            return legacyCoreBridgeEnabled ? null : "legacy-main-core 例外已移除：" + operation;
         }
         if (mainHost.contains(operation)) return null;
         return "operation 未登记于 NativeOperationRegistry（legacy=" + legacyMainCore.size() + ", mainHost=" + mainHost.size() + "）：" + operation;
@@ -88,7 +88,7 @@ public final class NativeOperationGuard {
 
     public java.util.Set<String> coreNative() {
         java.util.Set<String> names = new java.util.HashSet<>();
-        // coreNative 列表 = legacy 例外全集（迁移期两者一致；Gate D 后仍为 core-native 目标集）
+        // coreNative 列表 = legacy 例外全集（迁移期两者一致；翻转后仍为 core-native 目标集）
         names.addAll(legacyMainCore);
         return names;
     }

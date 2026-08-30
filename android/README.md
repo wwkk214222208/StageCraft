@@ -22,7 +22,7 @@ The embedded path is deliberately limited to the shared, platform-neutral Core s
 The repository-wide incremental change, review, evidence, and rollback rules are maintained in [`docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md`](../docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md). Android changes must follow that document before changing a route, bridge, process boundary, or stream-cancellation rule.
 
 - The local isolated-Core path is implemented and has been exercised on FOA-AL00 / API 31. Other Android versions, release variants, and multi-device failure matrices are unverified and are not a compatibility promise.
-- The main UI uses the same-origin Gateway path by default. The legacy page-local Core shim and generic core-native dispatch remain as an explicit migration fallback until the project records a Gate D switch decision.
+- The main UI uses the same-origin Gateway path by default. The legacy page-local Core shim and generic core-native dispatch remain as an explicit migration fallback until the project records a decision to flip `legacyCoreBridgeEnabled` (migration decisions live in `governance/`).
 - The fallback is not a second business implementation: it exists only to recover from a Core/Gateway startup failure. New routes, protocol changes, or bug fixes must land in the shared registry/handler/fixture first.
 - A failed local Core must leave the host able to show the recovery page, edit plugin configuration, export diagnostics, and enter remote mode without clearing Core state or secrets.
 

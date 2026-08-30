@@ -94,7 +94,7 @@ Android JVM：<命令> → <结果或环境阻断>
 
 - Gate D 按 FOA-AL00 / API 31 的可验证范围收口。API 26–28、其他 API 29+、多设备矩阵和 release APK 不作为本项目硬验收条件。
 - 设备可用时记录 Gateway UI、长 SSE、thinking、取消、Core kill/restart、renderer/Activity 恢复；无法执行的项目明确标记 `未验证`。
-- 在最终开关决定前保留恢复页、远程入口和旧 shim。关闭 `legacyGenericDispatchEnabled` 或删除旧业务 shim 必须单独提交、可回退，并附新旧路径对照测试。
+- 在最终开关决定前保留恢复页、远程入口和旧 shim。关闭 `legacyCoreBridgeEnabled` 或删除旧业务 shim 必须单独提交、可回退，并附新旧路径对照测试。
 - 交付说明必须把“代码/测试通过”和“设备未验证”分开描述；不承诺所有 Android 版本兼容。
 
 ## 9. 文档与发布收口

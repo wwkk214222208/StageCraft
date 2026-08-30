@@ -1,10 +1,12 @@
 /**
- * W1-R CP-W1：NativeOperationRegistry 覆盖、目标暴露面不相交与 legacy 债务测试。
+ * NativeOperationRegistry 覆盖、目标暴露面不相交与 legacy 迁移期例外测试。
  *
  * 事实来源（穷举真实代码，不是 registry 自证）：
  *  - AndroidCompositionOperations.java 的 `"op".equals(operation)` 分派键（generic-dispatch 全集）；
  *  - NativeBridge.java 的 @JavascriptInterface 方法名（interface-method 全集）；
  *  - src/portable/android-local-core.ts 的 SYNC_OPERATIONS（WebView 侧同步操作白名单）。
+ *
+ * 迁移决策（何时翻转 legacyCoreBridgeEnabled）属于治理层，本测试只验证运行时事实。
  */
 
 import test from 'node:test'
@@ -25,7 +27,7 @@ const read = (...segments: string[]) => readFileSync(path.join(ROOT, ...segments
 
 const registered = new Set(NATIVE_OPERATIONS.map(operation => operation.name))
 
-test('目标暴露面不相交：core-native 与 main-host 两份 allowlist 无交集（Q9/CP-W1）', () => {
+test('目标暴露面不相交：core-native 与 main-host 两份 allowlist 无交集', () => {
   assert.doesNotThrow(() => assertDisjointExposure())
   const coreNative = coreNativeAllowlist()
   const mainHost = mainHostAllowlist()
@@ -49,14 +51,14 @@ test('Java invokeSync 分派键全部登记，且目标归属均为 core-native�
   assert.deepEqual(misowned, [], `真实 Java 分派键中存在目标归属非 core-native（或混入主暴露面）：${misowned.join(', ')}`)
 })
 
-test('legacy 债务如实登记：全部 Java 分派键今天仍可从主 WebView 通用入口到达，例外集合封闭', () => {
+test('legacy 迁移期例外如实登记：全部 Java 分派键今天仍可从主 WebView 通用入口到达，例外集合封闭', () => {
   const java = read('android', 'app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'AndroidCompositionOperations.java')
   const dispatched = [...new Set([...java.matchAll(/"([a-zA-Z][a-zA-Z0-9.]*)"\.equals\(operation\)/g)].map(match => match[1]))]
   const legacy = new Set(legacyMainCoreException())
   const notDebt = dispatched.filter(name => !legacy.has(name))
-  assert.deepEqual(notDebt, [], `分派键 ${notDebt.join(', ')} 今天可从主 WebView 到达，必须登记为 legacy-main-core 债务`)
+  assert.deepEqual(notDebt, [], `分派键 ${notDebt.join(', ')} 今天可从主 WebView 到达，必须登记为 legacy-main-core 迁移期例外`)
   // 封闭性：legacy 例外只允许 core-native generic-dispatch + 通用入口本身；
-  // 通用入口必须写明 Gate D 强制移除（债务的清偿点是通用入口的跨 owner 调用拒绝）。
+  // 通用入口必须写明它是迁移期例外（legacyCoreBridgeEnabled 翻转后关闭跨 owner 调用）。
   for (const operation of NATIVE_OPERATIONS) {
     if (operation.legacyExposure !== 'legacy-main-core') continue
     if (operation.owner === 'core-native') {
@@ -66,8 +68,8 @@ test('legacy 债务如实登记：全部 Java 分派键今天仍可从主 WebVie
     }
   }
   const generic = NATIVE_OPERATIONS.filter(operation => ['invokeSync', 'invokeAsync'].includes(operation.name))
-  assert.equal(generic.length, 2, '通用入口必须显式登记为 legacy-main-core 债务')
-  for (const entry of generic) assert.match(entry.note ?? '', /Gate D/, `${entry.name} 必须写明 Gate D 强制移除`)
+  assert.equal(generic.length, 2, '通用入口必须显式登记为 legacy-main-core 迁移期例外')
+  for (const entry of generic) assert.match(entry.note ?? '', /legacyCoreBridgeEnabled/, `${entry.name} 必须写明 legacyCoreBridgeEnabled 翻转语义`)
   assert.ok(NATIVE_OPERATIONS.every(operation => !operation.name.startsWith('legacy-')), '不得以改名方式逃避通用入口登记')
 })
 
@@ -79,7 +81,7 @@ test('WebView 侧 SYNC_OPERATIONS 全部命中 core-native 目标归属', () => 
   assert.ok(ops.length >= 10, `SYNC_OPERATIONS 应全部发现，实际 ${ops.length}`)
   const coreNativeSet = new Set(coreNativeAllowlist())
   const misowned = ops.filter(name => !coreNativeSet.has(name))
-  assert.deepEqual(misowned, [], `SYNC_OPERATIONS 中存在非 core-native 操作（Gate D 后 Java 分派层将拒绝）：${misowned.join(', ')}`)
+  assert.deepEqual(misowned, [], `SYNC_OPERATIONS 中存在非 core-native 操作（legacyCoreBridgeEnabled 翻转后 Java 分派层将拒绝）：${misowned.join(', ')}`)
 })
 
 test('NativeBridge @JavascriptInterface 方法全部登记为 main-host（interface-method 全集）', () => {

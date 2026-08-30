@@ -19,7 +19,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const byOwner = owner => NATIVE_OPERATIONS.filter(op => op.owner === owner).map(op => op.name)
 const nativeRegistry = {
-  registryVersion: '1.0.0-gateb',
+  registryVersion: '1.0.0',
   mainHost: byOwner('main-host'),
   coreNative: byOwner('core-native'),
   legacyMainCoreException: NATIVE_OPERATIONS

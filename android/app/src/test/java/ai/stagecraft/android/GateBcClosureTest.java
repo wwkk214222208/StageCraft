@@ -140,7 +140,7 @@ public class GateBcClosureTest {
 
     @Test
     public void nativeOperationGuardEnforcesRealDispatch() throws Exception {
-        // 迁移期（legacyGenericDispatchEnabled=true）：已知 legacy 操作放行，未知拒绝
+        // 迁移期（legacyCoreBridgeEnabled=true）：已知 legacy 操作放行，未知拒绝
         NativeOperationGuard guard = NativeOperationGuard.parse(readAsset("native-operation-registry.json"), true);
         System.out.println("[diag] legacy=" + guard.legacyMainCore());
         System.out.println("[diag] mainHost=" + guard.mainHost());
@@ -154,12 +154,12 @@ public class GateBcClosureTest {
         assertNotNull(guard.checkCoreNative("pair"), "main-host 操作不得进入 core 侧");
         assertNull(guard.checkCoreNative("stagecraft.repository"));
 
-        // Gate D：legacyGenericDispatchEnabled=false → core-native 从通用入口全部拒绝
-        NativeOperationGuard gateD = NativeOperationGuard.parse(readAsset("native-operation-registry.json"), false);
-        assertNotNull(gateD.checkGenericDispatch("archive.list"), "Gate D 翻转后 legacy 例外必须拒绝");
-        assertNotNull(gateD.checkGenericDispatch("stagecraft.room.get"), "Gate D 后 core-native 必须拒绝");
-        assertNotNull(gateD.checkGenericDispatch("model.request"), "Gate D 后 model.request 必须拒绝");
-        assertNull("main-host 操作 Gate D 后仍放行", gateD.checkGenericDispatch("dispatch"));
+        // legacyCoreBridgeEnabled=false → core-native 从通用入口全部拒绝
+        NativeOperationGuard flipped = NativeOperationGuard.parse(readAsset("native-operation-registry.json"), false);
+        assertNotNull(flipped.checkGenericDispatch("archive.list"), "翻转后 legacy 例外必须拒绝");
+        assertNotNull(flipped.checkGenericDispatch("stagecraft.room.get"), "翻转后 core-native 必须拒绝");
+        assertNotNull(flipped.checkGenericDispatch("model.request"), "翻转后 model.request 必须拒绝");
+        assertNull("main-host 操作翻转后仍放行", flipped.checkGenericDispatch("dispatch"));
     }
 
     // ── Gate B：Holder 生产默认路径 + 初始化后翻转（评审 B-1 P0）──
@@ -167,7 +167,7 @@ public class GateBcClosureTest {
     @Test
     public void guardHolderDefaultAllowsLegacyAndFlipsAfterInit() throws Exception {
         // 先重置 Holder 状态，保证测试独立
-        NativeOperationGuardHolder.setLegacyGenericDispatchEnabled(true);
+        NativeOperationGuardHolder.setLegacyCoreBridgeEnabled(true);
 
         // 生产默认（无 Context 路径）：从资产解析的 guard 必须放行已知 legacy 操作
         // Holder 无 Context 时未初始化；直接验证 parse(true) 语义 + Holder 翻转行为
@@ -176,7 +176,7 @@ public class GateBcClosureTest {
         assertNull("默认必须放行 archive.list", defaultGuard.checkGenericDispatch("archive.list"));
         assertNotNull("默认必须拒绝未登记操作", defaultGuard.checkGenericDispatch("made.up.operation"));
 
-        // 翻转后（Gate D）：对已初始化实例立即生效（原子替换，非旁路布尔）
+        // 翻转后：对已初始化实例立即生效（原子替换，非旁路布尔）
         NativeOperationGuard flipped = defaultGuard.rebuild(false);
         assertNotNull("翻转后 stagecraft.room.get 必须拒绝", flipped.checkGenericDispatch("stagecraft.room.get"));
         assertNotNull("翻转后 archive.list 必须拒绝", flipped.checkGenericDispatch("archive.list"));
@@ -191,21 +191,21 @@ public class GateBcClosureTest {
     public void guardHolderFlipAffectsInitializedInstance() throws Exception {
         String assetJson = readAsset("native-operation-registry.json");
         // 经 Holder 初始化（注入资产 JSON，模拟生产 get(Context) 路径的解析结果）
-        NativeOperationGuardHolder.setLegacyGenericDispatchEnabled(true, assetJson);
+        NativeOperationGuardHolder.setLegacyCoreBridgeEnabled(true, assetJson);
         NativeOperationGuard initialized = NativeOperationGuardHolder.get();
         assertNull("Holder 默认必须放行已知 legacy 操作", initialized.checkGenericDispatch("archive.list"));
         assertNull("Holder 默认必须放行 stagecraft.room.get", initialized.checkGenericDispatch("stagecraft.room.get"));
         assertNotNull("Holder 必须拒绝未登记操作", initialized.checkGenericDispatch("made.up.operation"));
 
         // 翻转：对已初始化实例立即生效（原子替换）
-        NativeOperationGuardHolder.setLegacyGenericDispatchEnabled(false, assetJson);
+        NativeOperationGuardHolder.setLegacyCoreBridgeEnabled(false, assetJson);
         NativeOperationGuard afterFlip = NativeOperationGuardHolder.get();
         assertNotNull("翻转后 archive.list 必须拒绝", afterFlip.checkGenericDispatch("archive.list"));
         assertNotNull("翻转后 stagecraft.room.get 必须拒绝", afterFlip.checkGenericDispatch("stagecraft.room.get"));
         assertNull("翻转后 main-host 操作仍放行", afterFlip.checkGenericDispatch("dispatch"));
 
         // 重复翻转幂等
-        NativeOperationGuardHolder.setLegacyGenericDispatchEnabled(false, assetJson);
+        NativeOperationGuardHolder.setLegacyCoreBridgeEnabled(false, assetJson);
         assertNotNull("重复翻转后仍拒绝", NativeOperationGuardHolder.get().checkGenericDispatch("archive.list"));
     }
 

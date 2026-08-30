@@ -1,5 +1,5 @@
 {
-  "registryVersion": "1.0.0-gateb",
+  "registryVersion": "1.0.0",
   "mainHost": [
     "localCoreAllowed",
     "ready",
