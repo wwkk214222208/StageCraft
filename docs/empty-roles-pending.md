@@ -110,3 +110,32 @@
 - 显示层 OK：前端 `updateInspectorThinkingOptions` 读 `defaults.directorThinkingStrength` 显示档位
 - 生效层：**Android 完全无效**（模型请求不带 thinking 参数）——用户以为设置了强度，实际模型按默认行为输出
 - 此条与本批"空角色"改动无关，属顺手修复中暴露的既有妥协/缺口，故单独记录
+
+---
+
+## 七、暂记：player.character 移除 phase 限制 + 角色/玩家组防御性对齐
+
+> 状态：**PENDING（行为决策，待功能观察）**。提交 `b3eab2c`、`0f5be87`（2026-08-30）。
+
+### 决策：player.character 移除 phase 限制
+- 桌面 `store.updatePlayerCharacter` 原限制 phase 必须 `awaiting-player-input`（「玩家角色只能在空闲阶段修改。」）——**过于严苛**：审批阶段改玩家设定（如换模型、调整人设）是正常需求
+- 移除 phase 校验，保留三字段非空校验（「玩家角色字段不能为空。」）
+- **数据竞争分析**（已核实）：`playerCharacter` 只有 `updatePlayerCharacter` 一个写者；模型请求（digest/speech/draft）写 `roles/scenes/speech/draft`，字段不重叠；SQLite 双端串行（桌面 node:sqlite 单连接、Android `synchronized`）；单条 UPDATE 原子 + `revision + 1` → 无字段级数据竞争，不新增并发保护
+- Android handler 同步补：三字段非空校验（对齐桌面 store）+ 响应补 `room` 字段（对齐桌面 `{ok:true, room}`）
+
+### 同批防御性对齐（角色/玩家组）
+`0f5be87` 对齐桌面契约：
+- `role.presence`：补 `present/absent/unavailable` 白名单（非法 400「无效的在场状态。」）
+- `role.reorder`：补空 roleIds 校验（400「缺少角色顺序列表。」）
+- `role.memories.upsert`：补 entries 逐项校验（对象 + text 非空）+ roleId 缺失校验（空数组仍允许，与桌面 `[].every()` 语义一致）
+
+### 待观察验证点
+- [ ] 审批阶段（awaiting-approval / collecting-decisions / drafting）编辑玩家角色 → 成功且回合完成后不被覆盖（已单测验证，待真机/联调确认）
+- [ ] 玩家角色编辑与模型 digest/speech 并发 → 无字段覆盖（分析确认字段不重叠，观察是否有预期外交互）
+- [ ] Android：非法 presence / 空 roleIds / 空 text 记忆 → 400 而非静默写入
+- [ ] 空角色房间 + 玩家角色编辑（互动式小说场景）组合行为正常
+
+### 影响面
+- 双端一致：桌面移除限制、Android 本就无限制（补非空校验）
+- 前端 `api()` 成功路径不受影响（响应多 room 字段无害）
+- 防御性校验仅拦异常输入，正常 UI 触发不到
