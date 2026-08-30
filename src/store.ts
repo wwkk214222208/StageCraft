@@ -1127,8 +1127,17 @@ export class Store implements MemoryStore {
       this.db.prepare('DELETE FROM pending_mind_updates WHERE room_id = ? AND turn_id = ?').run(roomId, draft.turn_id)
       this.db.prepare('DELETE FROM reaction_previews WHERE room_id = ? AND turn_id = ?').run(roomId, draft.turn_id)
       const sceneRevision = Number((this.db.prepare('SELECT revision FROM rooms WHERE id = ?').get(roomId) as { revision: number }).revision ?? 0) + 1
+      // 发布顺序：先玩家发言气泡（revision = 场景正文 revision），再导演正文（revision + 1）。
+      // 导演模式的玩家发言不在提交时落盘（可随取消回合/后端中断回退），正式成稿发布时随正文一并写入，
+      // 避免草稿耗时导致玩家气泡的 created_at 早于导演正文、前端按时间排序时正文先于发言。
+      const playerScene = this.db.prepare('SELECT contribution FROM turns WHERE id = ? AND room_id = ?').get(draft.turn_id, roomId) as { contribution: string } | undefined
+      const playerText = playerScene?.contribution?.trim()
+      if (playerText) {
+        this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, scene_kind, revision, created_at, speaker) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(`scene-${randomUUID()}`, roomId, draft.turn_id, playerText, effectiveTime || null, effectiveLocation || null, 'player', sceneRevision, new Date().toISOString(), 'player')
+      }
       this.db.prepare('INSERT INTO scenes (id, room_id, turn_id, text, scene_time, scene_location, usage, scene_kind, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(sceneId, roomId, draft.turn_id, text, effectiveTime || null, effectiveLocation || null, draft.usage ?? null, 'narration', sceneRevision, new Date().toISOString())
+        .run(sceneId, roomId, draft.turn_id, text, effectiveTime || null, effectiveLocation || null, draft.usage ?? null, 'narration', sceneRevision + 1, new Date().toISOString())
       this.db.prepare('DELETE FROM drafts WHERE room_id = ?').run(roomId)
       this.db.prepare('UPDATE rooms SET phase = ?, revision = revision + 1, player_contribution = NULL WHERE id = ?')
         .run('awaiting-player-input', roomId)

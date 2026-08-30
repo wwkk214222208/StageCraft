@@ -115,8 +115,8 @@ export class StageCraftDirectorService implements StageCraftDirectorPort {
     this.activeOperations.add(roomId)
     this.cancelledRequests.delete(roomId)
     this.core?.emitDomainEvent(domainEvent('player.contribution.submitted', { roomId, text: input.text }))
-    // 导演模式玩家发言始终记入正文（气泡样式，与群聊一致）；侧栏「隐藏玩家发言」只控制前端显示，不影响记录
-    if (input.text.trim()) this.store.addPlayerScene(roomId, input.text)
+    // 导演模式玩家发言暂不落盘：只作为本回合上下文（createTurn 写入 player_contribution），
+    // 在玩家批准草稿（approve → publish）时与导演正文一并发布，保证取消回合/后端中断可回退。
     try {
       await this.processTurn(roomId, input)
     } finally {

@@ -76,6 +76,7 @@ test('startup recovery releases interrupted collection and drafting rooms', () =
     { roleId: 'aria', participation: 'required', status: 'pending' },
   ])
   assert.equal(store.getRoom(roomId)?.phase, 'collecting-decisions')
+  assert.equal(store.getRoom(roomId)?.scenes.some(scene => scene.speaker === 'player'), false, '提交阶段玩家发言不落盘')
   const recovered = new Store(path)
   assert.equal(recovered.recoverInterruptedRooms(), 1)
   assert.equal(recovered.getRoom(roomId)?.phase, 'awaiting-player-input')
@@ -97,7 +98,7 @@ test('cancelling an active turn ignores late worker results', async () => {
   const room = runtime.get(roomId)
   assert.equal(room.phase, 'awaiting-player-input')
   assert.equal(room.draft, undefined)
-  assert.equal(room.scenes.length, 2, '取消回合不发布正文，只有开局 scene + 玩家气泡')
+  assert.equal(room.scenes.length, 1, '取消回合不发布正文：玩家发言只在正式成稿发布时落盘，开局 scene 外无残留')
 })
 
 test('a second submission cannot overlap an active Room turn', async () => {
