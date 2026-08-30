@@ -145,6 +145,58 @@ public final class CoreDataServerTest {
         }
     }
 
+    @Test public void utf8PlayerAndNpcSpeechBodiesReachCoreUnchanged() throws Exception {
+        CoreDataServer server = startServer("secret");
+        final java.util.List<String> receivedPaths = new java.util.ArrayList<>();
+        final java.util.List<String> receivedBodies = new java.util.ArrayList<>();
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"POST\",\"pattern\":\"/api/chat/approve-speech\",\"owner\":\"core\",\"capability\":\"room.command\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"chat.speech.approve\"}"
+                + "]}", null));
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApi(String method, String path, java.util.Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                receivedPaths.add(path);
+                receivedBodies.add(bodyJson);
+                resultConsumer.accept("{\"status\":200,\"body\":\"{\\\"ok\\\":true}\"}");
+            }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { }
+        });
+        try {
+            String playerBody = "{\"id\":\"turn-1\",\"type\":\"submit-text\",\"payload\":{\"text\":\"玩家推门而入。\"}}";
+            HttpURLConnection player = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/core/commands").openConnection();
+            player.setRequestMethod("POST");
+            player.setRequestProperty("x-core-nonce", "secret");
+            player.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            player.setDoOutput(true);
+            byte[] playerBytes = playerBody.getBytes(StandardCharsets.UTF_8);
+            player.setFixedLengthStreamingMode(playerBytes.length);
+            try (OutputStream output = player.getOutputStream()) { output.write(playerBytes); }
+            assertEquals(200, player.getResponseCode());
+            readAll(player.getInputStream());
+            player.disconnect();
+
+            String npcBody = "{\"text\":\"欢迎来到酒馆，旅人。\"}";
+            HttpURLConnection npc = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + "/api/chat/approve-speech").openConnection();
+            npc.setRequestMethod("POST");
+            npc.setRequestProperty("x-core-nonce", "secret");
+            npc.setRequestProperty("Content-Type", "application/json");
+            npc.setDoOutput(true);
+            byte[] npcBytes = npcBody.getBytes(StandardCharsets.UTF_8);
+            npc.setFixedLengthStreamingMode(npcBytes.length);
+            try (OutputStream output = npc.getOutputStream()) { output.write(npcBytes); }
+            assertEquals(200, npc.getResponseCode());
+            readAll(npc.getInputStream());
+            npc.disconnect();
+
+            assertEquals(java.util.Arrays.asList("/api/core/commands", "/api/chat/approve-speech"), receivedPaths);
+            assertEquals(java.util.Arrays.asList(playerBody, npcBody), receivedBodies);
+        } finally {
+            server.stop();
+        }
+    }
+
     @Test public void oversizedBodyReturns413() throws Exception {
         CoreDataServer server = startServer("secret");
         server.setCommandForwarder(new CoreDataServer.CommandForwarder() {

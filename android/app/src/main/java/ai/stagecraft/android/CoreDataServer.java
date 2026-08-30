@@ -2,9 +2,8 @@ package ai.stagecraft.android;
 
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
@@ -211,8 +210,8 @@ public final class CoreDataServer {
     private void handle(Socket socket) {
         try (socket) {
             socket.setSoTimeout(30_000);
-            BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII), 8192);
-            String requestLine = reader.readLine();
+            InputStream input = socket.getInputStream();
+            String requestLine = readHttpLine(input);
             if (requestLine == null) return;
             String[] parts = requestLine.split(" ");
             if (parts.length < 2) { respond(socket, 400, "text/plain", "bad request"); return; }
@@ -220,7 +219,7 @@ public final class CoreDataServer {
             String path = parts[1];
             Map<String, String> headers = new java.util.HashMap<>();
             String line;
-            while ((line = reader.readLine()) != null && !line.isEmpty()) {
+            while ((line = readHttpLine(input)) != null && !line.isEmpty()) {
                 int colon = line.indexOf(':');
                 if (colon > 0) headers.put(line.substring(0, colon).trim().toLowerCase(Locale.ROOT), line.substring(colon + 1).trim());
             }
@@ -286,7 +285,7 @@ public final class CoreDataServer {
                     respond(socket, 415, "application/json", "{\"error\":{\"code\":\"unsupported_media_type\",\"message\":\"commands requires application/json\"}}");
                     return;
                 }
-                String body = readBody(reader, headers);
+                String body = readBody(input, headers);
                 if (body == null) {
                     respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
                     return;
@@ -302,7 +301,7 @@ public final class CoreDataServer {
                     respond(socket, 415, "application/json", "{\"error\":{\"code\":\"unsupported_media_type\",\"message\":\"cancel requires application/json\"}}");
                     return;
                 }
-                String body = readBody(reader, headers);
+                String body = readBody(input, headers);
                 if (body == null) {
                     respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
                     return;
@@ -321,7 +320,7 @@ public final class CoreDataServer {
                     respond(socket, 415, "application/json", "{\"error\":{\"code\":\"unsupported_media_type\",\"message\":\"ui/action requires application/json\"}}");
                     return;
                 }
-                String body = readBody(reader, headers);
+                String body = readBody(input, headers);
                 if (body == null) {
                     respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
                     return;
@@ -347,7 +346,7 @@ public final class CoreDataServer {
                             return;
                         }
                         // 读 body 并转发（GET 无 body；POST body 已由前置分支消费的不在此）
-                        String businessBody = readBody(reader, headers);
+                        String businessBody = readBody(input, headers);
                         if (businessBody == null) {
                             respond(socket, 413, "application/json", "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"body exceeds " + MAX_BODY_BYTES + " bytes\"}}");
                             return;
@@ -540,18 +539,33 @@ public final class CoreDataServer {
         return "application/json".equals(normalized);
     }
 
-    /** 读取 POST body；超过上限返回 null（调用方回 413）。 */
-    private String readBody(BufferedReader reader, Map<String, String> headers) throws IOException {
+    /** HTTP 头是 ASCII；逐字节读取可避免字符 Reader 预取并吞掉后续 UTF-8 body。 */
+    private static String readHttpLine(InputStream input) throws IOException {
+        StringBuilder line = new StringBuilder();
+        int current;
+        while ((current = input.read()) >= 0) {
+            if (current == '\n') {
+                int length = line.length();
+                if (length > 0 && line.charAt(length - 1) == '\r') line.setLength(length - 1);
+                return line.toString();
+            }
+            line.append((char) (current & 0xff));
+        }
+        return line.length() == 0 ? null : line.toString();
+    }
+
+    /** 读取 POST body；Content-Length 是字节数，正文按 UTF-8 解码。 */
+    private String readBody(InputStream input, Map<String, String> headers) throws IOException {
         long length = Long.parseLong(headers.getOrDefault("content-length", "0"));
-        if (length > MAX_BODY_BYTES) return null;
-        char[] buffer = new char[(int) length];
+        if (length < 0 || length > MAX_BODY_BYTES) return null;
+        byte[] buffer = new byte[(int) length];
         int offset = 0;
         while (offset < length) {
-            int read = reader.read(buffer, offset, (int) (length - offset));
+            int read = input.read(buffer, offset, (int) (length - offset));
             if (read < 0) break;
             offset += read;
         }
-        return new String(java.util.Arrays.copyOfRange(buffer, 0, offset));
+        return new String(buffer, 0, offset, StandardCharsets.UTF_8);
     }
 
     private void respond(Socket socket, int status, String contentType, String body) {

@@ -83,6 +83,29 @@ public final class CoreNativeBridgeTest {
         assertTrue(result.get().contains("\"ok\":true"));
     }
 
+    @Test public void asyncStreamFramesDoNotSuppressTerminalResult() throws Exception {
+        CoreNativeBridge bridge = new CoreNativeBridge(guard("model.request"));
+        bridge.registerAsync("model.request", (operation, input, callback) -> {
+            new Thread(() -> {
+                try {
+                    callback.onResult(new JSONObject().put("requestId", "r1").put("streamPayload", "{\"choices\":[]}"));
+                    callback.onResult(new JSONObject().put("requestId", "r1").put("streamComplete", true));
+                } catch (Exception error) { callback.onError(error.getMessage()); }
+            }).start();
+            return null;
+        });
+        java.util.List<String> results = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(2);
+        bridge.invokeAsync("model.request", "{\"requestId\":\"r1\"}", new CoreNativeBridge.Callback() {
+            @Override public void onResult(JSONObject value) { results.add(value.toString()); latch.countDown(); }
+            @Override public void onError(String message) { latch.countDown(); }
+        });
+        assertTrue("stream frame and terminal result must both be delivered", latch.await(2, java.util.concurrent.TimeUnit.SECONDS));
+        assertEquals(2, results.size());
+        assertTrue(results.get(0).contains("streamPayload"));
+        assertTrue(results.get(1).contains("\"streamComplete\":true"));
+    }
+
     @Test public void asyncTimeoutReportsBridgeTimeout() throws Exception {
         CoreNativeBridge bridge = new CoreNativeBridge(guard("model.request"), 100, System::currentTimeMillis);
         bridge.registerAsync("model.request", (operation, input, callback) -> {

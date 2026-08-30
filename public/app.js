@@ -1943,12 +1943,22 @@ async function bootApp() {
   if (readAutoUpdatePref()) void checkForUpdatesSilent()
 }
 bootApp()
-// Core Event 通道先只更新客户端缓存；RoomSnapshot SSE 由上方合并的 /api/stream 驱动。
+// Core Event 通道更新客户端缓存。Android gateway 不承载旧 /api/stream（该路由返回 410），
+// 因此本地 APK 还要在权威 Core 事件后重新读取 RoomSnapshot，才能显示异步生成的 NPC 台词。
+let coreRoomRefreshTimer = null
+function scheduleCoreRoomRefresh() {
+  if (!window.__STAGECRAFT_LOCAL__) return
+  clearTimeout(coreRoomRefreshTimer)
+  coreRoomRefreshTimer = setTimeout(() => refreshRoom().catch(error => console.error('[StageCraft] Core event room refresh failed', error)), 80)
+}
 coreClient.subscribe(event => {
+  if (event.type === 'core.resync') scheduleCoreRoomRefresh()
   if (event.revision == null || !coreClient.view) return
   if (event.type === 'state.changed' || event.type === 'workflow.changed' || event.type === 'interaction.created') {
     coreClient.getView().catch(() => {})
   }
+  // domain/model/error events cover successful speech, auto-publish and generation failure.
+  if (event.type === 'domain.event' || event.type === 'model.completed' || event.type === 'error') scheduleCoreRoomRefresh()
 })
 
 // ── 思维链订阅与设置（thinking 事件已并入 /api/stream）──

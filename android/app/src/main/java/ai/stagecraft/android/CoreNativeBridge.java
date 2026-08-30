@@ -98,7 +98,8 @@ public final class CoreNativeBridge {
 
     /**
      * 异步调用入口。回调 id 由调用方分配；每次调用返回一个 requestId。
-     * 超时：handler 未在 timeoutMs 内首次回调 → onError("bridge_timeout")。
+     * 超时：handler 未在 timeoutMs 内交付终态回调 → onError("bridge_timeout")；
+     * streamPayload 是可重复的中间帧，不会结束请求。
      */
     public String invokeAsync(String operation, String inputJson, Callback callback) {
         if (operation == null || operation.length() > MAX_OPERATION_LENGTH) {
@@ -135,8 +136,14 @@ public final class CoreNativeBridge {
         Runnable returned = invoker.invoke(operation, input, new Callback() {
             @Override public void onResult(JSONObject result) {
                 if (done[0]) return;
-                done[0] = true;
-                cancelHandle[0] = null; // 已结束，取消句柄失效
+                // model.request may emit many streamPayload frames before one terminal result.
+                // Forward frames without settling the bridge; otherwise the first SSE chunk drops
+                // streamComplete and leaves the JavaScript model promise pending forever.
+                boolean streamFrame = result != null && result.has("streamPayload");
+                if (!streamFrame) {
+                    done[0] = true;
+                    cancelHandle[0] = null; // 已结束，取消句柄失效
+                }
                 callback.onResult(result);
             }
 

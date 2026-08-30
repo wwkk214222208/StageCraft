@@ -593,7 +593,9 @@ public final class CoreService extends Service {
         }
 
         @JavascriptInterface public void invokeAsync(String operation, String inputJson, String callbackId) {
-            String requestId = bridge.invokeAsync(operation, inputJson, new CoreNativeBridge.Callback() {
+            // invokeAsync callbacks carry only stream payloads and the terminal result. A separate
+            // "accepted" callback resolves the JS model promise before AndroidModelTransport finishes.
+            bridge.invokeAsync(operation, inputJson, new CoreNativeBridge.Callback() {
                 @Override public void onResult(org.json.JSONObject result) {
                     deliverAsync(callbackId, result.toString());
                 }
@@ -602,11 +604,6 @@ public final class CoreService extends Service {
                     deliverAsync(callbackId, errorMessageJson(message));
                 }
             });
-            if (!requestId.isEmpty()) {
-                try {
-                    deliverAsync(callbackId, new JSONObject().put("requestId", requestId).toString());
-                } catch (Exception ignored) { }
-            }
         }
 
         private void deliverAsync(String callbackId, String resultJson) {
@@ -614,7 +611,7 @@ public final class CoreService extends Service {
             main.post(() -> {
                 if (coreWebView != null) {
                     coreWebView.evaluateJavascript(
-                        "window.CoreNativeResult && window.CoreNativeResult.handle(" + JSONObject.quote(callbackId) + "," + JSONObject.quote(resultJson) + ")", null);
+                        "window.StageCraftNativeResult && window.StageCraftNativeResult.handle(" + JSONObject.quote(callbackId) + "," + JSONObject.quote(resultJson) + ")", null);
                 }
             });
         }
