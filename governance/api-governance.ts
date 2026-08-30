@@ -20,7 +20,7 @@
  *   - 未关闭（open）：仍处于迁移/修复中，报告与治理检查会要求覆盖。
  */
 
-import type { ApiMethod, ApiRoute } from '../src/api-route-registry.ts'
+import type { ApiMethod } from '../src/api-route-registry.ts'
 
 /** 路由身份：与运行时 registry 的 (method, pattern) 精确对应。 */
 export interface RouteIdentity {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 治理层独立检查脚本（不参与运行时测试，不阻塞生产构建）。
+ * 治理层独立检查脚本（独立于运行时测试，但已接入构建：package.json pretest 自动执行）。
  *
  * 与运行时契约分离的三条护栏：
  *  1. 双向完整性：每条治理条目引用的 (method, pattern) 必须真实存在于运行时 API_ROUTES；
@@ -9,7 +9,8 @@
  *  3. 依赖方向：governance/ 不得被 src/ 或资产生成脚本（scripts/generate-*.mjs）import。
  *
  * 用法：node --experimental-strip-types scripts/check-governance.mjs
- * 退出码：0 = 通过；1 = 治理缺口（不阻塞运行时测试，但 CI 应单独跑它）。
+ * 接线：`npm test` 前经 pretest 自动执行（npm run check:governance）；CI 也可单独调用。
+ * 退出码：0 = 通过；1 = 治理缺口（阻塞 pretest / 测试流程，提醒修复后重跑）。
  */
 
 import { readFile, readdir } from 'node:fs/promises'
