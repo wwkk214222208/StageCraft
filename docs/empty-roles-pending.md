@@ -101,6 +101,7 @@
 - 结论：**Android 的 director-thinking 值"写了但模型请求完全不用"**——连桌面的妥协映射（`buildThinkingParams`）都没在 Android 落地。角色级 `setRoleThinking`（`room.roles[].thinkingStrength`）同理，仅存储、不生效
 
 ### 待办
+- [x] **处置决策（2026-08-30）**：**暂不处理**。理由：thinking 强度注入涉及多模型格式兼容的架构性改动（`buildThinkingParams` 家族映射 + Java transport 透传 + 提示词引导三条路径），当前除 DeepSeek 外其他模型实际使用者很少，假生效影响面可控；等模型生态明确后再决定补注入或降级 unsupported。**此条目保持 open，非紧急。**
 - [ ] **决策**：Android 是否补 thinking 注入（在 `toOpenAiBody` 复用 `buildThinkingParams(model, strength)`，需从 meta/room 读取档位）——补则解决"假生效"，不补则应将 director-thinking/setRoleThinking 降级为明确 unsupported 并隐藏 UI，避免误导
 - [ ] 补注入时注意：Android 请求经 Java transport（`AndroidModelTransport`），`reasoning_effort`/`thinking` 字段需确认能透传到 OpenAI 兼容端点（当前 `toOpenAiBody` 无白名单限制，字段可加）
 - [ ] 提示词引导路径（claude/unknown 家族）在 Android 同样缺失（system 提示词无 `promptGuidance` 后缀）——若补注入需一并考虑
