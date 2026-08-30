@@ -31,7 +31,9 @@ test('player can create and delete a role', () => {
   assert.ok(!runtime.get(roomId).roles.some(item => item.id === 'new-guy'))
   runtime.deleteRole(roomId, 'noel')
   runtime.deleteRole(roomId, 'mira')
-  assert.throws(() => runtime.deleteRole(roomId, 'aria'), /至少保留一个角色/)
+  // 允许删到空角色（互动式小说：无 NPC，玩家直接与导演交互）
+  runtime.deleteRole(roomId, 'aria')
+  assert.equal(runtime.get(roomId).roles.length, 0, '允许删空所有角色')
 })
 
 test('presence toggle updates role and participation roster', async () => {

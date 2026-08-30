@@ -1199,10 +1199,8 @@ export class Store implements MemoryStore {
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
   }
 
-  /** 玩家删除角色（至少保留一个角色） */
+  /** 玩家删除角色。允许删到空角色列表（互动式小说：玩家直接与导演交互，无 NPC）。 */
   deleteRole(roomId: string, roleId: string): void {
-    const count = this.db.prepare('SELECT COUNT(*) AS n FROM roles WHERE room_id = ?').get(roomId) as { n: number }
-    if (Number(count.n) <= 1) throw new Error('至少保留一个角色。')
     const result = this.db.prepare('DELETE FROM roles WHERE room_id = ? AND id = ?').run(roomId, roleId)
     if (Number(result.changes) !== 1) throw new Error('Role not found.')
     this.db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ?').run(roomId)
