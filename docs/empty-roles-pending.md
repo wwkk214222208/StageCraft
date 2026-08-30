@@ -139,3 +139,53 @@
 - 双端一致：桌面移除限制、Android 本就无限制（补非空校验）
 - 前端 `api()` 成功路径不受影响（响应多 room 字段无害）
 - 防御性校验仅拦异常输入，正常 UI 触发不到
+
+---
+
+## 八、剩余未处理项清单（PENDING，按处置状态分类）
+
+> 状态：**PENDING**。记录 2026-08-30 双端等价性审查中剩余未处理项。代码已修复 20+ 项（见本会话提交历史），以下为决策后保留/低优先项。
+
+### A. 响应形状类（无害超集，前端不消费，可对齐可不对齐）
+
+| 路由 | 差异 | 处置 |
+|---|---|---|
+| `turn.start` | Android 多 `view` 字段 | 保留（无害超集） |
+| `provider.save`/`delete` | Android 响应缺 `active` | 保留（前端不读，refreshRoom 拉 /api/room） |
+| `provider.list` | defaults 缺 `roleThinkingStrength`/`assistantThinkingStrength`；`hasApiKey` 不剔占位符 | 低优先（前端不消费两字段） |
+| `stories.list` | Android 元素多 `mode` | 保留（无害超集） |
+| `story.create` | Android 强加 `sceneTime`/`sceneLocation` 默认 | 低优先（前端按字段存在性判断可能差异） |
+| `story.get` | Android 缺 `playerCharacter ??=` 归一化 | 低优先（依赖存储端字段完整） |
+| `archive.list` | 桌面倒序，Android 存储序 | 保留（不影响遍历） |
+| `remote/revoke` | Android 多 `revoked:true` | 保留（无害） |
+| `version` | Android 多 `platform:"android"` | 保留（前端依赖区分 APK/桌面，有意） |
+| `chat.approve-speech` | Android 缺 `typeof==='object'` 守卫 | 低优先（store 内可选链安全，不崩） |
+
+### B. 功能差异（中等，未处理）
+
+| 路由 | 差异 | 处置 |
+|---|---|---|
+| `prompts/presets` GET | gameplayScenarios 未过滤 `userEditable` | 低优先（多下发不可编辑场景） |
+| `prompts/presets` PUT/DELETE | 不校验预设存在/`id==='default'`/modes 非空 | 低优先（错误处理差异） |
+| `billing` 模拟 | prices.put 无 normalizePrice；默认 prices 空表；`/api/usage` 恒 fake + 未初始化时 `billing:{}` | 保留（Android 本地模拟设计；前端不读 usage，无 UI 故障） |
+
+### C. 前端侧（非后端路由，未处理）
+
+| 项 | 说明 | 处置 |
+|---|---|---|
+| `/api/stream` 旧 SSE | app.js 仍 `new EventSource('/api/stream')`，Android 410 无降级重连 | 待前端迁移（阶段 4 目标） |
+| `/api/agent/capability` | 前端无消费者（note 要求"UI 必须容错"无对应代码） | 待前端接入或移除 |
+
+### D. 已保留项（用户裁决）
+
+| 项 | 裁决 |
+|---|---|
+| `POST /api/host/restart` 桌面 404 | 用户裁决"先不动"（Android 有、桌面无的反向差异，治标不治本） |
+| thinking 注入缺口（Android 模型请求无 thinking 参数） | 用户裁决"暂不处理"（其他模型使用者少；见第六节） |
+
+### E. 观察中（已修项的功能核实）
+
+- 空角色改动核实清单（见第三节）
+- player.character phase 移除观察点（见第七节）
+- 记忆软删/链（`62f2175`）与 reorder 完整性校验（`a86b26d`）真机验证
+- presets private-toggles 合并（`0d87f2a`）前端可见性验证
