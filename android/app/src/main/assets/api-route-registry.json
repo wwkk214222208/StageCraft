@@ -1,5 +1,5 @@
 {
-  "registryVersion": "1.0.0-gateb",
+  "registryVersion": "1.0.0",
   "generatedFrom": "src/api-route-registry.ts",
   "matchSemantics": {
     "method": "exact",
@@ -31,10 +31,7 @@
       "responseSchema": "CoreHealth@1.1",
       "handlerId": "core.health",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 1,
@@ -60,10 +57,7 @@
       "responseSchema": "CoreViewSnapshot@1",
       "handlerId": "core.view",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 2,
@@ -89,10 +83,7 @@
       "responseSchema": "CommandReceipt@1.1",
       "handlerId": "core.commands",
       "stream": null,
-      "note": "1.0 对端按协商版本整形为 {ok:true,view}（Q5 裁决）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "1.0 对端按协商版本整形为 {ok:true,view}。"
     },
     {
       "order": 3,
@@ -128,10 +119,7 @@
         "resume": "resync-then-incremental",
         "heartbeat": "15s comment line"
       },
-      "note": "1.0 对端收到旧 CoreEvent 形状（Q5 裁决）；gateway 只透传字节。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "1.0 对端收到旧 CoreEvent 形状；gateway 只透传字节。"
     },
     {
       "order": 4,
@@ -157,10 +145,7 @@
       "responseSchema": null,
       "handlerId": "core.cancel",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 5,
@@ -186,10 +171,7 @@
       "responseSchema": "CoreCapabilityList@1",
       "handlerId": "core.capabilities",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 6,
@@ -215,10 +197,7 @@
       "responseSchema": "UiActionResult@1",
       "handlerId": "core.ui.action",
       "stream": null,
-      "note": "裁决(accepted)：桌面 app-boot.ts 当前未实现该路由（前端调用即 404，HOST-PARITY 实证三），W4 需在共享 handler 中补齐。",
-      "adjudication": "accepted",
-      "fixPackage": "W4（共享 handler 补齐桌面实现）",
-      "fixDeadline": "Gate D 前"
+      "note": "桌面 app-boot.ts 当前未实现该路由（前端调用即 404）；共享 handler 需补齐。"
     },
     {
       "order": 7,
@@ -244,10 +223,7 @@
       "responseSchema": "PublicRoomSnapshot@1",
       "handlerId": "room.snapshot",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 8,
@@ -273,10 +249,7 @@
       "responseSchema": null,
       "handlerId": "room.config",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 9,
@@ -302,10 +275,7 @@
       "responseSchema": null,
       "handlerId": "room.scene",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 10,
@@ -331,10 +301,7 @@
       "responseSchema": null,
       "handlerId": "room.lore",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 11,
@@ -360,10 +327,7 @@
       "responseSchema": null,
       "handlerId": "turn.start",
       "stream": null,
-      "note": "非幂等；断线后标记 unknown-after-disconnect，禁止自动重放（§3.3/§7.2）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "非幂等；断线后标记 unknown-after-disconnect，禁止自动重放（§3.3/§7.2）。"
     },
     {
       "order": 12,
@@ -389,10 +353,7 @@
       "responseSchema": null,
       "handlerId": "turn.cancel",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 13,
@@ -418,10 +379,7 @@
       "responseSchema": null,
       "handlerId": "workflow.approve",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 14,
@@ -447,10 +405,7 @@
       "responseSchema": null,
       "handlerId": "workflow.consult",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 15,
@@ -476,10 +431,7 @@
       "responseSchema": null,
       "handlerId": "workflow.consult.finish",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 16,
@@ -505,10 +457,7 @@
       "responseSchema": null,
       "handlerId": "workflow.redraft",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 17,
@@ -534,10 +483,7 @@
       "responseSchema": null,
       "handlerId": "workflow.reactions.reconsider",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 18,
@@ -563,10 +509,7 @@
       "responseSchema": null,
       "handlerId": "workflow.world-change.approve",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 19,
@@ -592,10 +535,7 @@
       "responseSchema": null,
       "handlerId": "workflow.world-change.reject",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 20,
@@ -621,10 +561,7 @@
       "responseSchema": null,
       "handlerId": "state.rollback",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 21,
@@ -650,10 +587,7 @@
       "responseSchema": null,
       "handlerId": "state.branch",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 22,
@@ -679,10 +613,7 @@
       "responseSchema": null,
       "handlerId": "state.scene-revision",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 23,
@@ -708,10 +639,7 @@
       "responseSchema": null,
       "handlerId": "chat.speak",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 24,
@@ -737,10 +665,7 @@
       "responseSchema": null,
       "handlerId": "chat.speak-all",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 25,
@@ -766,10 +691,7 @@
       "responseSchema": null,
       "handlerId": "chat.retry",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 26,
@@ -795,10 +717,7 @@
       "responseSchema": null,
       "handlerId": "chat.approve-speech",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 27,
@@ -824,10 +743,7 @@
       "responseSchema": null,
       "handlerId": "chat.reject-speech",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 28,
@@ -853,10 +769,7 @@
       "responseSchema": null,
       "handlerId": "chat.director-chat",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 29,
@@ -882,10 +795,7 @@
       "responseSchema": null,
       "handlerId": "chat.director-decide",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 30,
@@ -911,10 +821,7 @@
       "responseSchema": null,
       "handlerId": "director.proceed",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 31,
@@ -940,10 +847,7 @@
       "responseSchema": null,
       "handlerId": "director.retry",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 32,
@@ -969,10 +873,7 @@
       "responseSchema": null,
       "handlerId": "director.setting",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 33,
@@ -998,10 +899,7 @@
       "responseSchema": null,
       "handlerId": "role.create",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 34,
@@ -1027,10 +925,7 @@
       "responseSchema": null,
       "handlerId": "role.delete",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 35,
@@ -1056,10 +951,7 @@
       "responseSchema": null,
       "handlerId": "role.avatar",
       "stream": null,
-      "note": "头像字节随请求体进入 Core，经 Core 文件端口落盘；主进程不经手（§5.3）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "头像字节随请求体进入 Core，经 Core 文件端口落盘；主进程不经手（§5.3）。"
     },
     {
       "order": 36,
@@ -1085,10 +977,7 @@
       "responseSchema": null,
       "handlerId": "role.presence",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 37,
@@ -1114,10 +1003,7 @@
       "responseSchema": null,
       "handlerId": "role.reorder",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 38,
@@ -1143,10 +1029,7 @@
       "responseSchema": null,
       "handlerId": "role.state",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 39,
@@ -1172,10 +1055,7 @@
       "responseSchema": null,
       "handlerId": "role.intervene",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 40,
@@ -1201,10 +1081,7 @@
       "responseSchema": null,
       "handlerId": "role.thinking",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 41,
@@ -1230,10 +1107,7 @@
       "responseSchema": "RoleMemories@1",
       "handlerId": "role.memories.list",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 42,
@@ -1259,10 +1133,7 @@
       "responseSchema": null,
       "handlerId": "role.memories.upsert",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 43,
@@ -1288,10 +1159,7 @@
       "responseSchema": null,
       "handlerId": "role.memories.reorder",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 44,
@@ -1317,10 +1185,7 @@
       "responseSchema": null,
       "handlerId": "role.memories.retract",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 45,
@@ -1346,10 +1211,7 @@
       "responseSchema": null,
       "handlerId": "role.memories.supersede",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 46,
@@ -1375,10 +1237,7 @@
       "responseSchema": null,
       "handlerId": "role.memories.update",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 47,
@@ -1404,10 +1263,7 @@
       "responseSchema": null,
       "handlerId": "player.character",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 48,
@@ -1433,10 +1289,7 @@
       "responseSchema": null,
       "handlerId": "player.avatar",
       "stream": null,
-      "note": "同 roles/avatar：字节进 Core 文件端口。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "同 roles/avatar：字节进 Core 文件端口。"
     },
     {
       "order": 49,
@@ -1462,10 +1315,7 @@
       "responseSchema": "ProviderMetaView@1",
       "handlerId": "provider.list",
       "stream": null,
-      "note": "响应剔除 apiKey、补 hasApiKey（现有契约）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "响应剔除 apiKey、补 hasApiKey（现有契约）。"
     },
     {
       "order": 50,
@@ -1491,10 +1341,7 @@
       "responseSchema": null,
       "handlerId": "provider.save",
       "stream": null,
-      "note": "apiKey 只落 Core 进程 AndroidSecretStore；Core absent 时恢复页明示不可编辑（Q10 裁决）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "apiKey 只落 Core 进程 AndroidSecretStore；Core absent 时恢复页明示不可编辑。"
     },
     {
       "order": 51,
@@ -1520,10 +1367,7 @@
       "responseSchema": null,
       "handlerId": "provider.delete",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 52,
@@ -1549,10 +1393,7 @@
       "responseSchema": null,
       "handlerId": "provider.discover",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 53,
@@ -1578,10 +1419,7 @@
       "responseSchema": null,
       "handlerId": "provider.default-role",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 54,
@@ -1607,10 +1445,7 @@
       "responseSchema": null,
       "handlerId": "provider.director",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 55,
@@ -1636,10 +1471,7 @@
       "responseSchema": null,
       "handlerId": "provider.director-thinking",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 56,
@@ -1665,10 +1497,7 @@
       "responseSchema": null,
       "handlerId": "billing.summary",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 57,
@@ -1694,10 +1523,7 @@
       "responseSchema": null,
       "handlerId": "billing.prices.get",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 58,
@@ -1723,10 +1549,7 @@
       "responseSchema": null,
       "handlerId": "billing.prices.put",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 59,
@@ -1752,10 +1575,7 @@
       "responseSchema": null,
       "handlerId": "billing.reset",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 60,
@@ -1781,10 +1601,7 @@
       "responseSchema": null,
       "handlerId": "billing.usage",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 61,
@@ -1810,10 +1627,7 @@
       "responseSchema": null,
       "handlerId": "story.list",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 62,
@@ -1839,10 +1653,7 @@
       "responseSchema": null,
       "handlerId": "story.create",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 63,
@@ -1868,10 +1679,7 @@
       "responseSchema": null,
       "handlerId": "story.delete",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 64,
@@ -1897,10 +1705,7 @@
       "responseSchema": null,
       "handlerId": "story.get",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 65,
@@ -1926,10 +1731,7 @@
       "responseSchema": null,
       "handlerId": "story.save",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 66,
@@ -1955,10 +1757,7 @@
       "responseSchema": null,
       "handlerId": "story.save-as",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 67,
@@ -1984,10 +1783,7 @@
       "responseSchema": null,
       "handlerId": "story.import",
       "stream": null,
-      "note": "content-type application/zip；W4 抽取时保留 zip 解析在可移植 handler 内。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "content-type application/zip；zip 解析保留在可移植 handler 内。"
     },
     {
       "order": 68,
@@ -2013,10 +1809,7 @@
       "responseSchema": null,
       "handlerId": "story.export",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 69,
@@ -2042,10 +1835,7 @@
       "responseSchema": null,
       "handlerId": "story.sync-role",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 70,
@@ -2071,10 +1861,7 @@
       "responseSchema": null,
       "handlerId": "story.sync-roles",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 71,
@@ -2100,10 +1887,7 @@
       "responseSchema": null,
       "handlerId": "prompt.presets.list",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 72,
@@ -2129,10 +1913,7 @@
       "responseSchema": null,
       "handlerId": "prompt.presets.put",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 73,
@@ -2158,10 +1939,7 @@
       "responseSchema": null,
       "handlerId": "prompt.presets.delete",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 74,
@@ -2189,10 +1967,7 @@
       "responseSchema": null,
       "handlerId": "prompt.presets.post",
       "stream": null,
-      "note": "裁决(accepted)：仅 Android shim 手抄存在，桌面与前端均无此调用（漂移实证，HOST-PARITY §3）；随 shim 删除，不迁移。",
-      "adjudication": "accepted",
-      "fixPackage": "W6（随 shim 删除，不迁移）",
-      "fixDeadline": "Gate D"
+      "note": "仅 Android shim 手抄存在，桌面与前端均无此调用；随 shim 删除，不迁移。"
     },
     {
       "order": 75,
@@ -2218,10 +1993,7 @@
       "responseSchema": null,
       "handlerId": "prompt.presets.export",
       "stream": null,
-      "note": "裁决(accepted)：桌面已实现，shim 缺失（HOST-PARITY 实证四），Android 走共享 handler 后自然补齐。",
-      "adjudication": "accepted",
-      "fixPackage": "W4（共享 handler 补齐 shim 缺失）",
-      "fixDeadline": "Gate D 前"
+      "note": "桌面已实现，shim 缺失；Android 走共享 handler 后自然补齐。"
     },
     {
       "order": 76,
@@ -2247,10 +2019,7 @@
       "responseSchema": null,
       "handlerId": "prompt.private-toggles.get",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 77,
@@ -2276,10 +2045,7 @@
       "responseSchema": null,
       "handlerId": "prompt.private-toggles.put",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 78,
@@ -2305,10 +2071,7 @@
       "responseSchema": null,
       "handlerId": "prompt.import-st",
       "stream": null,
-      "note": "ST 预设转换为纯 TS 共享实现；shim 缺失由共享 handler 补齐。",
-      "adjudication": "accepted",
-      "fixPackage": "W4（共享 handler 补齐 shim 缺失）",
-      "fixDeadline": "Gate D 前"
+      "note": "ST 预设转换为纯 TS 共享实现；shim 缺失由共享 handler 补齐。"
     },
     {
       "order": 79,
@@ -2334,10 +2097,7 @@
       "responseSchema": null,
       "handlerId": "archive.export",
       "stream": null,
-      "note": "裁决(accepted)：存档文件存储归属 Core 进程端口（与 §5.3 单一写入者一致）；主进程只承担 SAF 选择器桥，不承载该 API。",
-      "adjudication": "accepted",
-      "fixPackage": "W5（StageCraftArchive 迁入 Core 进程端口）",
-      "fixDeadline": "Gate D 前"
+      "note": "存档文件存储归属 Core 进程端口（与 §5.3 单一写入者一致）；主进程只承担 SAF 选择器桥，不承载该 API。"
     },
     {
       "order": 80,
@@ -2363,10 +2123,7 @@
       "responseSchema": null,
       "handlerId": "archive.list",
       "stream": null,
-      "note": "同上；StageCraftArchive 随 W5 迁入 Core 进程。",
-      "adjudication": "accepted",
-      "fixPackage": "W5（StageCraftArchive 迁入 Core 进程端口）",
-      "fixDeadline": "Gate D 前"
+      "note": "同上；StageCraftArchive 迁入 Core 进程。"
     },
     {
       "order": 81,
@@ -2392,10 +2149,7 @@
       "responseSchema": null,
       "handlerId": "archive.save",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 82,
@@ -2421,10 +2175,7 @@
       "responseSchema": null,
       "handlerId": "archive.load",
       "stream": null,
-      "note": "写入 Core state，必须由 Core 串行执行（§7.1）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "写入 Core state，必须由 Core 串行执行（§7.1）。"
     },
     {
       "order": 83,
@@ -2450,10 +2201,7 @@
       "responseSchema": null,
       "handlerId": "archive.delete",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 84,
@@ -2479,10 +2227,7 @@
       "responseSchema": null,
       "handlerId": "archive.import",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 85,
@@ -2508,10 +2253,7 @@
       "responseSchema": null,
       "handlerId": "creator.preview",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 86,
@@ -2537,10 +2279,7 @@
       "responseSchema": null,
       "handlerId": "creator.apply",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 87,
@@ -2566,10 +2305,7 @@
       "responseSchema": null,
       "handlerId": "creator.revert",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 88,
@@ -2595,10 +2331,7 @@
       "responseSchema": null,
       "handlerId": "creator.st-cards.import",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 89,
@@ -2624,10 +2357,7 @@
       "responseSchema": null,
       "handlerId": "host.remote.pairing-code",
       "stream": null,
-      "note": "裁决(accepted)：桌面未实现该路径（Android UI 专用宿主操作）；桌面返回稳定 unsupported_capability。",
-      "adjudication": "accepted",
-      "fixPackage": "W6（main-host handler；桌面返回稳定 unsupported_capability）",
-      "fixDeadline": "Gate D 前"
+      "note": "桌面未实现该路径（Android UI 专用宿主操作）；桌面返回稳定 unsupported_capability。"
     },
     {
       "order": 90,
@@ -2653,10 +2383,7 @@
       "responseSchema": null,
       "handlerId": "host.remote.revoke",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 91,
@@ -2682,10 +2409,7 @@
       "responseSchema": null,
       "handlerId": "host.remote.sync.get",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 92,
@@ -2711,10 +2435,7 @@
       "responseSchema": null,
       "handlerId": "host.remote.sync.put",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 93,
@@ -2740,10 +2461,7 @@
       "responseSchema": "VersionInfo@1",
       "handlerId": "host.version",
       "stream": null,
-      "note": "裁决(accepted)：含 coreBundleVersion 时由主进程经数据面聚合 Core health（Q8：Binder 只走摘要）。",
-      "adjudication": "accepted",
-      "fixPackage": "W6（coreBundleVersion 经数据面 health 聚合，Q8）",
-      "fixDeadline": "Gate D 前"
+      "note": "含 coreBundleVersion 时由主进程经数据面聚合 Core health（Binder 只走摘要）。"
     },
     {
       "order": 94,
@@ -2769,10 +2487,7 @@
       "responseSchema": null,
       "handlerId": "host.update.check",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 95,
@@ -2798,10 +2513,7 @@
       "responseSchema": null,
       "handlerId": "host.update.download",
       "stream": null,
-      "note": null,
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": null
     },
     {
       "order": 96,
@@ -2827,10 +2539,7 @@
       "responseSchema": null,
       "handlerId": "room.restart",
       "stream": null,
-      "note": "业务语义：重开剧本（与桌面一致）——清除当前回合/草稿/已批准正文，按 storyId/mode 重开房间。R13：原错误映射为 host.restart（重启 Core 进程）导致每次重开=Core 重启+数据面断连，已修正。",
-      "adjudication": "accepted",
-      "fixPackage": "R13（重开剧本语义修正）",
-      "fixDeadline": "Gate D 后"
+      "note": "业务语义：重开剧本（与桌面一致）——清除当前回合/草稿/已批准正文，按 storyId/mode 重开房间。"
     },
     {
       "order": 97,
@@ -2856,10 +2565,7 @@
       "responseSchema": null,
       "handlerId": "host.restart",
       "stream": null,
-      "note": "宿主重启（Core 进程/launch plan 变更生效）：生成新 launch plan 并重启 Core 进程（§4.3）。与业务重开剧本（/api/restart）分离。",
-      "adjudication": "accepted",
-      "fixPackage": "R13（与 /api/restart 语义分离）",
-      "fixDeadline": "Gate D 后"
+      "note": "宿主重启（Core 进程/launch plan 变更生效）：生成新 launch plan 并重启 Core 进程（§4.3）。与业务重开剧本（/api/restart）分离。"
     },
     {
       "order": 98,
@@ -2887,10 +2593,7 @@
       "responseSchema": null,
       "handlerId": "agent.capability",
       "stream": null,
-      "note": "响应形状保持 {enabled,reason} 兼容；Android 端由 gateway 返回 unsupported_capability 时 UI 必须容错（W6 验证）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "响应形状保持 {enabled,reason} 兼容；Android 端由 gateway 返回 unsupported_capability 时 UI 必须容错。"
     },
     {
       "order": 99,
@@ -2918,10 +2621,7 @@
       "responseSchema": null,
       "handlerId": "agent.session.get",
       "stream": null,
-      "note": "远程模式仅当桌面端声明 agent.dsh capability 时可代理（Q2）；Android 本地返回 unsupported_capability。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "Android 本地返回 unsupported_capability；远程模式仅当桌面端声明 agent.dsh capability 时可代理。"
     },
     {
       "order": 100,
@@ -2949,10 +2649,7 @@
       "responseSchema": null,
       "handlerId": "agent.session.post",
       "stream": null,
-      "note": "远程模式仅当桌面端声明 agent.dsh capability 时可代理（Q2）；Android 本地返回 unsupported_capability。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "Android 本地返回 unsupported_capability；远程模式仅当桌面端声明 agent.dsh capability 时可代理。"
     },
     {
       "order": 101,
@@ -2980,10 +2677,7 @@
       "responseSchema": null,
       "handlerId": "agent.session.delete",
       "stream": null,
-      "note": "远程模式仅当桌面端声明 agent.dsh capability 时可代理（Q2）；Android 本地返回 unsupported_capability。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "Android 本地返回 unsupported_capability；远程模式仅当桌面端声明 agent.dsh capability 时可代理。"
     },
     {
       "order": 102,
@@ -3011,10 +2705,7 @@
       "responseSchema": null,
       "handlerId": "agent.archive",
       "stream": null,
-      "note": "DSH 会话归档；Android 本地返回 unsupported_capability（§1.4）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "DSH 会话归档；Android 本地返回 unsupported_capability。"
     },
     {
       "order": 103,
@@ -3042,10 +2733,7 @@
       "responseSchema": null,
       "handlerId": "agent.history",
       "stream": null,
-      "note": "DSH 会话历史；Android 本地返回 unsupported_capability（§1.4）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "DSH 会话历史；Android 本地返回 unsupported_capability。"
     },
     {
       "order": 104,
@@ -3073,10 +2761,7 @@
       "responseSchema": null,
       "handlerId": "agent.message",
       "stream": null,
-      "note": "DSH 会话消息；Android 本地返回 unsupported_capability（§1.4）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "DSH 会话消息；Android 本地返回 unsupported_capability。"
     },
     {
       "order": 105,
@@ -3104,10 +2789,7 @@
       "responseSchema": null,
       "handlerId": "agent.model",
       "stream": null,
-      "note": "DSH 会话模型选择；Android 本地返回 unsupported_capability（§1.4）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "DSH 会话模型选择；Android 本地返回 unsupported_capability。"
     },
     {
       "order": 106,
@@ -3135,10 +2817,7 @@
       "responseSchema": null,
       "handlerId": "agent.models",
       "stream": null,
-      "note": "DSH 会话模型目录；Android 本地返回 unsupported_capability（§1.4）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "DSH 会话模型目录；Android 本地返回 unsupported_capability。"
     },
     {
       "order": 107,
@@ -3166,10 +2845,7 @@
       "responseSchema": null,
       "handlerId": "agent.context",
       "stream": null,
-      "note": "裁决(accepted)：三端均未实现（HOST-PARITY 实证四的 404 项）；登记后 Android 得到稳定错误而非 404。",
-      "adjudication": "accepted",
-      "fixPackage": "W6（gateway 返回稳定 unsupported_capability，消除 404）",
-      "fixDeadline": "Gate D 前"
+      "note": "三端均未实现；登记后 Android 得到稳定错误而非 404。"
     },
     {
       "order": 108,
@@ -3206,10 +2882,7 @@
         "resume": "resync-then-incremental",
         "heartbeat": "none"
       },
-      "note": "迁移期由显式 adapter 转发到 /api/core/events 并按 event 名分发；UI 切换后删除（阶段 4）。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "迁移期由显式 adapter 转发到 /api/core/events 并按 event 名分发；UI 切换后删除（阶段 4）。"
     },
     {
       "order": 109,
@@ -3246,10 +2919,7 @@
         "resume": "resync-then-incremental",
         "heartbeat": "none"
       },
-      "note": "旧单频道 room SSE。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "旧单频道 room SSE。"
     },
     {
       "order": 110,
@@ -3286,10 +2956,7 @@
         "resume": "resync-then-incremental",
         "heartbeat": "none"
       },
-      "note": "旧单频道 thinking SSE。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "旧单频道 thinking SSE。"
     },
     {
       "order": 111,
@@ -3326,10 +2993,7 @@
         "resume": "resync-then-incremental",
         "heartbeat": "none"
       },
-      "note": "旧单频道 summary/debug SSE。",
-      "adjudication": null,
-      "fixPackage": null,
-      "fixDeadline": null
+      "note": "旧单频道 summary/debug SSE。"
     }
   ]
 }

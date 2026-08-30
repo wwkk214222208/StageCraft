@@ -1,6 +1,6 @@
 {
-  "$comment": "CP-W1 method-unknown 人工裁决表：前端字面量经变量中转（三元赋值后经 api(endpoint) 调用），扫描器无法静态绑定 method。每条给出裁决 method、证据与依据。Gate B 冻结后此表必须清零或逐条由调用点重构消除。",
-  "adjudications": [
+  "$comment": "method-unknown 调用点证据表：前端字面量经变量中转（三元赋值后经 api(endpoint) 调用），扫描器无法静态绑定 method。每条给出实际 method、证据与依据，供覆盖测试解析。这是测试输入证据，不是治理数据；治理数据在 governance/。",
+  "evidence": [
     {
       "path": "/api/chat/director-decide",
       "methods": ["POST"],
