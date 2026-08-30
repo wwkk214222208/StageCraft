@@ -25,6 +25,11 @@ This document is the reproducible certification contract for web, Android, DSH, 
 | Public card UI | Same manifest/intermediate render on Web and Android | Public synthetic ST/MVU fixture tests | Automated |
 | Private ST/MVU card | Full local acceptance if ignored `custom/` fixture is available | `private-st-mvu-acceptance.test.ts` | Fixture presence is detected; source stays untracked |
 
+Android device scope is intentionally explicit: the current project evidence covers FOA-AL00 / API 31 only.
+API 26–28, other API 29+ devices, release variants, and multi-device fault matrices are unverified and are
+not compatibility promises. A skipped device lane must remain a recorded `skip`, not be converted into a pass
+by documentation.
+
 ## Performance smoke limits
 
 The certification runner measures only deterministic synthetic/public data and reports elapsed milliseconds. It fails if a small compatibility compile/render case exceeds 2 seconds or if the generated DSH bundle contains private markers. These limits detect accidental regressions in CI; they are not claims about model latency, Android startup, or large private cards.

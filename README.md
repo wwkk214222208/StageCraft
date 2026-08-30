@@ -9,13 +9,14 @@
 - [docs/why-not-dsh.md](./docs/why-not-dsh.md) —— 为什么不在 dsh 上直接改造、而是另起运行时（架构决策）
 - [docs/creator-dsh-integration-audit.md](./docs/creator-dsh-integration-audit.md) —— 创作者工作台与 dsh 集成审计
 - [docs/certification-matrix.md](./docs/certification-matrix.md) —— 平台认证矩阵（含安卓 skip-gated 说明）
+- [docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md](./docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md) —— 后续增量修改、并发施工、评审与证据规范
 
 ## 项目定位
 
 StageCraft 是一个自托管、插件化的多角色角色扮演（RP）运行时，配套一个 Web 工作台。它想成为比 SillyTavern 更好上手的生态：创作者能低门槛地做角色和剧本，玩家不用配置、打开就能玩。
 
 - 名称：`stagecraft`，版本 `0.3.0`，`private`，协议 **AGPL-3.0-only**。
-- 运行形态：① 独立 Node 服务；② 作为 **dsh 插件**（经 `dsh-rp` 适配壳）；③ 安卓（远程模式 APK / Termux 本地，**当前暂不推荐**，UI 布局问题待修）。
+- 运行形态：① 独立 Node 服务；② 作为 **dsh 插件**（经 `dsh-rp` 适配壳）；③ 安卓远程模式与同 APK 本地 Core 模式。安卓本地模式目前只在 FOA-AL00 / API 31 上有真机证据，属于实验性支持，不承诺覆盖全部 Android 版本。
 
 ## 已实现
 
@@ -38,7 +39,7 @@ StageCraft 是一个自托管、插件化的多角色角色扮演（RP）运行�
 ## 待实现 / 规划中
 
 - **ST/MVU 兼容层**：ST 卡 → 可安装、版本化的 State Module（变量 / 自动化 / 世界书均为模块贡献）。当前为设计方向、部分落地（`src/compat/st-mvu.ts`），重度卡仍以文字导入为主。
-- **安卓本地运行 APK**：完全本地运行的安卓形态（不依赖远程服务）。当前安卓 UI 有严重布局问题、暂不推荐使用；远程模式 APK / Termux 本地为实验性形态。
+- **安卓本地运行 APK**：同 APK 内置独立 Core 进程、Gateway 和完整 Web UI，可不依赖远程服务运行。当前仅 FOA-AL00 / API 31 有真机证据；其他 Android 版本、release 变体和多设备故障矩阵未验证，由使用者自行承担风险。
 - **更丰富的剧情引擎**：在不破坏边界的前提下支持更灵活、可版本化的玩法定义与补丁。
 - **社区扩展与皮肤 / 一键分享分发**：开放 UI 扩展机制与内容分发。
 - **通用 Workflow 编排**：当前 Workflow Executor 负责固定定义的注册 / 投影 / 合法转换，不是通用自动业务编排器（见下文"当前限制"）。
@@ -77,7 +78,7 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 3. **玩法方案插件**（`CoreSolutionHost`）：注册固定、版本化的 Workflow Definition、只读房间投影、状态类别 / 投影、可撤销 Command Handler。默认 `StageCraftSolutionPlugin` 提供三条 StageCraft 流程、默认状态类别与群聊命令处理器。
 4. **核心-LLM 路由插件**：负责 `ModelRequest` / `ModelResult`（provider 路由、SSE、thinking、usage、超时、request-scoped 取消、错误归一化）。以 `requestId` 等待匹配结果、隔离迟到结果。
 
-**平台端口（Port）**：Core 通过小型端口使用时间、UUID、仓储、资源、秘密、文件选择、生命周期、模型传输。当前**已正式接入** `Clock`、`IdFactory`、`CoreStateRepository`；`AssetRepository` / `SecretStore` / `FilePicker` / `PlatformLifecycle` / `ModelTransport` 已定义稳定边界，**供后续 Human Plugin、Android 本地运行、UI Extension 阶段逐项接入**。Node / SQLite / HTTP 适配器在桌面组合根；浏览器 / 安卓可提供自身实现，**Core 源码不得直接依赖 Node 文件系统 / Android API / DOM / 平台密钥**。
+**平台端口（Port）**：Core 通过小型端口使用时间、UUID、仓储、资源、秘密、文件选择、生命周期、模型传输。`Clock`、`IdFactory`、`CoreStateRepository` 以及 Android 本地的资源、秘密、模型传输端口已经接入；Node / SQLite / HTTP 适配器在桌面组合根。浏览器 / 安卓可提供自身实现，**Core 源码不得直接依赖 Node 文件系统 / Android API / DOM / 平台密钥**。
 
 **状态模型**：状态类别可注册（默认 room / world / entities / narrative / memory / goals / workflow / runtime）。所有变化统一为 `StateEvent`，由 Reducer / Local Rules 产生新状态；`applyStateEvents` 先计算候选状态，再由 Repository **一次 SQLite 事务**提交状态 + 批量事件 + WorkflowInstance，成功后才更新内存并广播。模型只能返回结构化结果或事件提议，**不能直接写库或绕过状态校验**。
 
@@ -105,7 +106,7 @@ src/
   legacy-sandbox.ts          旧 sandbox（兼容）
   store.ts, model-gateway.ts, workers.ts, room-runtime.ts, st-card-import.ts
   prompts.ts, provider-config.ts, thinking-params.ts, types.ts, remote-access.ts
-android/                     安卓工程（远程模式 APK；本地运行在路线图中）
+android/                     安卓工程（远程模式 + 同 APK 本地独立 Core）
 dsh-rp/                      dsh 适配壳（见其 README）
 public/                      前端（原生 JS / CSS）
 stories/default/eldoria.json   默认剧本（含 eldoria.assets/ 角色肖像）
@@ -172,9 +173,9 @@ HOST=0.0.0.0 RP_REMOTE=1 RP_REMOTE_PAIRING_TTL_MS=300000 RP_REMOTE_SESSION_TTL_M
 
 - 远程模式 APK（连接你自己的StageCraft服务）：构建产物见 `android/` 工程。
 - Termux 本地跑：`bash start-android.sh`（脚本启动服务并打印局域网地址）；停止 `bash close-android.sh`。
-- 本地运行核心构建：`pnpm build:android-core`（即 `scripts/build-android-core.mjs`）。
+- 同 APK 本地 Core 构建：`pnpm build:android-core`（即 `scripts/build-android-core.mjs`），再按 `android/README.md` 执行 Gradle 构建与验证。
 
-> ⚠️ 安卓端**暂时不推荐使用**：当前存在较严重的 UI 布局问题，尚未经充分实测。玩家向说明见 `docs/玩家看我.md` 的「怎么开始」。
+> 安卓本地模式是实验性能力：当前真机证据限 FOA-AL00 / API 31。未验证的 Android 版本、release APK、旋转/前后台及其他设备不属于承诺支持范围；出现 Core 故障时使用内置恢复页、远程入口或保留的旧路径。
 
 > 注意：`custom/docs/` 目录**不进仓库**（已 ignore），里面是私有设计 / 交接 / 审计文档，请勿视为发布内容。
 

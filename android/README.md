@@ -1,6 +1,6 @@
 # StageCraft Android local and remote client
 
-This directory is the native Android host for the shared StageCraft Core protocol. It supports remote HTTP/SSE mode and the phase-five embedded browser Core path. The generated `embedded-core.js` executes the shared `CoreRuntimeSkeleton` protocol in the WebView; Java only owns lifecycle, media, pairing, and transport boundaries.
+This directory is the native Android host for the shared StageCraft Core protocol. It supports remote HTTP/SSE mode and the phase-six embedded Core process path. The generated `embedded-core.js` executes the shared StageCraft solution composition in the dedicated `:core` WebView process; Java only owns lifecycle, media, pairing, persistence, model transport, and bounded bridge ports.
 
 ## Local mode boundary
 
@@ -15,7 +15,16 @@ The embedded path is deliberately limited to the shared, platform-neutral Core s
 - `AndroidModelTransport` sends model requests and emits bounded SSE deltas; cancellation closes active connections.
 - `StageCraftArchive` imports/exports only bounded `stagecraft.json` ZIP archives and rejects unsafe archive content by requiring the canonical entry.
 - PNG card bytes are bounded and signature-checked before any import. JSON card parsing remains a Core/compatibility concern; Android only transports selected data.
-- Foreground/background state is forwarded to the local or remote human plugin. Core snapshots are persisted by the repository, so force-close recovery is based on durable state rather than WebView memory. Generation must be cancelled or moved to an Android foreground service by the final app composition root.
+- Foreground/background state is forwarded to the local or remote human plugin. Core snapshots are persisted by the repository, so force-close recovery is based on durable state rather than WebView memory. Client disconnects cancel request-scoped model work; long generation in a backgrounded app remains subject to Android process scheduling and is not promised as a foreground-service workload.
+
+## Support scope and migration status
+
+The repository-wide incremental change, review, evidence, and rollback rules are maintained in [`docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md`](../docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md). Android changes must follow that document before changing a route, bridge, process boundary, or stream-cancellation rule.
+
+- The local isolated-Core path is implemented and has been exercised on FOA-AL00 / API 31. Other Android versions, release variants, and multi-device failure matrices are unverified and are not a compatibility promise.
+- The main UI uses the same-origin Gateway path by default. The legacy page-local Core shim and generic core-native dispatch remain as an explicit migration fallback until the project records a Gate D switch decision.
+- The fallback is not a second business implementation: it exists only to recover from a Core/Gateway startup failure. New routes, protocol changes, or bug fixes must land in the shared registry/handler/fixture first.
+- A failed local Core must leave the host able to show the recovery page, edit plugin configuration, export diagnostics, and enter remote mode without clearing Core state or secrets.
 
 ## Security boundary
 

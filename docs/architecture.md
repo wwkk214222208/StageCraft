@@ -31,7 +31,7 @@ State → Human Interaction / Workflow Action → Core → LLM Route
 
 Core 通过小型平台端口使用时间、UUID、仓储、资源、秘密、文件选择、生命周期和模型传输能力。默认桌面组合根继续使用 Node/SQLite/HTTP 适配器；浏览器与 Android 可以提供自己的实现，不需要复制 Core、Workflow、审批或状态事务逻辑。Core 源码不得直接依赖 Node 文件系统、Android API、DOM 或平台密钥存储。
 
-当前正式接入 Core 的端口是 `Clock`、`IdFactory` 与 `CoreStateRepository`；`AssetRepository`、`SecretStore`、`FilePicker`、`PlatformLifecycle` 和 `ModelTransport` 已定义稳定边界，供后续 Human Plugin、Android 本地运行和 UI Extension 阶段逐项接入。Node 文件资源适配器放在 Core 之外，并限制所有路径不能逃逸资源根目录。
+当前正式接入 Core 的端口包括 `Clock`、`IdFactory`、`CoreStateRepository` 以及 Android 本地的资源、秘密和模型传输端口；Node 文件资源适配器仍放在 Core 之外，并限制所有路径不能逃逸资源根目录。Android 本地 Core 运行在独立 `:core` 进程，主进程只负责 Gateway、生命周期、插件管理和恢复入口。
 
 ## Workflow 边界
 
@@ -51,4 +51,4 @@ Core 通过小型平台端口使用时间、UUID、仓储、资源、秘密、�
 
 ## 当前完成状态与限制
 
-Core Runtime 的通用内核、插件容器、状态仓储、Workflow Registry/Executor、HTTP 人机插件和 LLM 路由边界已经进入正式启动链；StageCraft 的 Store-backed domain services 仍是当前业务状态变化的执行者，并通过 Core 投影与事务仓储保持一致。Workflow Executor 当前负责固定定义的注册、投影和合法转换，不是通用的自动业务编排器。旧 RoomRuntime 业务 facade 只为兼容测试和外部调用保留；显式 `LegacyRuntimeSolutionPlugin` 也仅用于兼容场景，生产组合根不安装它。未来仍需在不破坏这些边界的前提下继续收紧旧外部接口和迁移策略。
+Core Runtime 的通用内核、插件容器、状态仓储、Workflow Registry/Executor、HTTP 人机插件和 LLM 路由边界已经进入正式启动链；StageCraft 的 Store-backed domain services 仍是当前业务状态变化的执行者，并通过 Core 投影与事务仓储保持一致。Android 同 APK 独立 Core、Gateway、PluginManager 和恢复链已完成主体施工，当前仅有 FOA-AL00 / API 31 真机证据。Workflow Executor 当前负责固定定义的注册、投影和合法转换，不是通用的自动业务编排器。旧 RoomRuntime 业务 facade 只为兼容测试和外部调用保留；显式 `LegacyRuntimeSolutionPlugin` 也仅用于兼容场景，生产组合根不安装它。后续增量修改必须遵循 [`docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md`](./INCREMENTAL-UPDATE-WORK-RULES.zh.md)，并继续收紧旧外部接口和迁移策略。

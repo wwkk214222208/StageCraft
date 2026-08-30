@@ -182,7 +182,11 @@
     return result
   }
 
-  // ── 回退路由表（旧页面内 Core；Gate D 前保留，gateway 模式下不使用）──
+  // ── 回退路由表（旧页面内 Core；迁移期兼容入口，Gate D 后保留但 gateway 模式下不使用）──
+  // ⚠ 迁移期标记（R12 评审 #2）：此表是"页面内 Core 直连"的最后防线回退，仅在
+  // Gateway 不可用/旧 UI 触发时生效。Gate D 后不宣称"旧路径已完全移除"——保留为
+  // 兼容入口；:core 进程侧 CoreNativeBridge 已用严格 core-native allowlist（false），
+  // 主进程侧 legacyGenericDispatchEnabled 翻转后此表仍可路由但操作级校验拒绝跨 owner。
   const legacyRoutes = {
     /** GET 数据端点 */
     get: {
