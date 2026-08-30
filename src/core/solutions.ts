@@ -142,7 +142,13 @@ export function interactionFromRoom(room: WorkflowRoom): InteractionRequest | un
     if (room.phase === 'consulting-director') return textInteraction(room.id, 'director-consult', '与导演讨论', '说明需要调整的剧情、设定或草稿问题。', '发送')
     return undefined
   }
-  if (room.phase === 'awaiting-player-input') return roleSelectInteraction(room.id, room.roles ?? [])
+  // chat 模式：无在场角色时（互动式小说/角色全离场）不生成空的 role-select，
+  // 退回 text 交互让玩家直接输入行动（与导演模式「玩家行动」同语义，避免空下拉卡死）。
+  if (room.phase === 'awaiting-player-input') {
+    const presentRoles = (room.roles ?? []).filter(role => role.presence === 'present')
+    if (presentRoles.length === 0) return textInteraction(room.id, 'player-input', '玩家行动', '输入本轮行动或发言。', '提交')
+    return roleSelectInteraction(room.id, room.roles ?? [])
+  }
   if (room.phase === 'awaiting-approval') return approvalInteraction(room.id, 'speech-approval', '批准角色台词', '确认或编辑角色刚生成的台词。')
   if (room.phase === 'world-change-approval') return approvalInteraction(room.id, 'world-change-approval', '批准世界变更', '确认角色或导演提出的时间、地点或角色状态变化。')
   return undefined
