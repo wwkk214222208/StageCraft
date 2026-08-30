@@ -272,7 +272,13 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   // ── 角色 ──
   { handlerId: 'role.create', impl: (facade, body) => { facade.createRole(body.role ?? body); return ok({ ok: true }) } },
   { handlerId: 'role.delete', impl: (facade, body) => { facade.deleteRole(stringOf(body, 'roleId')); return ok({ ok: true }) } },
-  { handlerId: 'role.presence', impl: (facade, body) => { facade.setRolePresence(stringOf(body, 'roleId'), stringOf(body, 'presence')); return ok({ ok: true }) } },
+  { handlerId: 'role.presence', impl: (facade, body) => {
+    // 桌面契约：presence 白名单 present/absent/unavailable（app-boot.ts /api/roles/presence）
+    const presence = stringOf(body, 'presence')
+    if (!['present', 'absent', 'unavailable'].includes(presence)) return err('无效的在场状态。')
+    facade.setRolePresence(stringOf(body, 'roleId'), presence)
+    return ok({ ok: true })
+  } },
   { handlerId: 'role.thinking', impl: (facade, body) => {
     // 桌面/前端契约字段是 thinking（app-boot.ts /api/roles/thinking 读 body.thinking）；thinkingStrength 仅作旧调用方兼容回退。
     const thinking = stringOf(body, 'thinking') || stringOf(body, 'thinkingStrength')
@@ -280,7 +286,13 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     facade.setRoleThinking(stringOf(body, 'roleId'), thinking)
     return ok({ ok: true })
   } },
-  { handlerId: 'role.reorder', impl: (facade, body) => { facade.reorderRoles(stringArray(body, 'roleIds')); return ok({ ok: true }) } },
+  { handlerId: 'role.reorder', impl: (facade, body) => {
+    // 桌面契约：空 roleIds → 400「缺少角色顺序列表。」（app-boot.ts /api/roles/reorder）
+    const roleIds = stringArray(body, 'roleIds')
+    if (roleIds.length === 0) return err('缺少角色顺序列表。')
+    facade.reorderRoles(roleIds)
+    return ok({ ok: true })
+  } },
   { handlerId: 'role.state', impl: (facade, body) => { facade.setRoleCurrentState(stringOf(body, 'roleId'), stringOf(body, 'currentState')); return ok({ ok: true }) } },
   { handlerId: 'role.intervene', impl: (facade, body) => {
     // 桌面/前端契约是平铺字段（app-boot.ts /api/roles/intervene 读 body.providerId/modelOverride/
@@ -316,7 +328,14 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     return ok({ ok: true, portraitRef })
   } },
   { handlerId: 'role.memories.upsert', impl: (facade, body) => {
-    facade.storeNpcMemories(stringOf(body, 'roleId'), Array.isArray(body.entries) ? body.entries : [])
+    // 桌面契约：entries 每项必须是对象且 text 为非空字符串（solutions.ts store-memories 同源校验）
+    const roleId = stringOf(body, 'roleId')
+    const entries = Array.isArray(body.entries) ? body.entries : []
+    if (!roleId) return err('缺少角色 id。')
+    if (!entries.every(entry => entry !== null && typeof entry === 'object' && typeof (entry as { text?: unknown }).text === 'string' && Boolean((entry as { text: string }).text.trim()))) {
+      return err('Memory entries must be objects with non-empty text.')
+    }
+    facade.storeNpcMemories(roleId, entries)
     return ok({ ok: true })
   } },
   { handlerId: 'role.memories.retract', impl: (facade, body) => { facade.retractNpcMemory(stringOf(body, 'memoryId')); return ok({ ok: true }) } },
