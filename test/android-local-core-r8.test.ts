@@ -56,16 +56,18 @@ function hangingNative(room: unknown, providerConfigured = true) {
   return { native, requests, cancels }
 }
 
-function install(roomMode = 'director') {
+function install(roomMode = 'director', speechMode = 'manual') {
   const room = {
     id: 'android-local-room', storyId: 'eldoria', title: 'Eldoria', mode: roomMode,
-    speechMode: 'manual', hidePlayerSpeech: false, autoPublish: false,
+    speechMode, hidePlayerSpeech: false, autoPublish: false,
     phase: 'awaiting-player-input', revision: 0,
     roles: [{
       id: 'aria', name: 'Aria', portraitRef: '/assets/default.svg', currentState: 'At the festival.',
       presence: 'present', selfModel: 'Reserved.', goals: [], impressions: {}, memories: [],
     }],
     scenes: [], lore: [], workflows: [],
+    playerCharacter: { name: '玩家', persona: '', currentState: '' },
+    sceneTime: '黄昏', sceneLocation: '森林', playerContribution: '', speech: null, draft: null,
   }
   const { native, requests, cancels } = hangingNative(room)
   const globalObject: Record<string, unknown> = { StageCraftNative: native }
@@ -105,20 +107,27 @@ test('R9：director room /api/turn 挂起模型请求断开 → 取消（transpo
   try { await Promise.race([pending, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))]) } catch { /* abort 后 reject 可接受 */ }
 })
 
-test('R9：chat room /api/turn 取消 → chat 服务取消链执行（状态不推进）', async () => {
-  const { local, requests, cancels } = install('chat')
+test('R10：chat room /api/turn 挂起模型请求断开 → 取消（speechMode:director 真正触发模型）', async () => {
+  const { local, requests, cancels } = install('chat', 'director')
   const pending = local.handlePortableRequest('transport-cturn-1', 'POST', '/api/turn', '{"content-type":"application/json"}', '{"text":"hello"}')
-  // chat submitContribution 在无对话历史时可能不发模型请求（业务语义）；取消链必须执行
-  await new Promise(resolve => setTimeout(resolve, 300))
+  // 无条件等待：speechMode=director 时 submitContribution 必须启动模型请求
+  await waitFor(() => requests.length > 0)
+  assert.ok(requests.length > 0, 'chat /api/turn（speechMode=director）必须发起模型请求')
   const revisionBefore = local.getView().revision
   local.cancelPortableRequest('transport-cturn-1')
-  // 无条件：取消必须执行（transportId 到达 native）
-  if (requests.length > 0) {
-    await waitFor(() => cancels.length > 0)
-    assert.ok(cancels.includes('transport-cturn-1'), `cancel 必须包含 transportId（实际 ${cancels.join(',')}）`)
-  }
+  await waitFor(() => cancels.length > 0)
+  assert.ok(cancels.includes('transport-cturn-1'), `cancel 必须包含 transportId（实际 ${cancels.join(',')}）`)
   await new Promise(resolve => setTimeout(resolve, 300))
   assert.equal(local.getView().revision, revisionBefore, 'chat 取消后状态不得推进')
+  try { await Promise.race([pending, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))]) } catch { /* ok */ }
+})
+
+test('R10：chat room /api/turn manual 模式不启动模型请求（预期行为，非取消证据）', async () => {
+  const { local, requests } = install('chat', 'manual')
+  const pending = local.handlePortableRequest('transport-manual-1', 'POST', '/api/turn', '{"content-type":"application/json"}', '{"text":"hello"}')
+  await new Promise(resolve => setTimeout(resolve, 500))
+  assert.equal(requests.length, 0, 'manual 模式只写贡献不启动模型请求（预期）')
+  local.cancelPortableRequest('transport-manual-1')
   try { await Promise.race([pending, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))]) } catch { /* ok */ }
 })
 
@@ -131,6 +140,21 @@ test('R9：/api/chat/speak 无 requestId 取消 → 模型 cancel（无条件）
   await waitFor(() => cancels.length > 0)
   assert.ok(cancels.includes('transport-speak-1'), `speak cancel 必须包含 transportId（实际 ${cancels.join(',')}）`)
   try { await Promise.race([pending, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))]) } catch { /* ok */ }
+})
+
+test('R10：chat room /api/chat/director-chat 取消 → 路径真实执行（模型请求发出 + 状态不推进）', async () => {
+  const { local, requests, cancels } = install('chat', 'director')
+  const pending = local.handlePortableRequest('transport-dchat-1', 'POST', '/api/chat/director-chat', '{"content-type":"application/json"}', '{"text":"继续"}')
+  // director-chat 必须真实发出模型请求（chat-director:... 路径；测试环境可能立即取消/完成）
+  await waitFor(() => requests.length > 0)
+  assert.ok(requests.length > 0, 'director-chat 必须发起模型请求（路径真实执行）')
+  const revisionBefore = local.getView().revision
+  local.cancelPortableRequest('transport-dchat-1')
+  // 请求可能已因测试环境立即取消而结束（pending 已清 → tombstone）；等待请求 settle
+  await Promise.race([pending, new Promise(resolve => setTimeout(resolve, 3000))]).catch(() => {})
+  // 状态不推进（迟到结果不写；模型请求已取消）
+  const revisionAfter = local.getView().revision
+  assert.equal(revisionAfter, revisionBefore, 'director-chat 取消后状态不得推进')
 })
 
 test('R9：取消先于 JS 登记（tombstone）→ 登记时立即 abort，模型请求不执行', async () => {

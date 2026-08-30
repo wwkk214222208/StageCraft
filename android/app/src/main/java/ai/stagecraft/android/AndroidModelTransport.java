@@ -102,7 +102,10 @@ public final class AndroidModelTransport implements AutoCloseable {
         if (requestId == null || requestId.isEmpty()) return;
         HttpURLConnection request = requests.remove(requestId);
         if (request != null) { request.disconnect(); return; }
-        for (HttpURLConnection connection : active) connection.disconnect();
+        // R10：request-scoped——未知 requestId 直接 no-op，绝不遍历断开全部 active 连接
+        // （否则 transport 兜底取消（api-* ID）会误杀同 Core 其他并发模型请求）。
+        // 明确只支持单房间时，也应保证同房间独立后台任务不被未知 ID 误杀。
+        return;
     }
     public synchronized void cancelAll() { for (HttpURLConnection connection : active) connection.disconnect(); active.clear(); }
     @Override public synchronized void close() { closed = true; cancelAll(); executor.shutdownNow(); }

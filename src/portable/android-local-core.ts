@@ -493,7 +493,11 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     if (!requestId) return
     const controller = pendingPortableCancels.get(requestId)
     if (!controller) {
-      // R9：请求尚未登记（dispatch 与 cancel 竞态）——写 tombstone，登记时立即 abort
+      // R9/R10：请求尚未登记（dispatch 与 cancel 竞态）——写 tombstone，登记时跳过执行。
+      // R10 幂等语义：已在 tombstone 集合（重复取消或已完成清理后的迟到取消）→ 幂等忽略，
+      // 不再重复写；ID 重用场景下旧 cancel 不会误杀新请求（新请求登记时 tombstone 已被
+      // finally 清理或本次写入仅一次）。
+      if (cancelledTransportIds.has(requestId)) return
       markCancelled(requestId)
       return
     }

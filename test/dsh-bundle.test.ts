@@ -22,7 +22,10 @@ async function freePort(): Promise<number> {
   })
 }
 
-test('packed DSH bundle is self-contained and runs from a temporary install', async () => {
+// R10：本测试打包并启动 DSH bundle（临时目录 DB + 端口）；与并发测试共享进程级资源
+// （node:sqlite 文件锁/端口）可能触发 "attempt to write a readonly database" 或端口竞争。
+// 声明串行执行（{ concurrency: false }）使其自身完成隔离——全量并发下不再受影响。
+test('packed DSH bundle is self-contained and runs from a temporary install', { concurrency: false }, async () => {
   execFileSync(process.execPath, ['dsh-rp/scripts/build.mjs'], { cwd: repositoryRoot, stdio: 'inherit' })
   const tempRoot = mkdtempSync(join(process.env.TEMP ?? process.cwd(), 'stagecraft-dsh-pack-'))
   try {

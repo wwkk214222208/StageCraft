@@ -287,3 +287,19 @@ test('R9：gameplay 损坏 JSON 必须明确拒绝（非静默吞掉）', () => 
   assert.match(operations, /org\.json\.JSONException malformed/, '必须捕获 JSONException 转明确错误')
   assert.match(operations, /目录缺失：空态|资产缺失/, '缺失必须区分空态')
 })
+
+test('R10：transport 兜底取消必须 request-scoped（未知 ID no-op，不误杀并发）', () => {
+  const transport = read('java', 'ai', 'stagecraft', 'android', 'AndroidModelTransport.java')
+  assert.match(transport, /request-scoped/, '必须有 request-scoped 语义声明')
+  assert.match(transport, /未知 requestId 直接 no-op/, '未知 ID 必须 no-op')
+  // cancel(requestId) 方法体（requests.remove 后）不得含遍历断开；cancelAll 保留全量取消是合法语义
+  const cancelMethod = transport.slice(transport.indexOf('public synchronized void cancel('), transport.indexOf('public synchronized void cancelAll()'))
+  assert.doesNotMatch(cancelMethod, /for \(HttpURLConnection connection : active\)/, 'cancel(requestId) 内不得遍历断开 active 连接')
+  assert.match(cancelMethod, /return;/, '未知 ID 分支必须直接返回（no-op）')
+})
+
+test('R10：tombstone 必须幂等（重复取消不重复写，ID 重用不误杀新请求）', () => {
+  const localCore = read('..', '..', '..', '..', 'src', 'portable', 'android-local-core.ts')
+  assert.match(localCore, /cancelledTransportIds\.has\(requestId\)\) return/, '重复取消必须幂等忽略')
+  assert.match(localCore, /markCancelled/, '首次早到取消必须写 tombstone')
+})
