@@ -214,7 +214,8 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     return ok({ ok: true })
   } },
   { handlerId: 'workflow.consult', impl: async (facade, body) => {
-    await facade.consult(stringOf(body, 'draftId'), stringOf(body, 'playerText'), stringOf(body, 'context'))
+    // 桌面/前端契约字段是 text（app-boot.ts /api/consult 读 body.text）；playerText 仅作旧调用方兼容回退。
+    await facade.consult(stringOf(body, 'draftId'), stringOf(body, 'text') || stringOf(body, 'playerText'), stringOf(body, 'context'))
     return ok({ ok: true })
   } },
   { handlerId: 'workflow.consult.finish', impl: facade => { facade.finishConsultation(); return ok({ ok: true }) } },
@@ -224,7 +225,9 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     return ok({ ok: true })
   } },
   { handlerId: 'workflow.world-change.approve', impl: async (facade, body) => {
-    await facade.approveWorldChange(body.override ?? null)
+    // 桌面/前端契约字段是 worldChange（app-boot.ts /api/world-change/approve 读 body.worldChange）；override 仅作旧调用方兼容回退。
+    const worldChange = (body.worldChange && typeof body.worldChange === 'object') ? body.worldChange : (body.override && typeof body.override === 'object' ? body.override : null)
+    await facade.approveWorldChange(worldChange)
     return ok({ ok: true })
   } },
   { handlerId: 'workflow.world-change.reject', impl: async facade => { await facade.rejectWorldChange(); return ok({ ok: true }) } },
@@ -237,11 +240,39 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   { handlerId: 'role.create', impl: (facade, body) => { facade.createRole(body.role ?? body); return ok({ ok: true }) } },
   { handlerId: 'role.delete', impl: (facade, body) => { facade.deleteRole(stringOf(body, 'roleId')); return ok({ ok: true }) } },
   { handlerId: 'role.presence', impl: (facade, body) => { facade.setRolePresence(stringOf(body, 'roleId'), stringOf(body, 'presence')); return ok({ ok: true }) } },
-  { handlerId: 'role.thinking', impl: (facade, body) => { facade.setRoleThinking(stringOf(body, 'roleId'), stringOf(body, 'thinkingStrength')); return ok({ ok: true }) } },
+  { handlerId: 'role.thinking', impl: (facade, body) => {
+    // 桌面/前端契约字段是 thinking（app-boot.ts /api/roles/thinking 读 body.thinking）；thinkingStrength 仅作旧调用方兼容回退。
+    const thinking = stringOf(body, 'thinking') || stringOf(body, 'thinkingStrength')
+    if (!['off', 'brief', 'standard', 'deep'].includes(thinking)) return err('无效的思维链强度。')
+    facade.setRoleThinking(stringOf(body, 'roleId'), thinking)
+    return ok({ ok: true })
+  } },
   { handlerId: 'role.reorder', impl: (facade, body) => { facade.reorderRoles(stringArray(body, 'roleIds')); return ok({ ok: true }) } },
   { handlerId: 'role.state', impl: (facade, body) => { facade.setRoleCurrentState(stringOf(body, 'roleId'), stringOf(body, 'currentState')); return ok({ ok: true }) } },
   { handlerId: 'role.intervene', impl: (facade, body) => {
-    facade.interveneRole(stringOf(body, 'roleId'), stringOf(body, 'selfModel'), body.config as Record<string, unknown> | undefined)
+    // 桌面/前端契约是平铺字段（app-boot.ts /api/roles/intervene 读 body.providerId/modelOverride/
+    // impressions(JSON 字符串)/goals(JSON 字符串)/thinkingStrength 组装 config）；body.config 仅作旧调用方兼容。
+    const config: Record<string, unknown> = {}
+    const direct = body.config && typeof body.config === 'object' && !Array.isArray(body.config) ? body.config as Record<string, unknown> : null
+    if (direct) {
+      for (const key of ['providerId', 'modelOverride', 'impressions', 'goals', 'thinkingStrength']) {
+        if (direct[key] !== undefined) config[key] = direct[key]
+      }
+    }
+    if (body.providerId) config.providerId = String(body.providerId)
+    if (body.modelOverride) config.modelOverride = String(body.modelOverride)
+    if (typeof body.impressions === 'string' && body.impressions) {
+      try { config.impressions = JSON.parse(body.impressions) as Record<string, string> } catch { /* 非法 JSON 忽略 */ }
+    } else if (body.impressions && typeof body.impressions === 'object') {
+      config.impressions = body.impressions
+    }
+    if (typeof body.goals === 'string' && body.goals) {
+      try { config.goals = JSON.parse(body.goals) as string[] } catch { /* 非法 JSON 忽略 */ }
+    } else if (Array.isArray(body.goals)) {
+      config.goals = body.goals
+    }
+    if (body.thinkingStrength) config.thinkingStrength = String(body.thinkingStrength)
+    facade.interveneRole(stringOf(body, 'roleId'), stringOf(body, 'selfModel'), config)
     return ok({ ok: true })
   } },
   { handlerId: 'role.avatar', impl: (facade, body) => { facade.setRoleAvatar(stringOf(body, 'roleId'), stringOf(body, 'portraitRef')); return ok({ ok: true }) } },
