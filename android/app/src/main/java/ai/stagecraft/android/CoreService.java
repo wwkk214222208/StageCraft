@@ -174,9 +174,11 @@ public final class CoreService extends Service {
                 }
 
                 @Override public void cancel(String requestId) {
-                    // R3-5：客户端断开 → 经桥取消 JS 侧对应请求（abort AbortSignal，长模型请求停止）
+                    // R3-5/R7：客户端断开 → 经桥取消 JS 侧对应请求（abort AbortSignal，长模型请求停止）；
+                    // R7：pendingApi 立即移除（防悬挂回调堆积；迟到 protocol-result 因表无条目被忽略）
                     String safeId = requestId == null ? "" : requestId.replace("\"", "");
                     if (!safeId.isEmpty()) {
+                        pendingApi.remove(safeId);
                         main.post(() -> {
                             if (coreWebView != null) {
                                 coreWebView.evaluateJavascript(

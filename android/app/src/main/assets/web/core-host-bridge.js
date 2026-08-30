@@ -155,7 +155,9 @@
         }
         return
       }
-      localCore.handlePortableRequest(method, path, headersJson, bodyJson).then(function (result) {
+      // R7：transportId（requestId）作为请求身份贯穿——handlePortableRequest 用它注册
+      // pendingPortableCancels（真实页面无 body requestId 时取消链仍可命中）。
+      localCore.handlePortableRequest(requestId, method, path, headersJson, bodyJson).then(function (result) {
         if (window.CoreHostBridgePort) {
           window.CoreHostBridgePort.send({
             type: 'protocol-result', requestId: requestId, status: result.status, body: result.body,

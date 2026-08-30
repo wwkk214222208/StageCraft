@@ -384,11 +384,13 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     return handler
   }
   /** 供 core-host-bridge 调用的协议端点分发：返回 Promise<{status, body}>（body 为 JSON 文本）。 */
-  // R3-5：每个请求用独立 AbortController 注册到 pendingPortableCancels；客户端断开时
-  // Java 侧 cancel(requestId) → 桥发 protocol-cancel → cancelPortableRequest(requestId) → abort signal，
+  // R3-5/R7：每个请求用独立 AbortController 注册到 pendingPortableCancels；客户端断开时
+  // Java 侧 cancel(transportId) → 桥发 protocol-cancel → cancelPortableRequest(transportId) → abort signal，
   // 使长模型请求（turn/chat 等）在页面断开后停止。
+  // R7：transportId（CoreService 的 api-* id）作为请求身份贯穿——真实页面无 body requestId 时
+  // 取消链仍可命中；body 的 requestId/id 作为模型取消 key（core.cancel 需要真实模型 request）。
   const pendingPortableCancels = new Map<string, AbortController>()
-  const handlePortableRequest = async (method: string, path: string, headersJson: string, bodyJson: string): Promise<{ status: number; body: string }> => {
+  const handlePortableRequest = async (transportId: string, method: string, path: string, headersJson: string, bodyJson: string): Promise<{ status: number; body: string }> => {
     const headers: Record<string, string> = {}
     try {
       const parsed = JSON.parse(headersJson || '{}') as Record<string, unknown>
@@ -396,14 +398,23 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
         if (typeof value === 'string') headers[name.toLowerCase()] = value
       }
     } catch { /* 非法 headers 按空表处理 */ }
-    // 请求身份：query/body 的 requestId 或 id（与 CoreDataServer 的 cancelRequestId 同源）
-    let requestId = ''
+    // 请求身份：transportId 优先（R7，始终存在）；body 的 requestId/id 作为模型取消 key
+    const cancelKey = transportId || ''
+    let modelRequestId = ''
     try {
       const parsed = JSON.parse(bodyJson || '{}') as { requestId?: string; id?: string }
-      requestId = parsed.requestId ?? parsed.id ?? ''
-    } catch { /* 非 JSON body（zip 等）：无 requestId 可取消 */ }
+      modelRequestId = parsed.requestId ?? parsed.id ?? ''
+    } catch { /* 非 JSON body（zip 等）：无模型 requestId 可取消 */ }
     const controller = new AbortController()
-    if (requestId) pendingPortableCancels.set(requestId, controller)
+    if (cancelKey) pendingPortableCancels.set(cancelKey, controller)
+    // R7：signal abort（断开/超时）时同步取消组合根模型请求（body 显式 requestId 优先；
+    // transportId 也尝试——组合根 cancel 对未知 id 是 no-op）
+    controller.signal.addEventListener('abort', () => {
+      if (modelRequestId) {
+        try { void requireComposition().core.cancel(modelRequestId).catch(() => {}) } catch { /* no-op */ }
+      }
+      try { void requireComposition().core.cancel(cancelKey).catch(() => {}) } catch { /* no-op */ }
+    })
     const timeout = setTimeout(() => controller.abort(), 20_000)
     const request: ApiRequest = {
       method,
@@ -420,14 +431,14 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       return { status: 500, body: JSON.stringify({ error: { code: 'internal_error', message: error instanceof Error ? error.message : String(error) } }) }
     } finally {
       clearTimeout(timeout)
-      if (requestId) pendingPortableCancels.delete(requestId)
+      if (cancelKey) pendingPortableCancels.delete(cancelKey)
     }
     if (response.body instanceof Uint8Array) {
       return { status: response.status, body: new TextDecoder().decode(response.body) }
     }
     return { status: response.status, body: '' }
   }
-  /** R3-5：客户端断开时 abort 对应请求（Java 经桥 protocol-cancel 调用）。 */
+  /** R3-5/R7：客户端断开时 abort 对应请求（Java 经桥 protocol-cancel 调用）。 */
   const cancelPortableRequest = (requestId: string): void => {
     if (!requestId) return
     const controller = pendingPortableCancels.get(requestId)
@@ -435,7 +446,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       controller.abort()
       pendingPortableCancels.delete(requestId)
     }
-    // 组合根模型请求同步取消（业务路由的长模型调用经 core.cancel(requestId) 停止底层 transport）
+    // 组合根模型请求同步取消：transportId 与 body requestId 都尝试（transportId 未必等于
+    // 模型请求 id——业务路由长模型调用经 core.cancel 停止底层 transport）
     try {
       void requireComposition().core.cancel(requestId).catch(() => {})
     } catch { /* 组合根未启动：signal abort 已足够 */ }

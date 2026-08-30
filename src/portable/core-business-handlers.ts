@@ -321,18 +321,28 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     facade.invokeSync('story.save', { story })
     return ok({ ok: true })
   } },
-  // R5-2：save-as 未提供新 ID 时生成新 ID（源 ID 只作复制来源，绝不覆盖源故事）；
-  // 新 ID 符合同一校验规则（story-<timestamp36>，与 AndroidCompositionOperations 同形）
+  // R5-2/R7：save-as 目标 ID 语义与桌面一致——
+  // 1) newId/new_id 优先（显式目标）；
+  // 2) body.id 与 story.id 不同 → 兼容为显式目标 ID（桌面 app-boot 语义：body.id 即目标）；
+  // 3) 完全无显式目标 → 生成 story-<timestamp36>（与原生 saveAs id 规则同形；碰撞重试后缀）。
+  // 源 ID 只作复制来源，绝不写源键。
   { handlerId: 'story.save-as', impl: (facade, body) => {
     const story = (body.story ?? body) as { id?: string; title?: string }
-    const sourceId = stringOf(body, 'id') || story?.id
+    const sourceId = story?.id
     if (!sourceId) return err('故事 id 缺失')
-    // 显式新 ID 优先；否则生成（时间戳 36 进制，与原生 saveAs 的 id 规则一致）
-    const newId = stringOf(body, 'newId') || stringOf(body, 'new_id') || ('story-' + Date.now().toString(36))
-    const title = stringOf(body, 'title') || story?.title || newId
-    const copy = { ...(story ?? {}), id: newId, title }
-    facade.invokeSync('story.saveAs', { id: newId, title, story: copy })
-    return ok({ ok: true, id: newId, title })
+    const explicitNewId = stringOf(body, 'newId') || stringOf(body, 'new_id')
+    const bodyId = stringOf(body, 'id')
+    // 显式目标：newId 优先；否则 body.id 与 story.id 不同时视为目标（桌面兼容）
+    let targetId = explicitNewId
+    if (!targetId && bodyId && bodyId !== sourceId) targetId = bodyId
+    if (!targetId) {
+      // 生成新 ID（时间戳 36 进制 + 随机后缀防碰撞）
+      targetId = 'story-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6)
+    }
+    const title = stringOf(body, 'title') || story?.title || targetId
+    const copy = { ...(story ?? {}), id: targetId, title }
+    facade.invokeSync('story.saveAs', { id: targetId, title, story: copy })
+    return ok({ ok: true, id: targetId, title })
   } },
   // R3-3 裁决：story/archive 导入导出是 zip/文件字节，经 SAF 原生通道（NativeBridge.importStoryDocument/
   // exportDocument）承载；gateway 路由返回明确稳定 unsupported，UI 走同一受测入口（不假挂载 JSON 占位）。
@@ -418,11 +428,13 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   // activeByScope 从 preset.list 的 SQLite 存储读取（非固定空对象）
   { handlerId: 'prompt.presets.list', impl: facade => {
     const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[]; activeByScope?: Record<string, string> } | null
+    // R7：gameplayScenarios 从打包资产读取（prompt.gameplay.list 原生端口；非固定空对象）
+    const gameplay = facade.invokeSync('prompt.gameplay.list', {}) as { gameplayScenarios?: Record<string, unknown> } | null
     return ok({
       presets: result?.presets ?? [],
       activeByScope: result?.activeByScope ?? {},
       modes: [{ id: 'director', name: '导演模式' }, { id: 'chat', name: '群聊模式' }],
-      gameplayScenarios: {},
+      gameplayScenarios: gameplay?.gameplayScenarios ?? {},
     })
   } },
   // R3-2/R5-3：桌面契约 PUT 两种模式 → 裸 PromptPresetState 或 {ok:true, presets}；

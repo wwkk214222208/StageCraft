@@ -409,6 +409,40 @@ test('R5-2：story.save-as 无新 ID 时生成新 ID（源 ID 只作复制来源
   assert.ok(!saved.has('story-source') || (saved.get('story-source') as { id?: string })?.id === 'story-source', '源 id 不得被覆盖为新 id')
 })
 
+test('R7：story.save-as body.id 与 story.id 不同时兼容为显式目标 ID（桌面语义）', async () => {
+  const facade = makeFacade()
+  const saved = new Map<string, unknown>()
+  facade.invokeSync = (operation, input) => {
+    if (operation === 'story.saveAs') {
+      saved.set(String((input as Record<string, unknown>).id), (input as Record<string, unknown>).story)
+      return { ok: true, id: (input as Record<string, unknown>).id }
+    }
+    return { ok: true }
+  }
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  // 桌面 app-boot：{story:{id:'source'}, id:'copy'} → 目标 id=copy（与桌面一致，不生成随机）
+  const response = await handler.handle(apiRequest('POST', '/api/story/save-as', { story: { id: 'source', title: '源' }, id: 'copy' }))
+  assert.equal(response.status, 200)
+  const body = JSON.parse(await bodyText(response))
+  assert.equal(body.id, 'copy', 'body.id 与 story.id 不同时必须作为显式目标 ID')
+  assert.ok(saved.has('copy'), 'copy 必须写入')
+})
+
+test('R7：prompt.presets.list gameplayScenarios 从原生端口读取（非固定空对象）', async () => {
+  const facade = makeFacade()
+  facade.invokeSync = (operation, input) => {
+    if (operation === 'preset.list') return { presets: [{ id: 'p1' }], activeByScope: {} }
+    if (operation === 'prompt.gameplay.list') return { gameplayScenarios: { 'director.draft': { mode: 'director', name: '导演草稿' } } }
+    return { ok: true }
+  }
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  const response = await handler.handle(apiRequest('GET', '/api/prompts/presets'))
+  assert.equal(response.status, 200)
+  const body = JSON.parse(await bodyText(response))
+  assert.ok('director.draft' in body.gameplayScenarios, 'gameplayScenarios 必须含打包场景')
+  assert.equal(body.gameplayScenarios['director.draft'].name, '导演草稿')
+})
+
 test('R5-3：prompt active scope 统一走 preset.active-scope.set（合并更新 + 持久化可读）', async () => {
   const facade = makeFacade()
   const activeStore = new Map<string, string>()

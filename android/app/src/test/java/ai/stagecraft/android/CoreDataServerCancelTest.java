@@ -249,4 +249,110 @@ public final class CoreDataServerCancelTest {
             server.stop();
         }
     }
+
+    @Test public void r7TransportIdLateCallbackStillCancels() throws Exception {
+        // R7：异步 executor 下 transportId 回调晚于断开检测开始——断开时动态读取（非固定空键）
+        java.util.concurrent.ExecutorService async = java.util.concurrent.Executors.newSingleThreadExecutor();
+        CoreDataServer server = new CoreDataServer("secret", async, SILENT);
+        server.start();
+        final AtomicReference<String> cancelled = new AtomicReference<>();
+        final AtomicBoolean bridgeCalled = new AtomicBoolean();
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"POST\",\"pattern\":\"/api/turn\",\"owner\":\"core\",\"capability\":\"room.command\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"turn.start\"}"
+                + "]}" , null));
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApiTracked(String method, String path, java.util.Map<String, String> headers, String bodyJson,
+                                                    java.util.function.Consumer<String> transportIdConsumer,
+                                                    java.util.function.Consumer<String> resultConsumer) {
+                bridgeCalled.set(true);
+                // 模拟 ID 晚到：先延迟再回调 transportId（异步线程）
+                new Thread(() -> {
+                    try { Thread.sleep(200); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                    transportIdConsumer.accept("transport-late-1");
+                }, "transport-late").start();
+            }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { cancelled.set(requestId); }
+        });
+        try {
+            Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), server.getPort());
+            socket.setSoTimeout(5000);
+            OutputStream output = socket.getOutputStream();
+            String body = "{\"text\":\"hello\"}"; // 无 requestId
+            output.write(("POST /api/turn HTTP/1.1\r\n"
+                + "host: 127.0.0.1\r\n"
+                + "x-core-nonce: secret\r\n"
+                + "content-type: application/json\r\n"
+                + "content-length: " + body.getBytes(StandardCharsets.UTF_8).length + "\r\n"
+                + "connection: close\r\n\r\n" + body).getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            long bridgeDeadline = System.currentTimeMillis() + 3000;
+            while (!bridgeCalled.get() && System.currentTimeMillis() < bridgeDeadline) {
+                Thread.sleep(20);
+            }
+            // 立即断开（ID 可能尚未回调——200ms 延迟）
+            socket.close();
+            long deadline = System.currentTimeMillis() + 15000;
+            while (cancelled.get() == null && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            assertNotNull("ID 晚到时断开也必须取消", cancelled.get());
+            // 动态读取：ID 回调后断开应拿到 transport id（而非空）
+            assertEquals("必须动态读取晚到的 transport id", "transport-late-1", cancelled.get());
+        } finally {
+            server.stop();
+            async.shutdownNow();
+        }
+    }
+
+    @Test public void r7DisconnectBeforeTransportIdCallbackFallsBackToBodyRequestId() throws Exception {
+        // R7：ID 回调前断开且 body 有 requestId → 用 body requestId 兜底（不空转）
+        CoreDataServer server = new CoreDataServer("secret", DIRECT, SILENT);
+        server.start();
+        final AtomicReference<String> cancelled = new AtomicReference<>();
+        final AtomicBoolean bridgeCalled = new AtomicBoolean();
+        server.setRouteRegistry(RouteRegistry.parse(
+            "{\"registryVersion\":\"test\",\"routes\":["
+                + "{\"order\":0,\"method\":\"POST\",\"pattern\":\"/api/turn\",\"owner\":\"core\",\"capability\":\"room.command\",\"auth\":\"none\",\"authPolicy\":{\"kind\":\"core-nonce\"},\"dispatchPolicy\":{\"androidLocal\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"},\"androidRemote\":{\"action\":\"proxy-core\",\"auth\":\"core-nonce\"}},\"handlerId\":\"turn.start\"}"
+                + "]}" , null));
+        server.setCommandForwarder(new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) { }
+            @Override public void forwardApiTracked(String method, String path, java.util.Map<String, String> headers, String bodyJson,
+                                                    java.util.function.Consumer<String> transportIdConsumer,
+                                                    java.util.function.Consumer<String> resultConsumer) {
+                bridgeCalled.set(true);
+                // 故意不回调 transportId：模拟 ID 永不回调（或晚于断开）
+            }
+            @Override public String view() { return null; }
+            @Override public void cancel(String requestId) { cancelled.set(requestId); }
+        });
+        try {
+            Socket socket = new Socket(InetAddress.getByName("127.0.0.1"), server.getPort());
+            socket.setSoTimeout(5000);
+            OutputStream output = socket.getOutputStream();
+            String body = "{\"requestId\":\"req-fallback-1\",\"text\":\"hi\"}";
+            output.write(("POST /api/turn HTTP/1.1\r\n"
+                + "host: 127.0.0.1\r\n"
+                + "x-core-nonce: secret\r\n"
+                + "content-type: application/json\r\n"
+                + "content-length: " + body.getBytes(StandardCharsets.UTF_8).length + "\r\n"
+                + "connection: close\r\n\r\n" + body).getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            long bridgeDeadline = System.currentTimeMillis() + 3000;
+            while (!bridgeCalled.get() && System.currentTimeMillis() < bridgeDeadline) {
+                Thread.sleep(20);
+            }
+            socket.close();
+            long deadline = System.currentTimeMillis() + 15000;
+            while (cancelled.get() == null && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            assertNotNull("ID 未回调时断开必须取消", cancelled.get());
+            assertEquals("无 transport id 时用 body requestId 兜底", "req-fallback-1", cancelled.get());
+        } finally {
+            server.stop();
+        }
+    }
 }

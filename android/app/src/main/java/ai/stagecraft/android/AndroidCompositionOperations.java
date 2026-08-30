@@ -66,6 +66,27 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
             return new JSONObject().put("stories", result);
         }
         if ("preset.list".equals(operation)) { org.json.JSONArray presets = new org.json.JSONArray(); for (JSONObject preset : repository.listRecords("prompt-presets")) presets.put(preset); JSONObject meta = repository.getRecord("prompt-meta", "active-by-scope"); JSONObject activeByScope = meta == null ? null : meta.optJSONObject("value"); return new JSONObject().put("presets", presets).put("activeByScope", activeByScope == null ? new JSONObject() : activeByScope); }
+        if ("prompt.gameplay.list".equals(operation)) {
+            // R7：gameplay 场景从打包 assets/web/gameplay/*.json 读取（packageWebUi 把 prompts/gameplay 拷入 web/gameplay）
+            JSONObject scenarios = new JSONObject();
+            try {
+                String[] files = context.getAssets().list("web/gameplay");
+                if (files != null) {
+                    for (String file : files) {
+                        if (!file.endsWith(".json")) continue;
+                        String scope = file.substring(0, file.length() - 5);
+                        try (java.io.InputStream assetInput = context.getAssets().open("web/gameplay/" + file)) {
+                            byte[] bytes = new byte[assetInput.available()];
+                            int read = assetInput.read(bytes);
+                            scenarios.put(scope, new JSONObject(new String(bytes, 0, Math.max(0, read), java.nio.charset.StandardCharsets.UTF_8)));
+                        }
+                    }
+                }
+            } catch (Exception error) {
+                // 资产缺失/损坏：返回空（前端按空态处理）
+            }
+            return new JSONObject().put("gameplayScenarios", scenarios);
+        }
         if ("preset.active-scope.set".equals(operation)) { JSONObject activeByScope = JsonSafety.requiredObject(input, "activeByScope"); repository.putRecord("prompt-meta", "active-by-scope", new JSONObject().put("value", activeByScope)); return new JSONObject().put("ok", true); }
         if ("preset.save".equals(operation)) { JSONObject preset = JsonSafety.requiredObject(input, "preset"); String id = JsonSafety.requiredString(preset, "id", 256); repository.putRecord("prompt-presets", id, preset); return new JSONObject().put("ok", true).put("preset", preset); }
         if ("preset.delete".equals(operation)) { String id = JsonSafety.requiredString(input, "id", 256); if (!repository.deleteRecord("prompt-presets", id)) throw new IllegalArgumentException("预设不存在或已删除。"); return new JSONObject().put("ok", true).put("id", id); }

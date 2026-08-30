@@ -48,6 +48,7 @@ const coreNativeOperations: NativeOperation[] = [
   { name: 'preset.save', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
   { name: 'preset.delete', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
   { name: 'preset.active-scope.set', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  { name: 'prompt.gameplay.list', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core', note: 'R7：读取打包 assets/web/gameplay 场景（与桌面 prompts/gameplay 同源）。' },
   { name: 'archive.list', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core', note: '存档文件存储随 W5 迁入 Core 进程（与 ApiRouteRegistry archive owner 一致）。' },
   { name: 'archive.load', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
   { name: 'archive.save', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },

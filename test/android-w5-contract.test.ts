@@ -257,9 +257,11 @@ test('W6-3 整改：main-host handler 逐条真实能力或明确稳定 unsuppor
   assert.ok(unsupportedCount >= 4, `必须 ≥4 处明确 unsupported 裁决，实际 ${unsupportedCount}`)
 })
 
-test('W6-5 整改：CoreDataServer 客户端断开必须取消底层 requestId', () => {
+test('W6-5/R7 整改：CoreDataServer 客户端断开必须取消底层请求（transport id 动态读取）', () => {
   const server = read('java', 'ai', 'stagecraft', 'android', 'CoreDataServer.java')
   assert.match(server, /isClientGone/, '必须有客户端断开探测')
-  assert.match(server, /forwarder\.cancel\(cancelRequestId\)/, '断开必须取消 requestId')
+  assert.match(server, /forwarder\.cancel\(cancelKey\)/, '断开必须取消（body requestId 或 transport id）')
+  assert.match(server, /transportId\.get\(\)/, '必须动态读取 transport id（异步竞态）')
+  assert.match(server, /forwardApiTracked/, '必须用带 transport 跟踪的转发')
   assert.match(server, /client disconnected while awaiting bridge result/, '必须记录取消事件')
 })

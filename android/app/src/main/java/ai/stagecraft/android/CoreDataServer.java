@@ -358,19 +358,19 @@ public final class CoreDataServer {
     private void forwardApiAndRespond(Socket socket, String method, String path, Map<String, String> headers, String body, CommandForwarder forwarder) {
         final String[] result = new String[1];
         java.util.concurrent.CountDownLatch responded = new java.util.concurrent.CountDownLatch(1);
-        final String[] transportId = new String[1];
+        // R7：transportId 用 AtomicReference（executor 异步回调可能晚到；断开检测时动态读取）
+        final java.util.concurrent.atomic.AtomicReference<String> transportId = new java.util.concurrent.atomic.AtomicReference<>();
         executor.execute(() -> forwarder.forwardApiTracked(method, path, headers, body,
-            id -> transportId[0] = id,
+            transportId::set,
             json -> { result[0] = json; responded.countDown(); }));
-        // W6-5/R5-4：等待期间探测客户端断开（页面关闭 → gateway 关上游 → 本 socket EOF）——
-        // 断开则取消底层请求：body 显式 requestId 优先（协议端点），否则用 transport id
-        // （真实页面业务请求无显式 requestId 时仍可取消）。
+        // W6-5/R5-4/R7：等待期间探测客户端断开（页面关闭 → gateway 关上游 → 本 socket EOF）——
+        // 断开则取消底层请求：body 显式 requestId 优先（协议端点），否则动态读 transport id
+        // （真实页面业务请求无显式 requestId 时仍可取消；避免异步 executor 下 ID 晚到的竞态）。
         String requestId = "";
         try {
             JSONObject bodyJson = new JSONObject(body.isEmpty() ? "{}" : body);
             requestId = bodyJson.optString("requestId", bodyJson.optString("id", ""));
         } catch (Exception ignored) { }
-        final String cancelRequestId = requestId.isEmpty() && transportId[0] != null ? transportId[0] : requestId;
         try {
             long deadline = System.currentTimeMillis() + BRIDGE_TIMEOUT_MS;
             while (responded.getCount() > 0) {
@@ -379,10 +379,21 @@ public final class CoreDataServer {
                     return;
                 }
                 if (isClientGone(socket)) {
-                    // 客户端已断开：取消底层请求（长模型请求不得继续运行），有界结束连接
-                    logger.i("core data: client disconnected while awaiting bridge result; cancelling requestId=" + cancelRequestId);
-                    if (!cancelRequestId.isEmpty()) {
-                        try { forwarder.cancel(cancelRequestId); } catch (Exception ignored) { }
+                    // 客户端已断开：取消底层请求（长模型请求不得继续运行），有界结束连接。
+                    // R7：动态读 transportId（ID 可能晚到）；回调前断开则 body requestId 兜底。
+                    // 若两者皆空（transportId 尚未回调），有界等待 ID 到达（最多 1s）再取消，
+                    // 避免异步 executor 竞态导致取消键永久为空。
+                    String cancelKey = !requestId.isEmpty() ? requestId : transportId.get();
+                    if (cancelKey == null || cancelKey.isEmpty()) {
+                        long idDeadline = System.currentTimeMillis() + 1_000;
+                        while ((cancelKey == null || cancelKey.isEmpty()) && System.currentTimeMillis() < idDeadline) {
+                            try { Thread.sleep(20); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); break; }
+                            cancelKey = transportId.get();
+                        }
+                    }
+                    logger.i("core data: client disconnected while awaiting bridge result; cancelling requestId=" + cancelKey);
+                    if (cancelKey != null && !cancelKey.isEmpty()) {
+                        try { forwarder.cancel(cancelKey); } catch (Exception ignored) { }
                     }
                     return;
                 }                responded.await(100, java.util.concurrent.TimeUnit.MILLISECONDS);
