@@ -407,7 +407,7 @@ export class RemoteCoreConnection implements CoreConnection {
       if (!this.isCurrent(generation)) throw new Error('Connection superseded.')
       this.lastView = clone(view)
       // revision 地板 = 权威 view revision（§3.4）：SSE 在取 view 期间缓存的旧事件不得发给 UI，
-      // 否则上一回合内容会重新显示（评审实锤的 W2 缺陷）。
+      // 否则上一回合内容会重新显示（评审确认的缺陷）。
       this.lastDeliveredRevision = typeof view.revision === 'number' ? view.revision : Number.NEGATIVE_INFINITY
       this.setState('connected')
       this.emit({ type: 'core.resync', reason, revision: view.revision, view })
@@ -503,7 +503,7 @@ export class RemoteCoreConnection implements CoreConnection {
   }
 
   private headers(extra: Record<string, string>): Record<string, string> {
-    // 服务端按此头做逐连接版本整形（Q5）；1.0 server 忽略之。
+    // 服务端按此头做逐连接版本整形；1.0 server 忽略之。
     return { ...extra, authorization: `Bearer ${this.session}`, 'x-core-protocol-version': CORE_PROTOCOL_VERSION }
   }
 

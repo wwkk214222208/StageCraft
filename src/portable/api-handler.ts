@@ -1,5 +1,5 @@
 /**
- * W4：可移植 API handler 层（计划 v0.4 §1.4 方案 B 改良版）。
+ * 可移植 API handler 层（计划 v0.4 §1.4 方案 B 改良版）。
  *
  * 目标：把与 Node HTTP（IncomingMessage/ServerResponse）无关的业务 handler 抽成
  * 统一 `ApiRequest -> Promise<ApiResponse>` 形状 + 能力端口，桌面与 Android Core
@@ -7,7 +7,7 @@
  *
  * 本模块是"首批"可移植 handler：Core 协议端点（health/view/commands/cancel/
  * capabilities/ui-action）——它们只依赖 CoreRuntimePort，与传输无关。
- * app-boot.ts 的其余桌面路由（main-host/desktop-only）仍留在桌面侧，由 W6 按
+ * app-boot.ts 的其余桌面路由（main-host/desktop-only）仍留在桌面侧，由后续工作按
  * registry/dispatchPolicy 接入正式 gateway。
  *
  * ApiRequest/ApiResponse 形状与计划 §1.4 一致；SSE 流式响应经 AsyncIterable body。
@@ -51,8 +51,8 @@ export async function handlePortableApi(
 }
 
 /**
- * 可移植 handler 注册表（W4 合流契约，回应 W5-5）：
- * 把 registry handlerId 与可移植 handler 的覆盖关系显式化，供 W5 CoreDataServer
+ * 可移植 handler 注册表（合流契约）：
+ * 把 registry handlerId 与可移植 handler 的覆盖关系显式化，供 CoreDataServer
  * 挂载时对照，禁止复制 app-boot.ts 路由串。
  */
 export interface PortableHandlerRegistration {
@@ -63,7 +63,7 @@ export interface PortableHandlerRegistration {
   readonly handler: PortableApiHandler | null
 }
 
-/** 由 registry 路由与可移植 handler 生成覆盖清单（W4 合流契约；测试强制无漂移）。 */
+/** 由 registry 路由与可移植 handler 生成覆盖清单（合流契约；测试强制无漂移）。 */
 export function buildPortableCoverage(
   routes: ReadonlyArray<{ handlerId: string; method: string; pattern: string; owner: string; stream?: unknown }>,
   handlers: readonly PortableApiHandler[],
@@ -75,7 +75,7 @@ export function buildPortableCoverage(
   })
 }
 
-/** 未挂载路由清单（W5 挂载时须为这些提供稳定结果或宿主实现）。 */
+/** 未挂载路由清单（挂载时须为这些提供稳定结果或宿主实现）。 */
 export function unhandledPortableRoutes(registrations: readonly PortableHandlerRegistration[]): PortableHandlerRegistration[] {
   return registrations.filter(registration => registration.handler === null)
 }
@@ -98,7 +98,7 @@ export async function readJsonBody(request: ApiRequest): Promise<Record<string, 
 /**
  * Core 协议可移植 handler：与 HttpHumanCorePlugin 同逻辑（1.1 receipt/envelope、
  * 1.0 旧形状、cancel、capabilities、ui-action），但不依赖 node:http。
- * 桌面 HTTP adapter 与 Android Core harness 复用同一实现（W4 对等性由测试保证）。
+ * 桌面 HTTP adapter 与 Android Core harness 复用同一实现（对等性由测试保证）。
  */
 export class CoreProtocolPortableHandler implements PortableApiHandler {
   private readonly core: CoreRuntimePort

@@ -1,10 +1,10 @@
 /**
- * PluginConfigStore 实现（W3 评审修订）：主进程配置持久化不依赖 Core——Core 从未启动或已
- * crashed 时仍可读写（阶段 1 验收锚点，Q4 裁决）。
+ * PluginConfigStore 实现（评审修订）：主进程配置持久化不依赖 Core——Core 从未启动或已
+ * crashed 时仍可读写（阶段 1 验收锚点）。
  *
  * - InMemoryPluginConfigStore：测试与 harness。
  * - createNodeFilePluginConfigStore：桌面/Node 侧参考实现（单 JSON 文件，原子替换写）。
- * - Android 主进程的 Java 实现按 Q4 属 W6 工作包（PluginConfigStore.java，只持久化
+ * - Android 主进程的 Java 实现（PluginConfigStore.java，只持久化
  *   desiredEnabled/config 并展示隔离记录，不实现依赖拓扑规则）。
  *
  * 本模块不得 import Core runtime；规则实现只在 src/plugin-bootstrap.ts。

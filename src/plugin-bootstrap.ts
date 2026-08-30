@@ -1,7 +1,7 @@
 /**
- * PluginBootstrap —— 清单校验、依赖拓扑、provides 冲突预检、逐插件失败隔离与 LaunchPlan 生成（W3；计划 §6.3/§2.4/§7.4）。
+ * PluginBootstrap —— 清单校验、依赖拓扑、provides 冲突预检、逐插件失败隔离与 LaunchPlan 生成（计划 §6.3/§2.4/§7.4）。
  *
- * 深度校验唯一实现（Q4 裁决）：Core 进程 bootstrap 与桌面复用本模块；主进程 Java 不得复制规则。
+ * 深度校验唯一实现：Core 进程 bootstrap 与桌面复用本模块；主进程 Java 不得复制规则。
  * 校验顺序（单插件粒度，失败 → quarantined 并继续装载其余插件）：
  *   manifest 校验失败 → stage 'manifest'
  *   依赖缺失 / 环 / provides 冲突 / coreApi 不匹配 → stage 'dependency'

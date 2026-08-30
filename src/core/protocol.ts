@@ -11,7 +11,7 @@ export const MIN_SUPPORTED_PROTOCOL_VERSION = '1.0'
 export const MAX_SUPPORTED_PROTOCOL_VERSION = CORE_PROTOCOL_VERSION
 
 /**
- * 版本支持判定（计划 §3.2，Q5）：
+ * 版本支持判定（计划 §3.2）：
  * - 同 APK 本地连接：要求精确匹配 CORE_PROTOCOL_VERSION，不做降级；
  * - 远程连接：client 版本落在 [min, max] 支持范围内即可；
  * - 无交集时返回 protocol_incompatible 语义（见 supportsProtocolVersion）。
@@ -63,7 +63,7 @@ export interface CommandReceipt {
   error?: { code: string; message: string }
 }
 
-/** 统一事件包（§3.4）：1.1 连接的所有 CoreEvent 经此包传输；1.0 对端按协商版本收到旧形状（Q5）。 */
+/** 统一事件包（§3.4）：1.1 连接的所有 CoreEvent 经此包传输；1.0 对端按协商版本收到旧形状。 */
 export interface CoreEventEnvelope {
   protocolVersion: string
   roomId: string

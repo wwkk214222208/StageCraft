@@ -1,5 +1,5 @@
 /**
- * W6：Core 业务 handler 挂载（计划 §1.4 / 阶段 4；registry 驱动，禁止复制 app-boot.ts 路由串）。
+ * Core 业务 handler 挂载（计划 §1.4 / 阶段 4；registry 驱动，禁止复制 app-boot.ts 路由串）。
  *
  * 本模块把 registry 中 core owner 的业务路由（room/turn/chat/director/roles/providers/story/
  * prompt/archive 等）映射到 Core WebView 组合根 facade（StageCraftLocalCore 的富 API 门面）。
@@ -9,7 +9,7 @@
  *  - 每个实现以 (facade, body) 调用组合根方法，返回 {status, body}；
  *  - `buildPortableCoverage` 交叉验证：表中 handlerId 必须与 registry core 业务路由一一对应（测试强制）。
  *
- * 未挂载的 handlerId 由 CoreDataServer 返回稳定 handler_not_mounted（W5-5），本模块只挂已实现者。
+ * 未挂载的 handlerId 由 CoreDataServer 返回稳定 handler_not_mounted，本模块只挂已实现者。
  */
 
 import type { ApiRequest, ApiResponse, PortableApiHandler } from './api-handler.ts'
@@ -18,7 +18,7 @@ import { API_ROUTES } from '../api-route-registry.ts'
 
 /** 组合根 facade 的可用方法签名（与 android-local-core.ts 的 localCore 对齐）。 */
 export interface CoreFacade {
-  /** W6-1：原生端口同步调用（story/archive/preset/secret/billing 等 core-native 操作，经 CoreNativeBridge）。 */
+  /** 原生端口同步调用（story/archive/preset/secret/billing 等 core-native 操作，经 CoreNativeBridge）。 */
   invokeSync: (operation: string, input?: Record<string, unknown>) => unknown
   getRoom: () => unknown
   getView: () => unknown
@@ -77,16 +77,16 @@ export interface CoreBusinessHandlerEntry {
 }
 
 const ok = (value: unknown): { status: number; body: unknown } => ({ status: 200, body: value })
-/** R3-2：业务错误契约 = 400 {error: string}（与桌面 app-boot 外层 catch 一致）。 */
+/** 业务错误契约 = 400 {error: string}（与桌面 app-boot 外层 catch 一致）。 */
 const err = (message: string): { status: number; body: unknown } => ({ status: 400, body: { error: message } })
-/** W6-1 逐条裁决：明确 unsupported 的稳定错误（评审允许路径；前端 DEGRADED 表已有容错）。 */
+/** 明确 unsupported 的稳定错误（评审允许路径；前端 DEGRADED 表已有容错）。 */
 const unsupported = (message: string): { status: number; body: unknown } => ({
   status: 503,
   body: { error: { code: 'unsupported_capability', message } },
 })
 const stringOf = (body: Record<string, unknown>, key: string): string => typeof body[key] === 'string' ? body[key] as string : ''
 
-/** R3-2：读供应商 meta（secret local.provider.meta → {providers, defaults}）。 */
+/** 读供应商 meta（secret local.provider.meta → {providers, defaults}）。 */
 function readProviderMeta(facade: CoreFacade): { providers: unknown[]; defaults: Record<string, unknown> } {
   const raw = facade.invokeSync('secret.get', { key: 'local.provider.meta' }) as { found?: boolean; value?: string } | null
   if (raw?.found && raw.value) {
@@ -101,7 +101,7 @@ function readProviderMeta(facade: CoreFacade): { providers: unknown[]; defaults:
   return { providers: [], defaults: {} }
 }
 
-/** R3-2：组装桌面契约的 provider 状态（剥 apiKey → hasApiKey）。 */
+/** 组装桌面契约的 provider 状态（剥 apiKey → hasApiKey）。 */
 function providerState(facade: CoreFacade): Record<string, unknown> {
   const meta = readProviderMeta(facade)
   const providers = (meta.providers as Array<Record<string, unknown>>).map(p => {
@@ -135,13 +135,13 @@ const recordOf = (body: Record<string, unknown>, key: string): Record<string, st
 }
 
 /**
- * 业务 handler 声明表（W6 合流契约：handlerId 与 registry 一一对应，测试强制无漂移）。
+ * 业务 handler 声明表（合流契约：handlerId 与 registry 一一对应，测试强制无漂移）。
  * 所有实现只调组合根 facade，不复制 app-boot.ts 路由串。
  */
 export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   // ── 房间 ──
   { handlerId: 'room.restart', impl: async (facade, body) => {
-    // R13：重开剧本（业务语义，与桌面一致）——清除当前回合/草稿/已批准正文，
+    // 重开剧本（业务语义，与桌面一致）——清除当前回合/草稿/已批准正文，
     // 按 storyId/mode/autoPublish 重开房间。原 Android registry 误映射为
     // host.restart（重启 Core 进程）导致每次重开=Core 重启+数据面断连，已修正。
     const storyId = stringOf(body, 'storyId') || ''
@@ -253,7 +253,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   { handlerId: 'role.memories.update', impl: (facade, body) => { facade.updateNpcMemory(stringOf(body, 'memoryId'), body.entry ?? {}); return ok({ ok: true }) } },
   { handlerId: 'role.memories.reorder', impl: (facade, body) => { facade.reorderNpcMemories(stringOf(body, 'roleId'), stringArray(body, 'memoryIds')); return ok({ ok: true }) } },
   { handlerId: 'role.memories.supersede', impl: (facade, body) => { facade.supersedeNpcMemory(stringOf(body, 'memoryId'), body.entry ?? {}); return ok({ ok: true }) } },
-  // R3-2：桌面契约 GET /api/roles/memories?roleId=<id> → {memories: [...]}（未知 roleId → 空数组）
+  // 桌面契约 GET /api/roles/memories?roleId=<id> → {memories: [...]}（未知 roleId → 空数组）
   { handlerId: 'role.memories.list', impl: (facade, body) => {
     const room = facade.getRoom() as { roles?: Array<{ id?: string; memories?: unknown[] }> } | null
     const roles = Array.isArray(room?.roles) ? room.roles : []
@@ -275,7 +275,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   { handlerId: 'player.avatar', impl: (facade, body) => { facade.setPlayerAvatar(stringOf(body, 'portraitRef')); return ok({ ok: true }) } },
 
   // ── 供应商 ──
-  // R3-2：桌面契约 {providers: [{id,name,baseUrl,models,selectedModel,hasApiKey,responseFormat}], defaults: {...}}
+  // 桌面契约 {providers: [{id,name,baseUrl,models,selectedModel,hasApiKey,responseFormat}], defaults: {...}}
   // 从 secret local.provider.meta 组装（与旧 shim providerMetaView 同语义，形状对齐桌面 provider-config.ts）
   { handlerId: 'provider.list', impl: facade => ok(providerState(facade)) },
   { handlerId: 'provider.save', impl: (facade, body) => {
@@ -313,16 +313,16 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   } },
 
   // ── 故事 ──
-  // R3-2：桌面契约 GET /api/stories → 裸数组 [{id,title,custom}]；GET /api/story/get?id= → 裸 StoryPackage
+  // 桌面契约 GET /api/stories → 裸数组 [{id,title,custom}]；GET /api/story/get?id= → 裸 StoryPackage
   { handlerId: 'story.list', impl: facade => ok(facade.stories()) },
   { handlerId: 'story.get', impl: async (facade, body) => { const story = await facade.story(stringOf(body, 'id')); return ok(story) } },
 
-  // ── W6-1 补挂：故事写入/导入导出（经原生端口 core-native 操作）──
+  // ── 补挂：故事写入/导入导出（经原生端口 core-native 操作）──
   { handlerId: 'story.create', impl: (facade, body) => {
     const result = facade.invokeSync('story.create', { title: stringOf(body, 'title'), opening: body.opening ?? '', playerCharacter: body.playerCharacter ?? {}, roles: Array.isArray(body.roles) ? body.roles : [] }) as { id?: string; title?: string } | null
     return ok({ ok: true, id: result?.id ?? stringOf(body, 'title'), title: result?.title ?? stringOf(body, 'title') })
   } },
-  // R3-2：桌面契约 DELETE /api/stories?id= → {ok:true, id}
+  // 桌面契约 DELETE /api/stories?id= → {ok:true, id}
   { handlerId: 'story.delete', impl: (facade, body) => {
     const id = stringOf(body, 'id')
     if (!id) return err('故事 id 缺失')
@@ -335,7 +335,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     facade.invokeSync('story.save', { story })
     return ok({ ok: true })
   } },
-  // R5-2/R7：save-as 目标 ID 语义与桌面一致——
+  // save-as 目标 ID 语义与桌面一致——
   // 1) newId/new_id 优先（显式目标）；
   // 2) body.id 与 story.id 不同 → 兼容为显式目标 ID（桌面 app-boot 语义：body.id 即目标）；
   // 3) 完全无显式目标 → 生成 story-<timestamp36>（与原生 saveAs id 规则同形；碰撞重试后缀）。
@@ -350,7 +350,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     let targetId = explicitNewId
     if (!targetId && bodyId && bodyId !== sourceId) targetId = bodyId
     if (!targetId) {
-      // R8：生成新 ID（时间戳 36 进制 + 随机后缀）；冲突重试（目标键已存在则重生成，最多 5 次）
+      // 生成新 ID（时间戳 36 进制 + 随机后缀）；冲突重试（目标键已存在则重生成，最多 5 次）
       const existing = new Set((facade.stories() as Array<{ id?: string }>).map(item => item.id).filter(Boolean))
       for (let attempt = 0; attempt < 5; attempt++) {
         const candidate = 'story-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6)
@@ -363,16 +363,16 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     facade.invokeSync('story.saveAs', { id: targetId, title, story: copy })
     return ok({ ok: true, id: targetId, title })
   } },
-  // R3-3 裁决：story/archive 导入导出是 zip/文件字节，经 SAF 原生通道（NativeBridge.importStoryDocument/
+  // story/archive 导入导出是 zip/文件字节，经 SAF 原生通道（NativeBridge.importStoryDocument/
   // exportDocument）承载；gateway 路由返回明确稳定 unsupported，UI 走同一受测入口（不假挂载 JSON 占位）。
   { handlerId: 'story.import', impl: () => unsupported('剧本导入经 SAF 原生通道（文件选择器）') },
   { handlerId: 'story.export', impl: () => unsupported('剧本导出经 SAF 原生通道（创建文档）') },
   { handlerId: 'archive.import', impl: () => unsupported('存档导入经 SAF 原生通道（文件选择器）') },
   { handlerId: 'archive.export', impl: () => unsupported('存档导出经 SAF 原生通道（创建文档）') },
 
-  // ── W6-1 补挂：存档（经原生端口）──
+  // ── 补挂：存档（经原生端口）──
   { handlerId: 'archive.list', impl: facade => { const result = facade.invokeSync('archive.list', {}) as { files?: unknown[] } | null; return ok(result ?? { files: [] }) } },
-  // R3-2：桌面契约 archive.save → {ok:true, name, files:[...]}
+  // 桌面契约 archive.save → {ok:true, name, files:[...]}
   { handlerId: 'archive.save', impl: (facade, body) => {
     const name = stringOf(body, 'name') || '存档-' + new Date().toISOString().slice(0, 10)
     facade.invokeSync('archive.save', { name, archive: body.archive ?? {} })
@@ -380,7 +380,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     return ok({ ok: true, name, files })
   } },
   { handlerId: 'archive.load', impl: (facade, body) => { const result = facade.invokeSync('archive.load', { name: stringOf(body, 'name') }); return ok(result ?? { ok: true }) } },
-  // R3-2：桌面契约 archive.delete → {ok:true, files:[...]}
+  // 桌面契约 archive.delete → {ok:true, files:[...]}
   { handlerId: 'archive.delete', impl: (facade, body) => {
     const name = stringOf(body, 'name')
     if (!name) return err('存档名缺失')
@@ -390,7 +390,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     return ok({ ok: true, files })
   } },
 
-  // ── W6-1 补挂：供应商扩展（经原生端口 secret）──
+  // ── 补挂：供应商扩展（经原生端口 secret）──
   { handlerId: 'provider.default-role', impl: (facade, body) => {
     const meta = readProviderMeta(facade)
     const defaults = { ...(meta.defaults ?? {}), defaultRoleProviderId: stringOf(body, 'id') || stringOf(body, 'providerId'), defaultRoleModel: stringOf(body, 'model') || meta.defaults.defaultRoleModel || '' }
@@ -410,8 +410,8 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     return ok({ ok: true, defaults })
   } },
 
-  // ── W6-1 补挂：计费/用量（经原生端口 secret 持久化；billing 为本地模拟）──
-  // R3-2：桌面契约 GET /api/billing → {prices: {...}, stats: {...}}（renderBilling 读 data.stats/data.prices）
+  // ── 补挂：计费/用量（经原生端口 secret 持久化；billing 为本地模拟）──
+  // 桌面契约 GET /api/billing → {prices: {...}, stats: {...}}（renderBilling 读 data.stats/data.prices）
   { handlerId: 'billing.summary', impl: facade => {
     const pricesRaw = facade.invokeSync('secret.get', { key: 'local.billing.prices' }) as { found?: boolean; value?: string } | null
     const statsRaw = facade.invokeSync('secret.get', { key: 'local.billing.state' }) as { found?: boolean; value?: string } | null
@@ -423,14 +423,14 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     const raw = facade.invokeSync('secret.get', { key: 'local.billing.prices' }) as { found?: boolean; value?: string } | null
     return ok(raw?.found && raw.value ? JSON.parse(raw.value) : { version: 1, rates: [] })
   } },
-  // R3-2：桌面契约 PUT /api/billing/prices → {prices, stats}（前端保存后直接 renderBilling）
+  // 桌面契约 PUT /api/billing/prices → {prices, stats}（前端保存后直接 renderBilling）
   { handlerId: 'billing.prices.put', impl: (facade, body) => {
     facade.invokeSync('secret.set', { key: 'local.billing.prices', value: JSON.stringify(body.prices ?? body) })
     const statsRaw = facade.invokeSync('secret.get', { key: 'local.billing.state' }) as { found?: boolean; value?: string } | null
     const stats = statsRaw?.found && statsRaw.value ? JSON.parse(statsRaw.value) : { version: 1, currency: 'RMB', totalCost: 0, requests: 0, byProvider: [], byModel: [] }
     return ok({ prices: body.prices ?? body, stats })
   } },
-  // R3-2：桌面契约 POST /api/billing/reset → 裸 stats 对象
+  // 桌面契约 POST /api/billing/reset → 裸 stats 对象
   { handlerId: 'billing.reset', impl: facade => {
     const emptyStats = { version: 1, currency: 'RMB', totalCost: 0, requests: 0, updatedAt: new Date().toISOString(), byProvider: [], byModel: [] }
     facade.invokeSync('secret.set', { key: 'local.billing.state', value: JSON.stringify(emptyStats) })
@@ -442,12 +442,12 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     return ok({ route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake', billing: state })
   } },
 
-  // ── W6-1 补挂：提示词预设（经原生端口 preset）──
-  // R3-2/R5-3：桌面契约 GET /api/prompts/presets → {presets, activeByScope, modes, gameplayScenarios}；
+  // ── 补挂：提示词预设（经原生端口 preset）──
+  // 桌面契约 GET /api/prompts/presets → {presets, activeByScope, modes, gameplayScenarios}；
   // activeByScope 从 preset.list 的 SQLite 存储读取（非固定空对象）
   { handlerId: 'prompt.presets.list', impl: facade => {
     const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[]; activeByScope?: Record<string, string> } | null
-    // R7：gameplayScenarios 从打包资产读取（prompt.gameplay.list 原生端口；非固定空对象）
+    // gameplayScenarios 从打包资产读取（prompt.gameplay.list 原生端口；非固定空对象）
     const gameplay = facade.invokeSync('prompt.gameplay.list', {}) as { gameplayScenarios?: Record<string, unknown> } | null
     return ok({
       presets: result?.presets ?? [],
@@ -456,7 +456,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
       gameplayScenarios: gameplay?.gameplayScenarios ?? {},
     })
   } },
-  // R3-2/R5-3：桌面契约 PUT 两种模式 → 裸 PromptPresetState 或 {ok:true, presets}；
+  // 桌面契约 PUT 两种模式 → 裸 PromptPresetState 或 {ok:true, presets}；
   // 切换当前预设走 preset.active-scope.set 同一 SQLite 存储（合并更新，不覆盖其他 scope）
   { handlerId: 'prompt.presets.put', impl: (facade, body) => {
     if (body.preset) {
@@ -474,7 +474,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     const result = facade.invokeSync('preset.list', {}) as { presets?: unknown[]; activeByScope?: Record<string, string> } | null
     return ok({ presets: result?.presets ?? [], activeByScope: result?.activeByScope ?? merged })
   } },
-  // R3-2：桌面契约 DELETE /api/prompts/presets?id= → {ok:true, presets}
+  // 桌面契约 DELETE /api/prompts/presets?id= → {ok:true, presets}
   { handlerId: 'prompt.presets.delete', impl: (facade, body) => {
     const id = stringOf(body, 'id')
     if (!id) return err('预设 id 缺失')
@@ -483,7 +483,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     return ok({ ok: true, presets: result?.presets ?? [] })
   } },
   { handlerId: 'prompt.presets.export', impl: () => unsupported('预设导出经 SAF 原生通道（创建文档）') },
-  // R3-2：桌面契约 GET/PUT /api/prompts/private-toggles（GET 读持久化值）
+  // 桌面契约 GET/PUT /api/prompts/private-toggles（GET 读持久化值）
   { handlerId: 'prompt.private-toggles.get', impl: facade => {
     const raw = facade.invokeSync('secret.get', { key: 'local.prompt.private-toggles' }) as { found?: boolean; value?: string } | null
     return ok(raw?.found && raw.value ? JSON.parse(raw.value) : {})
@@ -505,7 +505,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     return ok({ ok: true, presets: result?.presets ?? [] })
   } },
 
-  // ── W6-1 逐条裁决（明确 unsupported + 前端 DEGRADED 容错；评审允许路径）──
+  // ── 逐条裁决（明确 unsupported + 前端 DEGRADED 容错；评审允许路径）──
   // state.rollback/branch/scene-revision：Android 无正文回滚/分支语义（桌面专属）→ 稳定 unsupported
   { handlerId: 'state.rollback', impl: () => unsupported('正文回滚仅桌面支持（Android 本地无状态分支语义）') },
   { handlerId: 'state.branch', impl: () => unsupported('正文分支仅桌面支持（Android 本地无状态分支语义）') },
@@ -526,7 +526,7 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
 ]
 
 /**
- * W6：业务 handler 的 PortableApiHandler 适配（与 CoreProtocolPortableHandler 并列，
+ * 业务 handler 的 PortableApiHandler 适配（与 CoreProtocolPortableHandler 并列，
  * 由 handlePortableApi 分发）。matches 由 handlerId 反查 registry 派生（避免复制路由串）。
  */
 export class CoreBusinessPortableHandler implements PortableApiHandler {
@@ -552,13 +552,13 @@ export class CoreBusinessPortableHandler implements PortableApiHandler {
     if (!route) return jsonResponse(404, { error: { code: 'not_found', message: `未登记的业务 handler：${method} ${path}` } })
     const impl = this.byHandlerId.get(route.handlerId)
     if (!impl) {
-      // 声明了路由但未挂载：稳定 handler_not_mounted（与 CoreDataServer W5-5 同语义）
+      // 声明了路由但未挂载：稳定 handler_not_mounted（与 CoreDataServer 的未挂载语义一致）
       return jsonResponse(503, { error: { code: 'handler_not_mounted', message: 'core handler not mounted yet', handlerId: route.handlerId } })
     }
     try {
       const body = await readJsonBody(request)
       const params = extractParams(route.pattern, path)
-      // R3-1：query 参数并入 body（GET/DELETE 的 ?id=... 等）；query 优先于 body 同名字段
+      // query 参数并入 body（GET/DELETE 的 ?id=... 等）；query 优先于 body 同名字段
       const queryParams = parseQuery(request.url)
       for (const [key, value] of Object.entries(queryParams)) {
         if (value !== undefined) body[key] = value
@@ -566,13 +566,13 @@ export class CoreBusinessPortableHandler implements PortableApiHandler {
       const result = await impl(this.facade, body, params)
       return jsonResponse(result.status, result.body)
     } catch (error) {
-      // R3-2：业务错误契约 = 400 {error: string}（与桌面 app-boot 外层 catch 一致；前端读 body.error）
+      // 业务错误契约 = 400 {error: string}（与桌面 app-boot 外层 catch 一致；前端读 body.error）
       return jsonResponse(400, { error: error instanceof Error ? error.message : String(error) })
     }
   }
 }
 
-/** R3-1：解析 URL query 为参数表（无 query 返回空对象）。 */
+/** 解析 URL query 为参数表（无 query 返回空对象）。 */
 export function parseQuery(url: string): Record<string, string> {
   const queryIndex = url.indexOf('?')
   if (queryIndex < 0) return {}
@@ -613,7 +613,7 @@ export function extractParams(pattern: string, path: string): Record<string, str
   return params
 }
 
-/** W6：校验挂载覆盖——表中 handlerId 与给定 core 业务路由一一对应（测试强制无漂移）。 */
+/** 校验挂载覆盖——表中 handlerId 与给定 core 业务路由一一对应（测试强制无漂移）。 */
 export function buildBusinessCoverage(
   routes: ReadonlyArray<{ handlerId: string; method: string; pattern: string; owner: string }>,
 ): Array<{ handlerId: string; mounted: boolean }> {
@@ -624,7 +624,7 @@ export function buildBusinessCoverage(
 }
 
 /**
- * W6：registry 驱动的业务路由表（与 api-route-registry.json 同源，构建期确定）。
+ * registry 驱动的业务路由表（与 api-route-registry.json 同源，构建期确定）。
  * 只含 core owner 且非协议端点的业务路由；CoreBusinessPortableHandler 用它在分发时
  * 把 method/path 反查为 handlerId（不复制 app-boot.ts 路由串）。
  */

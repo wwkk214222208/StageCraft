@@ -26,7 +26,7 @@ export const PROVIDER_SECRET_KEY = 'local.provider.default'
 export const LOCAL_ROOM_ID = 'android-local-room'
 
 /**
- * W6：Android 内置插件候选集（构建期确定；与桌面 manifest 契约同源）。
+ * Android 内置插件候选集（构建期确定；与桌面 manifest 契约同源）。
  * 组合根装配（android-composition）的 4 类内置插件：solution/llm/state/human。
  * manifest 由 plugin-bootstrap.ts 的校验规则核对（manifestHash 与 plan 比对）。
  */
@@ -358,11 +358,11 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     approve: (draftId: string, text: string, stateUpdates: Record<string, string>, sceneUpdates?: { time?: string; location?: string }): void => requireComposition().director.approve(LOCAL_ROOM_ID, draftId, text, stateUpdates, sceneUpdates),
   }
 
-  // ── W4/W6 合流：可移植 API handler（协议端点 + 业务 handler 语义单一来源）──
+  // ── 合流：可移植 API handler（协议端点 + 业务 handler 语义单一来源）──
   // 组合根 core（CoreRuntimeSkeleton）即 CoreRuntimePort：dispatch/getView/cancel/subscribe/invokeUiAction。
   // health/capabilities 由 Java 侧 CoreDataServer 承载（真实 bundle 身份/能力矩阵），handler 的可选链
   // getHealth/getCapabilities 不调用（Android 侧不提供），commands/cancel/ui-action 语义与桌面完全同构。
-  // W6：业务 handler 由 registry handlerId 驱动（CoreBusinessPortableHandler），调组合根 facade。
+  // 业务 handler 由 registry handlerId 驱动（CoreBusinessPortableHandler），调组合根 facade。
   let portableHandler: CoreProtocolPortableHandler | undefined
   let businessHandler: CoreBusinessPortableHandler | undefined
   const requirePortableHandler = (): CoreProtocolPortableHandler => {
@@ -384,13 +384,13 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     return handler
   }
   /** 供 core-host-bridge 调用的协议端点分发：返回 Promise<{status, body}>（body 为 JSON 文本）。 */
-  // R3-5/R7：每个请求用独立 AbortController 注册到 pendingPortableCancels；客户端断开时
+  // 每个请求用独立 AbortController 注册到 pendingPortableCancels；客户端断开时
   // Java 侧 cancel(transportId) → 桥发 protocol-cancel → cancelPortableRequest(transportId) → abort signal，
   // 使长模型请求（turn/chat 等）在页面断开后停止。
-  // R7：transportId（CoreService 的 api-* id）作为请求身份贯穿——真实页面无 body requestId 时
+  // transportId（CoreService 的 api-* id）作为请求身份贯穿——真实页面无 body requestId 时
   // 取消链仍可命中；body 的 requestId/id 作为模型取消 key（core.cancel 需要真实模型 request）。
   const pendingPortableCancels = new Map<string, AbortController>()
-  // R9：已取消 transport ID 的有界 tombstone（≤128 条）——取消可能早于 JS 登记到达
+  // 已取消 transport ID 的有界 tombstone（≤128 条）——取消可能早于 JS 登记到达
   // （Java cancel 先移除 pendingApi 再异步投递 evaluateJavascript）；登记时命中 tombstone
   // 立即 abort，杜绝"取消先到被丢弃、请求继续执行"的竞态。
   const cancelledTransportIds = new Set<string>()
@@ -409,7 +409,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
         if (typeof value === 'string') headers[name.toLowerCase()] = value
       }
     } catch { /* 非法 headers 按空表处理 */ }
-    // 请求身份：transportId 优先（R7，始终存在）；body 的 requestId/id 作为模型取消 key
+    // 请求身份：transportId 优先（始终存在）；body 的 requestId/id 作为模型取消 key
     const cancelKey = transportId || ''
     let modelRequestId = ''
     try {
@@ -418,7 +418,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     } catch { /* 非 JSON body（zip 等）：无模型 requestId 可取消 */ }
     const controller = new AbortController()
     if (cancelKey) {
-      // R9：登记时检查 tombstone——取消先于本请求登记到达时立即 abort 并跳过执行
+      // 登记时检查 tombstone——取消先于本请求登记到达时立即 abort 并跳过执行
       // （不调 handlePortableApi，杜绝模型请求在 abort 后仍发出）
       if (cancelledTransportIds.has(cancelKey)) {
         cancelledTransportIds.delete(cancelKey)
@@ -426,7 +426,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       }
       pendingPortableCancels.set(cancelKey, controller)
     }
-    // R9：取消分派必须与提交分派同用 mode-aware 判定——/api/turn 的实际业务分派按房间模式
+    // 取消分派必须与提交分派同用 mode-aware 判定——/api/turn 的实际业务分派按房间模式
     // （facade.submitTurn：director 模式 → director.submitTurn；chat 模式 → chat.submitContribution）。
     // 因此 /api/turn 的取消必须读 room.mode 选对 service；否则导演模式的 chat.cancel 不会清理
     // director 的 activeOperations/模型请求，导演模型迟到仍可能写状态。
@@ -488,13 +488,13 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     }
     return { status: response.status, body: '' }
   }
-  /** R3-5/R7/R8/R9：客户端断开时 abort 对应请求（Java 经桥 protocol-cancel 调用）。幂等：仅首次命中执行。 */
+  /** 客户端断开时 abort 对应请求（Java 经桥 protocol-cancel 调用）。幂等：仅首次命中执行。 */
   const cancelPortableRequest = (requestId: string): void => {
     if (!requestId) return
     const controller = pendingPortableCancels.get(requestId)
     if (!controller) {
-      // R9/R10：请求尚未登记（dispatch 与 cancel 竞态）——写 tombstone，登记时跳过执行。
-      // R10 幂等语义：已在 tombstone 集合（重复取消或已完成清理后的迟到取消）→ 幂等忽略，
+      // 请求尚未登记（dispatch 与 cancel 竞态）——写 tombstone，登记时跳过执行。
+      // 幂等语义：已在 tombstone 集合（重复取消或已完成清理后的迟到取消）→ 幂等忽略，
       // 不再重复写；ID 重用场景下旧 cancel 不会误杀新请求（新请求登记时 tombstone 已被
       // finally 清理或本次写入仅一次）。
       if (cancelledTransportIds.has(requestId)) return
@@ -509,7 +509,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     } catch { /* 组合根未启动：signal abort 已足够 */ }
   }
 
-  // ── W6：PluginLaunchPlan 消费与隔离回报（阶段 5；D2 管理层独立于 Core）──
+  // ── PluginLaunchPlan 消费与隔离回报（管理层独立于 Core）──
   // Core 组合根接收主进程的不可变 PluginLaunchPlan（§2.4），校验 enabled 插件的 manifest
   // 身份（manifestHash），隔离失败记录；隔离结果经消息流（connection 消息）回报主进程，
   // 由 PluginManager 持久化。运行期不热替换（改配置 → 主进程重启 Core）。
@@ -524,7 +524,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       const quarantine: QuarantineRecord[] = []
       for (const plugin of plan.plugins ?? []) {
         if (!plugin.enabled) continue
-        // 内置插件候选集的 manifest 校验（W3 深度校验唯一实现；此处只核对身份与清单形状）
+        // 内置插件候选集的 manifest 校验（深度校验唯一实现；此处只核对身份与清单形状）
         const candidate = BUILTIN_PLUGIN_MANIFESTS.find(manifest => manifest.id === plugin.id)
         if (!candidate) {
           quarantine.push({ pluginId: plugin.id, manifestVersion: plugin.version, manifestHash: plugin.manifestHash, reason: `插件不在 Android 构建候选集内：${plugin.id}`, stage: 'manifest', at: new Date().toISOString() })
@@ -552,7 +552,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     bridgeVersion: ANDROID_CORE_BRIDGE_VERSION,
     protocolVersion: CORE_PROTOCOL_VERSION,
     roomId: LOCAL_ROOM_ID,
-    /** W6-1：原生端口同步调用（story/archive/preset/secret/billing；CoreBusinessHandler 用）。 */
+    /** 原生端口同步调用（story/archive/preset/secret/billing；CoreBusinessHandler 用）。 */
     invokeSync: (operation: string, input: Json = {}): unknown => invokeSync(operation, input),
     start,
     stop: (): void => { composition?.stop(); sink = undefined },
@@ -561,11 +561,11 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     dispatch: (commandJson: string): void => dispatch(commandJson),
     cancel: (requestId?: string): void => { void composition?.cancel(requestId).catch(() => {}) },
     dispose: (): void => { composition?.dispose(); composition = undefined; sink = undefined },
-    /** W4 合流：协议端点分发（core-host-bridge 调用）。 */
+    /** 合流：协议端点分发（core-host-bridge 调用）。 */
     handlePortableRequest,
-    /** R3-5：客户端断开时取消请求（core-host-bridge 经 protocol-cancel 调用）。 */
+    /** 客户端断开时取消请求（core-host-bridge 经 protocol-cancel 调用）。 */
     cancelPortableRequest,
-    /** W6：接受 PluginLaunchPlan 并回报隔离记录（主进程经桥下发）。 */
+    /** 接受 PluginLaunchPlan 并回报隔离记录（主进程经桥下发）。 */
     applyLaunchPlan,
   }, facade)
   global.StageCraftLocalCore = Object.freeze(localCore)

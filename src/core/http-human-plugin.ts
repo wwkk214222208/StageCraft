@@ -22,7 +22,7 @@ interface CoreSseClient {
  * 它只依赖 CoreRuntimePort 和 node:http，不访问 Store、RoomRuntime 或具体业务
  * 路由。组合根通过 handle() 将匹配到的 Core 协议端点交给它处理。
  *
- * 协议 1.1（Q5 逐连接整形）：服务端内部统一使用 1.1 canonical shape，仅在 HTTP/SSE
+ * 协议 1.1（逐连接整形）：服务端内部统一使用 1.1 canonical shape，仅在 HTTP/SSE
  * 边界按客户端声明的 `x-core-protocol-version` 输出——1.0 客户端收到旧 CoreEvent 与
  * {ok:true,view}，1.1 客户端收到 envelope/receipt。缺省（无头）按 1.0 处理。
  */
@@ -34,7 +34,7 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
   private heartbeat?: ReturnType<typeof setInterval>
   private readonly roomId?: () => string
   private readonly turnIdForRequest?: (requestId: string) => string | undefined
-  /** W4：可移植 handler（惰性构造，与 Android harness 共享同一实现）。 */
+  /** 可移植 handler（惰性构造，与 Android harness 共享同一实现）。 */
   private portable?: CoreProtocolPortableHandler
 
   constructor(options: HttpHumanCorePluginOptions = {}) {
@@ -110,7 +110,7 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
   async handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
     if (!url.pathname.startsWith('/api/core/')) return false
     this.requireCore()
-    // W4：JSON 端点委托给可移植 handler（与 Android harness 同一实现，保证桌面/可移植对等）。
+    // JSON 端点委托给可移植 handler（与 Android harness 同一实现，保证桌面/可移植对等）。
     // SSE 端点保留在 HTTP 层（需要 node:http 流式响应）。
     if (url.pathname === '/api/core/events' && request.method === 'GET') {
       response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
@@ -195,7 +195,7 @@ export class HttpHumanCorePlugin implements HumanCoreInteractionPlugin {
 }
 
 /**
- * 页面断开取消传播信号（评审 W5 R2 §4.3）：
+ * 页面断开取消传播信号（评审确认的边界语义）：
  * 由底层 socket 的 close 驱动——客户端断开连接（无论请求是否完成）即 abort，
  * 区别于 AbortSignal.timeout(0) 的 0ms 立即 abort 误用。
  * portable handler 接入长任务（SSE/模型流）时消费此 signal 实现请求级取消；

@@ -1,8 +1,8 @@
 /**
- * PluginContract —— 插件清单、状态、依赖与能力类型（W3；PLUGIN-MANAGER-DESIGN §3.2/3.3 + 计划 v0.4 §2.4/§6.3/§7.4）。
+ * PluginContract —— 插件清单、状态、依赖与能力类型（PLUGIN-MANAGER-DESIGN §3.2/3.3 + 计划 v0.4 §2.4/§6.3/§7.4）。
  *
  * 本模块必须保持零依赖（不 import node:* / DOM）：Core 进程 WebView、桌面与测试共用同一套类型与语义。
- * 深度校验唯一实现在 src/plugin-bootstrap.ts；主进程 Java 只持久化 desiredEnabled 与展示，不得复制规则（Q4 裁决）。
+ * 深度校验唯一实现在 src/plugin-bootstrap.ts；主进程 Java 只持久化 desiredEnabled 与展示，不得复制规则。
  */
 
 /** 装配类别（计划 §2.4：core/repository/human/llm/solution 五类 + composite 聚合）。 */
@@ -44,7 +44,7 @@ export interface PluginManifest {
 /** D1 无热加载：状态机只剩启用标记 + 装载结果（disabled 仅表示 desiredEnabled=false）。 */
 export type PluginState = 'enabled' | 'disabled' | 'quarantined'
 
-/** 装载期隔离记录（计划 §6.3）：Core bootstrap 产出，经控制面摘要 + 数据面完整记录上报主进程（Q4/Q8）。 */
+/** 装载期隔离记录（计划 §6.3）：Core bootstrap 产出，经控制面摘要 + 数据面完整记录上报主进程。 */
 export interface QuarantineRecord {
   pluginId: string
   manifestVersion: string
@@ -92,7 +92,7 @@ export type ArchiveDependencyVerdict =
   | { verdict: 'degraded'; missing: string[]; reason: string }
   | { verdict: 'blocked'; missing: string[]; incompatible: string[]; reason: string }
 
-/** D2：配置存储独立于 Core；Core 从未启动成功时也必须可读写（由主进程实现）。 */
+/** 配置存储独立于 Core；Core 从未启动成功时也必须可读写（由主进程实现）。 */
 export interface PluginConfigStore {
   readConfig(): Record<string, unknown>
   writeConfig(id: string, config: unknown): void
