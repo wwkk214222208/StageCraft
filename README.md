@@ -6,6 +6,7 @@
 
 - [玩家看我.md](./玩家看我.md) —— 玩家与创作者向的使用说明（通俗版）
 - [docs/architecture.md](./docs/architecture.md) —— 系统架构（四层插件、状态事务模型、平台端口）
+- [docs/CONTRIBUTING-API.zh.md](./docs/CONTRIBUTING-API.zh.md) —— **API 贡献指南：如何新增/修改路由（三层结构：运行时契约 / 治理层 / 行为测试）**
 - [docs/why-not-dsh.md](./docs/why-not-dsh.md) —— 为什么不在 dsh 上直接改造、而是另起运行时（架构决策）
 - [docs/creator-dsh-integration-audit.md](./docs/creator-dsh-integration-audit.md) —— 创作者工作台与 dsh 集成审计
 - [docs/certification-matrix.md](./docs/certification-matrix.md) —— 平台认证矩阵（含安卓 skip-gated 说明）
