@@ -157,7 +157,7 @@ export const API_ROUTES: readonly ApiRoute[] = [
   { method: 'GET', pattern: '/api/core/events', owner: 'core', capability: 'core.protocol', auth: 'none', handlerId: 'core.events', stream: CORE_PROTOCOL_STREAM, note: '1.0 对端收到旧 CoreEvent 形状；gateway 只透传字节。' },
   { method: 'POST', pattern: '/api/core/cancel', owner: 'core', capability: 'core.protocol', auth: 'none', handlerId: 'core.cancel', requestSchema: 'CancelRequest@1' },
   { method: 'GET', pattern: '/api/core/capabilities', owner: 'core', capability: 'core.protocol', auth: 'none', handlerId: 'core.capabilities', responseSchema: 'CoreCapabilityList@1' },
-  { method: 'POST', pattern: '/api/core/ui/action', owner: 'core', capability: 'ui.panels', auth: 'none', handlerId: 'core.ui.action', requestSchema: 'UiActionRequest@1', responseSchema: 'UiActionResult@1', note: '桌面 app-boot.ts 当前未实现该路由（前端调用即 404）；共享 handler 需补齐。' },
+  { method: 'POST', pattern: '/api/core/ui/action', owner: 'core', capability: 'ui.panels', auth: 'none', handlerId: 'core.ui.action', requestSchema: 'UiActionRequest@1', responseSchema: 'UiActionResult@1', note: '由共享 CoreProtocolPortableHandler 承载（桌面 http-human-plugin 与 Android harness 同一实现）。' },
 
   // ── 房间 / 回合 / workflow（core） ─────────────────────────────────────
   { method: 'GET', pattern: '/api/room', owner: 'core', capability: 'room.read', auth: 'none', handlerId: 'room.snapshot', responseSchema: 'PublicRoomSnapshot@1' },
@@ -237,7 +237,7 @@ export const API_ROUTES: readonly ApiRoute[] = [
   { method: 'GET', pattern: '/api/prompts/presets', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.list' },
   { method: 'PUT', pattern: '/api/prompts/presets', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.put' },
   { method: 'DELETE', pattern: '/api/prompts/presets', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.delete' },
-  { method: 'POST', pattern: '/api/prompts/presets', owner: 'deprecated', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.post', note: '仅 Android shim 手抄存在，桌面与前端均无此调用；随 shim 删除，不迁移。' },
+  { method: 'POST', pattern: '/api/prompts/presets', owner: 'deprecated', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.post', note: '历史残留：桌面与前端均无此调用，Android gateway 按 deprecated 返回 410；无迁移价值。' },
   { method: 'GET', pattern: '/api/prompts/presets/export', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.presets.export', note: '桌面已实现，shim 缺失；Android 走共享 handler 后自然补齐。' },
   { method: 'GET', pattern: '/api/prompts/private-toggles', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.private-toggles.get' },
   { method: 'PUT', pattern: '/api/prompts/private-toggles', owner: 'core', capability: 'prompt.presets', auth: 'none', handlerId: 'prompt.private-toggles.put' },
@@ -258,7 +258,7 @@ export const API_ROUTES: readonly ApiRoute[] = [
   { method: 'POST', pattern: '/api/st-cards/import', owner: 'core', capability: 'creator.workbench', auth: 'none', handlerId: 'creator.st-cards.import' },
 
   // ── 远程配对 / 同步（main-host，始终主进程处理） ────────────────────────
-  { method: 'POST', pattern: '/api/remote/pairing-code', owner: 'main-host', capability: 'remote.pairing', auth: 'none', handlerId: 'host.remote.pairing-code', note: '桌面未实现该路径（Android UI 专用宿主操作）；桌面返回稳定 unsupported_capability。' },
+  { method: 'POST', pattern: '/api/remote/pairing-code', owner: 'main-host', capability: 'remote.pairing', auth: 'none', handlerId: 'host.remote.pairing-code', note: '桌面已实现（remote-access.ts 生成配对码）；Android 侧返回稳定 unsupported_capability（配对码由远程桌面生成）。' },
   { method: 'POST', pattern: '/api/remote/revoke', owner: 'main-host', capability: 'remote.pairing', auth: 'none', handlerId: 'host.remote.revoke' },
   { method: 'GET', pattern: '/api/remote/sync', owner: 'main-host', capability: 'remote.sync', auth: 'none', handlerId: 'host.remote.sync.get' },
   { method: 'PUT', pattern: '/api/remote/sync', owner: 'main-host', capability: 'remote.sync', auth: 'none', handlerId: 'host.remote.sync.put' },
@@ -271,7 +271,7 @@ export const API_ROUTES: readonly ApiRoute[] = [
   { method: 'POST', pattern: '/api/host/restart', owner: 'main-host', capability: 'host.lifecycle', auth: 'none', handlerId: 'host.restart', note: '宿主重启（Core 进程/launch plan 变更生效）：生成新 launch plan 并重启 Core 进程（§4.3）。与业务重开剧本（/api/restart）分离。' },
 
   // ── DSH agent（desktop-only：仅远程端声明 capability 时可代理） ─────────
-  { method: 'GET', pattern: '/api/agent/capability', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.capability', note: '响应形状保持 {enabled,reason} 兼容；Android 端由 gateway 返回 unsupported_capability 时 UI 必须容错。' },
+  { method: 'GET', pattern: '/api/agent/capability', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.capability', note: '桌面实际形状 {available,native,modelSelection,reason?}（dsh-story-session.ts）；Android 端由 gateway 返回 unsupported_capability 时 UI 必须容错。' },
   { method: 'GET', pattern: '/api/agent/session', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.session.get' , note: 'Android 本地返回 unsupported_capability；远程模式仅当桌面端声明 agent.dsh capability 时可代理。' },
   { method: 'POST', pattern: '/api/agent/session', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.session.post' , note: 'Android 本地返回 unsupported_capability；远程模式仅当桌面端声明 agent.dsh capability 时可代理。' },
   { method: 'DELETE', pattern: '/api/agent/session', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.session.delete' , note: 'Android 本地返回 unsupported_capability；远程模式仅当桌面端声明 agent.dsh capability 时可代理。' },

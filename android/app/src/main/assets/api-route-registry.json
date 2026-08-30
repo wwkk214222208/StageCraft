@@ -197,7 +197,7 @@
       "responseSchema": "UiActionResult@1",
       "handlerId": "core.ui.action",
       "stream": null,
-      "note": "桌面 app-boot.ts 当前未实现该路由（前端调用即 404）；共享 handler 需补齐。"
+      "note": "由共享 CoreProtocolPortableHandler 承载（桌面 http-human-plugin 与 Android harness 同一实现）。"
     },
     {
       "order": 7,
@@ -1967,7 +1967,7 @@
       "responseSchema": null,
       "handlerId": "prompt.presets.post",
       "stream": null,
-      "note": "仅 Android shim 手抄存在，桌面与前端均无此调用；随 shim 删除，不迁移。"
+      "note": "历史残留：桌面与前端均无此调用，Android gateway 按 deprecated 返回 410；无迁移价值。"
     },
     {
       "order": 75,
@@ -2357,7 +2357,7 @@
       "responseSchema": null,
       "handlerId": "host.remote.pairing-code",
       "stream": null,
-      "note": "桌面未实现该路径（Android UI 专用宿主操作）；桌面返回稳定 unsupported_capability。"
+      "note": "桌面已实现（remote-access.ts 生成配对码）；Android 侧返回稳定 unsupported_capability（配对码由远程桌面生成）。"
     },
     {
       "order": 90,
@@ -2593,7 +2593,7 @@
       "responseSchema": null,
       "handlerId": "agent.capability",
       "stream": null,
-      "note": "响应形状保持 {enabled,reason} 兼容；Android 端由 gateway 返回 unsupported_capability 时 UI 必须容错。"
+      "note": "桌面实际形状 {available,native,modelSelection,reason?}（dsh-story-session.ts）；Android 端由 gateway 返回 unsupported_capability 时 UI 必须容错。"
     },
     {
       "order": 99,
