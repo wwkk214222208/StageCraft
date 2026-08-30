@@ -493,21 +493,34 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   // ── 补挂：供应商扩展（经原生端口 secret）──
   { handlerId: 'provider.default-role', impl: (facade, body) => {
     const meta = readProviderMeta(facade)
-    const defaults = { ...(meta.defaults ?? {}), defaultRoleProviderId: stringOf(body, 'id') || stringOf(body, 'providerId'), defaultRoleModel: stringOf(body, 'model') || meta.defaults.defaultRoleModel || '' }
+    const id = stringOf(body, 'id') || stringOf(body, 'providerId')
+    // 桌面契约：id 必须存在（provider-config.setDefaultRole 对不存在 id 抛 400）
+    if (!id) return err('缺少供应商 id。')
+    if (!(meta.providers as Array<Record<string, unknown>>).some(p => p.id === id)) return err('Provider 配置不存在。')
+    const defaults = { ...(meta.defaults ?? {}), defaultRoleProviderId: id, defaultRoleModel: stringOf(body, 'model') || meta.defaults.defaultRoleModel || '' }
     facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: meta.providers, defaults }) })
     return ok(providerState(facade))
   } },
   { handlerId: 'provider.director', impl: (facade, body) => {
     const meta = readProviderMeta(facade)
-    const defaults = { ...(meta.defaults ?? {}), directorProviderId: stringOf(body, 'id') || stringOf(body, 'providerId'), directorModel: stringOf(body, 'model') || meta.defaults.directorModel || '' }
+    const id = stringOf(body, 'id') || stringOf(body, 'providerId')
+    // 桌面契约：id 必须存在（provider-config.setDirector 对不存在 id 抛 400）
+    if (!id) return err('缺少供应商 id。')
+    if (!(meta.providers as Array<Record<string, unknown>>).some(p => p.id === id)) return err('Provider 配置不存在。')
+    const defaults = { ...(meta.defaults ?? {}), directorProviderId: id, directorModel: stringOf(body, 'model') || meta.defaults.directorModel || '' }
     facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: meta.providers, defaults }) })
     return ok(providerState(facade))
   } },
   { handlerId: 'provider.director-thinking', impl: (facade, body) => {
     const meta = readProviderMeta(facade)
-    const defaults = { ...(meta.defaults ?? {}), directorThinkingStrength: stringOf(body, 'thinking') || stringOf(body, 'strength') || meta.defaults.directorThinkingStrength || 'standard' }
+    // 桌面契约：thinking 四值白名单（provider-config.setDirectorThinking 对非法值抛 400）
+    const thinking = stringOf(body, 'thinking') || stringOf(body, 'strength')
+    if (thinking && !['off', 'brief', 'standard', 'deep'].includes(thinking)) return err('无效的思维链强度。')
+    const value = thinking || meta.defaults.directorThinkingStrength || 'standard'
+    const defaults = { ...(meta.defaults ?? {}), directorThinkingStrength: value }
     facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: meta.providers, defaults }) })
-    return ok({ ok: true, defaults })
+    // 响应 defaults 用扁平形状（providerState 同构），避免透传旧 shim 嵌套 role/director 格式
+    return ok({ ok: true, defaults: providerState(facade).defaults })
   } },
 
   // ── 补挂：计费/用量（经原生端口 secret 持久化；billing 为本地模拟）──
