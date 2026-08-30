@@ -75,22 +75,37 @@
 
 ---
 
-## 六、暂记：provider.director-thinking Android 实现是暂时妥协设计
+## 六、暂记：thinking 强度 —— 桌面设计本身是妥协，Android 连妥协都未落地
 
-> 状态：**PENDING（妥协设计，待架构迁移）**。提交 `9d7dc47`（2026-08-30）。
+> 状态：**PENDING（双端设计均属妥协，Android 存在真实缺口）**。提交 `9d7dc47`（2026-08-30）。
 
-### 背景
-Android `provider.director-thinking` 当前是对桌面功能的**本地模拟**：经 `secret local.provider.meta` 的 `defaults.directorThinkingStrength` 持久化一个值，供 `providerState` 读取。桌面侧 `providerStore.setDirectorThinking` 是真实的供应商配置状态（内存 + providers.json 持久化）。
+### 背景：桌面的 `off/brief/standard/deep` 抽象本身就是妥协
+各模型思维链强度参数格式**千奇百怪**（`src/thinking-params.ts:62-90` 每家族一张映射表）：
+- DeepSeek：`thinking {type}` + `reasoning_effort` high/max
+- GLM：`thinking {type}` + `reasoning_effort` max/xhigh/…/minimal/none
+- Gemini：`reasoning_effort` → 自动映射 thinking_level（minimal/low/medium/high）
+- OpenAI：`reasoning_effort` none/minimal/low/medium/high/xhigh/max
+- Kimi K3：始终思考无法关闭，顶层 `reasoning_effort` low/high/max
+- 豆包：`thinking {type}` enabled/disabled/auto
+- Claude/unknown：原生参数不可靠 → 提示词引导（`promptGuidance`）
 
-### 为什么是妥协（缺陷）
-1. **存储分离**：Android 的模型路由层 `readProvider`/`writeProvider`（android-local-core.ts）走 `local.provider.default` 键；而 `director-thinking` 写入 `local.provider.meta.defaults`。两个存储不联动——**写入的 directorThinkingStrength 是否被模型路由层实际消费，未验证**。
-2. **无真实联动**：桌面 `setDirectorThinking` 写入后立即经 `activateProvider` 影响 `createRealWorkers` 的 `directorThinkingStrength` 选项；Android 无对应激活链路，值可能"写了但没用"。
-3. **缺省值硬编码**：缺省 `'standard'` 硬编码在 handler（与桌面 `providerStore` 缺省一致但非同一来源）。
+`off/brief/standard/deep` 四档是对上述格式的**强行归一化**——不存在统一标准，桌面这套抽象是**已知妥协**。因此：
+- 桌面 `setDirectorThinking` 的 `off/brief/standard/deep` 白名单是**合理入口校验**（抽象层内部必须限定档位，否则 `effort()` 映射表查不到）
+- Android `provider.director-thinking` 的本地模拟**不是"未同步桌面"的缺陷**，而是这套妥协设计在 Android 的存储层延伸
+
+### 真实缺口：Android 模型请求完全没走 thinking 抽象
+核查 `android-local-core.ts`：
+- `toOpenAiBody`（:186-197）只组装 `model/messages/stream/tools/response_format`，**无任何 thinking 参数注入**
+- `modelRequest`（:199-256）→ Java transport 直接发裸 OpenAI 兼容请求
+- Java 侧仅转发 thinking delta 事件（模型输出的思维链流），**无请求侧注入**
+- 结论：**Android 的 director-thinking 值"写了但模型请求完全不用"**——连桌面的妥协映射（`buildThinkingParams`）都没在 Android 落地。角色级 `setRoleThinking`（`room.roles[].thinkingStrength`）同理，仅存储、不生效
 
 ### 待办
-- [ ] 验证 Android `local.provider.meta.defaults.directorThinkingStrength` 是否被模型路由（`readProvider`/`createAndroidComposition` 的 workers 装配）实际消费
-- [ ] 若未消费：要么补联动（模型路由读 meta.defaults），要么将 director-thinking 降级为明确 unsupported（避免假生效）
-- [ ] 未来 Android provider 配置架构（AndroidSecretStore 统一）落地后迁移，消除双存储
+- [ ] **决策**：Android 是否补 thinking 注入（在 `toOpenAiBody` 复用 `buildThinkingParams(model, strength)`，需从 meta/room 读取档位）——补则解决"假生效"，不补则应将 director-thinking/setRoleThinking 降级为明确 unsupported 并隐藏 UI，避免误导
+- [ ] 补注入时注意：Android 请求经 Java transport（`AndroidModelTransport`），`reasoning_effort`/`thinking` 字段需确认能透传到 OpenAI 兼容端点（当前 `toOpenAiBody` 无白名单限制，字段可加）
+- [ ] 提示词引导路径（claude/unknown 家族）在 Android 同样缺失（system 提示词无 `promptGuidance` 后缀）——若补注入需一并考虑
 
 ### 影响面
-正常 UI 操作可写入并读回（前端 `updateInspectorThinkingOptions` 读 `defaults.directorThinkingStrength` 显示）——**显示层 OK，生效层存疑**。此条与本批"空角色"改动无关，属同批顺手修复中的已知妥协，故单独记录。
+- 显示层 OK：前端 `updateInspectorThinkingOptions` 读 `defaults.directorThinkingStrength` 显示档位
+- 生效层：**Android 完全无效**（模型请求不带 thinking 参数）——用户以为设置了强度，实际模型按默认行为输出
+- 此条与本批"空角色"改动无关，属顺手修复中暴露的既有妥协/缺口，故单独记录
