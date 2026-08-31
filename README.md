@@ -4,13 +4,13 @@
 
 ## 文档导航
 
+> **`docs/` 是权威文档层（施工 AI 必读）；`custom/docs/` 仅供内部参考，与 `docs/` / 代码冲突时以 `docs/` 与代码为准。**
+
 - [玩家看我.md](./玩家看我.md) —— 玩家与创作者向的使用说明（通俗版）
-- [docs/architecture.md](./docs/architecture.md) —— 系统架构（四层插件、状态事务模型、平台端口）
+- [docs/architecture.md](./docs/architecture.md) —— **架构手册（施工 AI 必读）**：四层插件、状态事务、平台端口、运行时拓扑与事件发射点、路由宪法、组合根与启动链、并发/流式/跨端约束、验证命令与动工清单
 - [docs/CONTRIBUTING-API.zh.md](./docs/CONTRIBUTING-API.zh.md) —— **API 贡献指南：如何新增/修改路由（三层结构：运行时契约 / 治理层 / 行为测试）**
-- [docs/why-not-dsh.md](./docs/why-not-dsh.md) —— 为什么不在 dsh 上直接改造、而是另起运行时（架构决策）
-- [docs/creator-dsh-integration-audit.md](./docs/creator-dsh-integration-audit.md) —— 创作者工作台与 dsh 集成审计
-- [docs/certification-matrix.md](./docs/certification-matrix.md) —— 平台认证矩阵（含安卓 skip-gated 说明）
 - [docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md](./docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md) —— 后续增量修改、并发施工、评审与证据规范
+- [docs/certification-matrix.md](./docs/certification-matrix.md) —— 平台认证矩阵（含安卓 skip-gated 说明，由 `test/certification-matrix.test.ts` 强制存在）
 
 ## 项目定位
 

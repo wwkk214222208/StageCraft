@@ -1070,7 +1070,7 @@ function importPromptAssistantDraft() {
 }
 function promptAssistantContext() { return `你是 StageCraft 的提示词预设编辑助手。你只能分析和提出预设变更建议，不要修改剧本文件，不要声称已经保存任何预设。用户会在中栏预览并明确点击保存。
 
-编辑规则（完整版见 docs/st-preset-mapping-manual.md）：
+编辑规则：
 - 固定玩法节点（removable=false）不可改名、不可删、不可改 role，只能调顺序和启用状态。
 - 每个独立信息来源保持独立节点；不合并、不改写内容。
 - role 为 system 的节点保持在 system 段，role 为 user 的保持在 user 段；调整顺序不跨段。
