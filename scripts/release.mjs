@@ -25,6 +25,9 @@ const EXCLUDE = [
   'dsh-rp/dist', 'dsh-rp/node_modules', 'dsh-web-ui', 'custom', 'docs/certification-matrix.md',
   'start-wsl.bat', 'start-wsl.ps1', 'wsl-start.sh', 'wsl-stop.sh', 'close-wsl.bat',
   'certification-report.json', '.npm-cache', '.pnpm-home', '.toolchains', '.workbuddy',
+  // 本机工具链/临时目录（不随发布产物分发）
+  '.github', '.gradle-home', '.gradle', '.pnpm-store', '.tmp-bill3s', '.tmp-subagent-debug',
+  'android/.gradle', 'android/.idea', 'android/local.properties', 'android/app/build', 'android/build',
 ]
 const EXCLUDE_BASENAMES = new Set(['.gitkeep', 'providers.json'])
 
