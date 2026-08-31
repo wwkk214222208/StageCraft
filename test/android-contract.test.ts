@@ -118,7 +118,7 @@ test('Android credentials stay native, encrypted, and out of URLs or Javascript'
 test('Android APK defaults to the packaged full Web UI while retaining remote entry points', () => {
   const activity = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'MainActivity.java')
   assert.match(activity, /showLocalUi\(\);/)
-  assert.match(activity, /localServer\.urlFor\("\/web\/local\.html"\)/)
+  assert.match(activity, /localServer\.urlFor\("\/web\/local\.html(?:\?gateway=0)?"\)/)
   assert.match(activity, /LOCAL_ORIGIN \+ "\/web\/local\.html"/)
   assert.match(activity, /void showRemoteUi\(String address\)/)
   assert.match(activity, /void showPairingPage\(\)/)

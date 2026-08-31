@@ -44,6 +44,9 @@
           createdAt: new Date().toISOString(),
         }
       }
+      // `thinking` is the legacy service callback. The composition Core event listener
+      // emits the same delta authoritatively; converting this callback would duplicate every chunk.
+      if (message.type === 'thinking') return null
       if (message.type === 'connection.error') {
         return {
           protocolVersion: '1.1',

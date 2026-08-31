@@ -470,19 +470,41 @@ function firstString(...values: unknown[]): string {
   return ''
 }
 
-/** 解析模型返回的 JSON 文本（双端共享）：剥离 ```json 围栏、容忍前后缀文本、截取首个对象/数组片段。 */
+/** 解析模型返回的 JSON 文本（双端共享）：剥离围栏、容忍前后缀文本，并按字符串/转义状态平衡截取。 */
 export function parseModelJson(content: string): unknown {
   const trimmed = content.trim()
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]
   const candidate = fenced ?? trimmed
   try { return JSON.parse(candidate) } catch {}
-  const objectStart = candidate.indexOf('{')
-  const objectEnd = candidate.lastIndexOf('}')
-  if (objectStart >= 0 && objectEnd > objectStart) return JSON.parse(candidate.slice(objectStart, objectEnd + 1))
-  const arrayStart = candidate.indexOf('[')
-  const arrayEnd = candidate.lastIndexOf(']')
-  if (arrayStart >= 0 && arrayEnd > arrayStart) return JSON.parse(candidate.slice(arrayStart, arrayEnd + 1))
+  for (let start = 0; start < candidate.length; start++) {
+    if (candidate[start] !== '{' && candidate[start] !== '[') continue
+    const end = balancedJsonEnd(candidate, start)
+    if (end < 0) continue
+    try { return JSON.parse(candidate.slice(start, end + 1)) } catch {}
+  }
   throw new Error('No JSON value found.')
+}
+
+function balancedJsonEnd(value: string, start: number): number {
+  const stack: string[] = []
+  let quoted = false
+  let escaped = false
+  for (let index = start; index < value.length; index++) {
+    const char = value[index]
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') quoted = false
+      continue
+    }
+    if (char === '"') { quoted = true; continue }
+    if (char === '{' || char === '[') stack.push(char === '{' ? '}' : ']')
+    else if (char === '}' || char === ']') {
+      if (stack.pop() !== char) return -1
+      if (stack.length === 0) return index
+    }
+  }
+  return -1
 }
 
 export function routeFromEnvironment(env: NodeJS.ProcessEnv = process.env): ModelRoute {

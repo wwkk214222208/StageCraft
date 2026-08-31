@@ -384,9 +384,9 @@ public final class MainActivity extends Activity {
     void showLocalUi() {
         String localUrl;
         if (gateway != null) {
-            localUrl = gateway.urlFor("/web/local.html");
+            localUrl = gateway.urlFor("/web/local.html?gateway=1");
         } else if (localServer != null) {
-            localUrl = localServer.urlFor("/web/local.html");
+            localUrl = localServer.urlFor("/web/local.html?gateway=0");
         } else {
             localUrl = StageCraftWebViewClient.LOCAL_ORIGIN + "/web/local.html";
         }

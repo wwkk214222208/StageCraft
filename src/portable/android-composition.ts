@@ -47,8 +47,12 @@ class NativeCoreLlmRouter implements CoreLlmRouterPlugin {
       ? request.metadata.correlation as import('../core/protocol.ts').ModelEventCorrelation
       : undefined
     let thinking = ''
+    let sequence = 0
     const result = await this.transport.request(request, {
-      onThinking: (text: string) => { thinking += text; publish({ type: 'model.thinking.delta', revision: 0, requestId: request.requestId, text, ...(correlation ? { correlation } : {}) }) },
+      onThinking: (text: string) => {
+        thinking += text
+        publish({ type: 'model.thinking.delta', revision: 0, requestId: request.requestId, text, sequence: ++sequence, ...(correlation ? { correlation } : {}) })
+      },
     })
     // 传输层通常已在最终结果里带上 reasoning；仅在缺失时用累计值兜底，语义与桌面端一致。
     const includeTelemetry = request.metadata?.includeTelemetry === true

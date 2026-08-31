@@ -233,12 +233,29 @@ function tokenNoteHtml(kind, usage) {
 const THINKING_PREFS_KEY = 'stagecraft-thinking-prefs'
 let thinkingPrefs = { show: true, autoExpand: false }
 try { thinkingPrefs = { ...thinkingPrefs, ...JSON.parse(localStorage.getItem(THINKING_PREFS_KEY) || '{}') } } catch {}
-const thinkingStreams = new Map() // key: 'role:xxx' | 'director' -> { text, done }
-function thinkingKey(event) { return event.actor === 'director' ? 'director' : `role:${event.roleId}` }
+const thinkingStreams = new Map() // key: request/actor -> { text, done, seen }
+function thinkingKey(event) {
+  const actorKey = event.actor === 'director' ? 'director' : `role:${event.roleId}`
+  return event.requestId ? `${actorKey}:${event.requestId}` : actorKey
+}
+function isDuplicateThinkingEvent(event) {
+  const requestId = typeof event.requestId === 'string' ? event.requestId : ''
+  const sequence = Number.isInteger(event.sequence) ? event.sequence : null
+  if (!requestId && sequence === null) return false
+  const actorKey = event.actor === 'director' ? 'director' : `role:${event.roleId}`
+  const key = `${actorKey}:${requestId}`
+  const stream = thinkingStreams.get(key) ?? { text: '', done: false, seen: new Set() }
+  thinkingStreams.set(key, stream)
+  const signature = sequence === null ? `${event.done ? 'done' : 'delta'}:${event.text || ''}` : `seq:${sequence}`
+  if (stream.seen.has(signature)) return true
+  stream.seen.add(signature)
+  return false
+}
 function thinkingLabel(key) {
-  if (key === 'director') return '导演'
-  const role = room?.roles.find(item => item.id === key.slice(5))
-  return role?.name ?? key.slice(5)
+  const actorKey = key.startsWith('director:') ? 'director' : key.startsWith('role:') ? key.split(':', 2).slice(0, 2).join(':') : key
+  if (actorKey === 'director') return '导演'
+  const role = room?.roles.find(item => item.id === actorKey.slice(5))
+  return role?.name ?? actorKey.slice(5)
 }
 function renderThinkingPanel() {
   const panel = $('#thinking-panel')
@@ -253,13 +270,14 @@ function renderThinkingPanel() {
   }).join('')
 }
 function applyThinkingEvent(event) {
+  if (isDuplicateThinkingEvent(event)) return
   const key = thinkingKey(event)
   if (event.done) {
     const stream = thinkingStreams.get(key)
     if (stream) { stream.done = true; stream.text = event.text || stream.text }
-    else thinkingStreams.set(key, { text: event.text || '', done: true })
+    else thinkingStreams.set(key, { text: event.text || '', done: true, seen: new Set() })
   } else {
-    const stream = thinkingStreams.get(key) ?? { text: '', done: false }
+    const stream = thinkingStreams.get(key) ?? { text: '', done: false, seen: new Set() }
     stream.text += event.text
     stream.done = false
     thinkingStreams.set(key, stream)
@@ -1894,10 +1912,14 @@ $('#create-role-save').onclick = event => {
 }
 $('#sync-roles').onclick = event => { event.preventDefault(); api('/api/story/sync-roles', { storyId: $('#story-select').value }).then(ok => { if (ok) alert('已同步到初始剧本') }) }
 // ── 合并 SSE 单通道（room/thinking/summary 一个连接，避免 HTTP/1.1 每源 6 连接限制导致多窗口拿不到数据）──
-const eventStream = new EventSource('/api/stream')
-eventStream.addEventListener('room', event => { try { render(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] room event render failed', error) } })
-eventStream.addEventListener('thinking', event => { try { applyThinkingEvent(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] thinking event failed', error) } })
-eventStream.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); const detail = item.text.startsWith('模型完整返回') || item.text.startsWith('模型提交提示词'); if (!detail || debugDetailsEnabled) stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
+// Legacy /api/stream is deliberately not opened in local mode: the :core SSE is the sole
+// authoritative source for room/thinking events. Remote desktop pages retain the old stream.
+if (!window.__STAGECRAFT_LOCAL__) {
+  const eventStream = new EventSource('/api/stream')
+  eventStream.addEventListener('room', event => { try { render(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] room event render failed', error) } })
+  eventStream.addEventListener('thinking', event => { try { applyThinkingEvent(JSON.parse(event.data)) } catch (error) { console.error('[StageCraft] thinking event failed', error) } })
+  eventStream.addEventListener('summary', event => { const item = JSON.parse(event.data); const stream = $('#debug-stream'); const detail = item.text.startsWith('模型完整返回') || item.text.startsWith('模型提交提示词'); if (!detail || debugDetailsEnabled) stream.textContent += `[${new Date(item.at).toLocaleTimeString()}] ${item.text}\n` })
+}
 async function bootApp() {
   // 启动竞态（Core 进程启动窗口）：/api/room 可能瞬时 503——有限重试等待 Core 就绪，
   // 避免"默认剧本不显示/页面空白"（Gate D 真机发现：首次启动 room 503 → bootApp 直接
@@ -1962,6 +1984,8 @@ coreClient.subscribe(message => {
       actor: correlation.actor === 'role' ? 'role' : 'director',
       ...(correlation.roleId ? { roleId: correlation.roleId } : {}),
       turnId: correlation.turnId ?? '',
+      requestId: event.requestId ?? '',
+      sequence: event.sequence,
       text: event.text ?? '',
       done: false,
     })
@@ -1972,7 +1996,8 @@ coreClient.subscribe(message => {
       actor: correlation.actor === 'role' ? 'role' : 'director',
       ...(correlation.roleId ? { roleId: correlation.roleId } : {}),
       turnId: correlation.turnId ?? '',
-      text: event.text ?? '',
+      requestId: event.requestId ?? event.result?.requestId ?? '',
+      text: event.text ?? event.result?.thinking ?? '',
       done: true,
     })
   }

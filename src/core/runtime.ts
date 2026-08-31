@@ -1138,7 +1138,7 @@ export class CoreRuntimeSkeleton implements CoreRuntimePort, CoreRuntimeBindingP
       if (roomId) this.workflowStore?.save(roomId, next)
       this.emit({ type: 'workflow.changed', revision: this.revision, workflow: next })
     }
-    this.emit({ type: 'model.completed', revision: this.revision, result, ...(correlation ? { correlation } : {}) })
+    this.emit({ type: 'model.completed', revision: this.revision, requestId: result.requestId, result, ...(correlation ? { correlation } : {}) })
     if (result.error) this.emit({ type: 'error', revision: this.revision, requestId: result.requestId, message: result.error, ...(correlation ? { correlation } : {}) })
   }
 

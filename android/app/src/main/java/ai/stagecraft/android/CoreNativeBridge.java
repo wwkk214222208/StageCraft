@@ -23,7 +23,8 @@ public final class CoreNativeBridge {
     public static final int MAX_OPERATION_LENGTH = 64;
     public static final int MAX_INPUT_BYTES = 4 * 1024 * 1024;
     public static final int MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-    public static final long DEFAULT_TIMEOUT_MS = 20_000;
+    /** Streaming model requests may legitimately run for several minutes; JS owns the 120s idle deadline. */
+    public static final long DEFAULT_TIMEOUT_MS = 600_000;
 
     /** 同步操作结果回调（页面 → 原生端口）。 */
     public interface SyncResult {

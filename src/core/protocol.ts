@@ -284,8 +284,8 @@ export type CoreEvent =
   | { type: 'interaction.created'; revision: number; interaction: InteractionRequest }
   | { type: 'interaction.resolved'; revision: number; interactionId: string; command: HumanCommand }
   | { type: 'model.started'; revision: number; request: ModelRequest }
-  | { type: 'model.thinking.delta'; revision: number; requestId: string; text: string; correlation?: ModelEventCorrelation }
-  | { type: 'model.thinking.completed'; revision: number; text?: string; correlation?: ModelEventCorrelation }
+  | { type: 'model.thinking.delta'; revision: number; requestId: string; text: string; sequence?: number; correlation?: ModelEventCorrelation }
+  | { type: 'model.thinking.completed'; revision: number; requestId?: string; text?: string; correlation?: ModelEventCorrelation }
   | { type: 'model.completed'; revision: number; result: ModelResult; correlation?: ModelEventCorrelation }
   | { type: 'error'; revision: number; message: string; requestId?: string; correlation?: ModelEventCorrelation }
   | { type: 'ui.manifest.changed'; revision: number; manifestId: string; operation: 'registered' | 'unregistered'; sequence: number }

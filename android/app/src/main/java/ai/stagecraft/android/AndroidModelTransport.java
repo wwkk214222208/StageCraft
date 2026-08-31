@@ -30,10 +30,9 @@ public final class AndroidModelTransport implements AutoCloseable {
     private final Set<HttpURLConnection> active = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String, HttpURLConnection> requests = new ConcurrentHashMap<>();
     private volatile boolean closed;
-    public void request(URI endpoint, String apiKey, JSONObject request, Listener listener) { executor.execute(() -> run(endpoint, apiKey, request, listener)); }
+    public void request(URI endpoint, String apiKey, String requestId, JSONObject request, Listener listener) { executor.execute(() -> run(endpoint, apiKey, requestId, request, listener)); }
 
-    private void run(URI endpoint, String apiKey, JSONObject request, Listener listener) {
-        String requestId = request.optString("requestId", "android-model");
+    private void run(URI endpoint, String apiKey, String requestId, JSONObject request, Listener listener) {
         HttpURLConnection connection = null;
         try {
             if (closed) return;
@@ -51,7 +50,11 @@ public final class AndroidModelTransport implements AutoCloseable {
             connection.setFixedLengthStreamingMode(body.length);
             try (OutputStream output = connection.getOutputStream()) { output.write(body); }
             int status = connection.getResponseCode();
-            if (status < 200 || status >= 300) throw new IllegalStateException("Model request failed: " + status);
+            if (status < 200 || status >= 300) {
+                InputStream errorStream = connection.getErrorStream();
+                String detail = errorStream == null ? "" : read(errorStream, 64 * 1024);
+                throw new IllegalStateException("Model request failed: " + status + (detail.isEmpty() ? "" : " - " + detail));
+            }
             String type = connection.getContentType() == null ? "" : connection.getContentType().toLowerCase();
             if (type.startsWith("text/event-stream")) consumeSse(connection.getInputStream(), requestId, listener);
             else listener.onComplete(new JSONObject().put("requestId", requestId).put("responseBody", read(connection.getInputStream(), 16 * 1024 * 1024)));

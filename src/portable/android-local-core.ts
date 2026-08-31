@@ -62,6 +62,7 @@ export interface LocalProviderConfig {
   apiKey: string
   model: string
   responseFormat?: 'json_object' | 'none'
+  toolCalling?: boolean
 }
 
 const SYNC_OPERATIONS = new Set([
@@ -157,7 +158,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     if (selected) {
       const model = typeof selected.selectedModel === 'string' ? selected.selectedModel : ''
       if (model.trim()) {
-        return { baseUrl: selected.baseUrl, apiKey: selected.apiKey, model: model.trim(), responseFormat: selected.responseFormat === 'none' ? 'none' : 'json_object' }
+        return { baseUrl: selected.baseUrl, apiKey: selected.apiKey, model: model.trim(), responseFormat: selected.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: selected.toolCalling !== false }
       }
     }
     // 旧命名快照回退（offline.provider.default → local.provider.default），迁移到表
@@ -167,7 +168,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
         const parsed = JSON.parse(raw.value) as Partial<LocalProviderConfig>
         if (parsed && typeof parsed.baseUrl === 'string' && typeof parsed.apiKey === 'string' && typeof parsed.model === 'string'
           && parsed.baseUrl.trim() && parsed.apiKey.trim() && parsed.model.trim()) {
-          return { baseUrl: parsed.baseUrl.trim(), apiKey: parsed.apiKey.trim(), model: parsed.model.trim(), responseFormat: parsed.responseFormat === 'none' ? 'none' : 'json_object' }
+          return { baseUrl: parsed.baseUrl.trim(), apiKey: parsed.apiKey.trim(), model: parsed.model.trim(), responseFormat: parsed.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: parsed.toolCalling !== false }
         }
       } catch { /* 非法配置按未配置处理 */ }
     }
@@ -183,16 +184,19 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     return `${normalized}/chat/completions`
   }
 
-  const toOpenAiBody = (request: ModelRequest, config: LocalProviderConfig): Json => {
-    const messages: Array<{ role: string; content: string }> = []
-    if (request.prompt?.system) messages.push({ role: 'system', content: request.prompt.system })
-    for (const message of request.prompt?.messages ?? []) {
-      if (message.content) messages.push({ role: message.role, content: message.content })
-    }
-    if (request.prompt?.user) messages.push({ role: 'user', content: request.prompt.user })
+  const toOpenAiBody = (request: ModelRequest, config: LocalProviderConfig, includeTool = true): Json => {
+    const promptMessages = request.prompt?.messages ?? []
+    const messages: Array<{ role: string; content: string }> = promptMessages.length > 0
+      ? promptMessages.filter(message => Boolean(message.content)).map(message => ({ role: message.role, content: message.content }))
+      : [
+        ...(request.prompt?.system ? [{ role: 'system', content: request.prompt.system }] : []),
+        ...(request.prompt?.user ? [{ role: 'user', content: request.prompt.user }] : []),
+      ]
     const body: Json = { model: config.model, messages, stream: request.stream !== false }
-    if (request.tool) body.tools = [{ type: 'function', function: request.tool }]
-    if (config.responseFormat !== 'none') body.response_format = { type: 'json_object' }
+    if (includeTool && request.tool && config.toolCalling !== false) body.tools = [{ type: 'function', function: request.tool }]
+    // Match desktop ModelGateway: tool calls and response_format are mutually incompatible
+    // on several OpenAI-compatible gateways, while the no-tool fallback remains JSON-constrained.
+    if (!(includeTool && request.tool) && config.responseFormat !== 'none') body.response_format = { type: 'json_object' }
     return body
   }
 
@@ -212,12 +216,23 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       onThinking: text => { resetIdle(); hooks?.onThinking?.(text) },
       onContent: () => resetIdle(),
     })
-    const resultPromise = invokeAsync('model.request', { requestId: request.requestId, endpoint: endpointFor(config.baseUrl), apiKey: config.apiKey, ...toOpenAiBody(request, config) }, {
+    const invokeProvider = (includeTool: boolean): Promise<unknown> => invokeAsync('model.request', {
+      requestId: request.requestId,
+      endpoint: endpointFor(config.baseUrl),
+      apiKey: config.apiKey,
+      body: toOpenAiBody(request, config, includeTool),
+    }, {
       onStreamPayload: payload => {
         if (abort.signal.aborted) return
         const parsed = streamWithTimeout.push(payload)
         if (parsed.done) { clearTimeout(idleTimer); clearTimeout(totalTimer) }
       },
+    })
+    const resultPromise = invokeProvider(true).catch(error => {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!request.tool || config.toolCalling === false || !/\b(400|422)\b/.test(message) || !/tool|function|schema|unsupported/i.test(message)) throw error
+      // Some OpenAI-compatible gateways reject tools while accepting the same JSON response.
+      return invokeProvider(false)
     }).then(value => {
       clearTimeout(idleTimer)
       clearTimeout(totalTimer)

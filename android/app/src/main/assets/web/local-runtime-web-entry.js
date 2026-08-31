@@ -10,9 +10,10 @@
   'use strict'
   // 本地运行模式标志：即使本地 Core 未就绪也先标记，供前端（同步区、错误提示等）按本地运行时分支。
   window.__STAGECRAFT_LOCAL__ = true
+  const gatewayMode = window.__STAGECRAFT_GATEWAY__ !== false && new URLSearchParams(window.location.search).get('gateway') !== '0'
   const core = window.StageCraftLocalCore
-  if (!core) throw new Error('本地 Core 未加载（local-runtime-web-entry.js 必须在 embedded-core.js 之后执行）。')
-  const ROOM_ID = core.roomId || 'android-local-room'
+  if (!core && !gatewayMode) throw new Error('本地 Core 未加载（local-runtime-web-entry.js 必须在 embedded-core.js 之后执行）。')
+  const ROOM_ID = core?.roomId || 'android-local-room'
 
   // ── 内部事件总线 ──
   const channels = { room: [], thinking: [], summary: [], core: [] }
@@ -33,8 +34,8 @@
     return { ...room, roles: (room.roles ?? []).map(role => ({ ...role, name: role.name ?? '', currentState: role.currentState ?? '', presence: role.presence ?? 'present', portraitRef: role.portraitRef ?? '/assets/default.svg', selfModel: role.selfModel ?? '', goals: role.goals ?? [], impressions: role.impressions ?? {}, memories: role.memories ?? [] })) }
   }
 
-  // ── 本地核心消息 → 频道 ──
-  core.start(messageStr => {
+  // Gateway 模式由 :core 进程提供唯一权威 Core；页面内 Core 只在旧版 fallback 中启动。
+  if (!gatewayMode) core.start(messageStr => {
     let message
     try { message = typeof messageStr === 'string' ? JSON.parse(messageStr) : messageStr } catch { return }
     if (message.type === 'connection.state') {
@@ -112,8 +113,12 @@
   function throwError(message) {
     return { throw: new Error(message) }
   }
+  function requirePageCore() {
+    if (!core) throw new Error('当前页面由 Core Gateway 提供服务，页面内 Core 不可直接调用。')
+    return core
+  }
   function dispatchCommand(command) {
-    return core.dispatchCommand(command)
+    return requirePageCore().dispatchCommand(command)
   }
   function management(operation, payload = {}) {
     return dispatchCommand({ id: `local-mgmt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, actor: 'operator', type: 'role-management', payload: { roomId: ROOM_ID, operation, ...payload } })
@@ -122,7 +127,7 @@
     return dispatchCommand({ id: `local-${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, actor: 'player', type, payload })
   }
   const guardRoom = () => {
-    try { return core.getRoom() } catch { throw new Error('本地房间不可用。') }
+    try { return requirePageCore().getRoom() } catch { throw new Error('本地房间不可用。') }
   }
   function providerMeta() {
     try {
@@ -173,7 +178,7 @@
       const apiKey = String(preferred.apiKey ?? '')
       const model = String(defaultModel || preferred.selectedModel || preferred.model || '').trim()
       if (baseUrl && apiKey && model) {
-        core.setProvider({ baseUrl, apiKey, model, responseFormat: preferred.responseFormat === 'none' ? 'none' : 'json_object' })
+        requirePageCore().setProvider({ baseUrl, apiKey, model, responseFormat: preferred.responseFormat === 'none' ? 'none' : 'json_object' })
       }
     }
   }
@@ -220,14 +225,14 @@
           return respondJson(200, { updateAvailable, tag, version: String(tag).replace(/^v/, ''), apkUrl: apk?.browser_download_url, currentCommit: current.commit || '' })
         } catch (error) { return respondJson(400, { error: error instanceof Error ? error.message : '检查更新失败。' }) }
       },
-      '/api/stories': () => respondJson(200, core.stories()),
+      '/api/stories': () => respondJson(200, requirePageCore().stories()),
       '/api/archive/export': () => respondJson(200, { version: 1, exportedAt: new Date().toISOString(), room: guardRoom() }),
       '/api/archive/list': () => respondJson(200, nativeInvokeSync('archive.list', {})),
-      '/api/story/get': (params) => core.story(String(params.get('id') ?? '')).then(story => respondJson(200, story)).catch(error => respondJson(400, { error: error.message })),
+      '/api/story/get': (params) => requirePageCore().story(String(params.get('id') ?? '')).then(story => respondJson(200, story)).catch(error => respondJson(400, { error: error.message })),
       '/api/providers': () => respondJson(200, providerMetaView()),
       '/api/usage': () => {
-        const configured = core.getProvider().configured === true
-        return respondJson(200, { route: configured ? '本地' : '模拟', model: configured ? core.getProvider().model : '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: configured ? 'local' : 'fake', billing: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
+        const configured = requirePageCore().getProvider().configured === true
+        return respondJson(200, { route: configured ? '本地' : '模拟', model: configured ? requirePageCore().getProvider().model : '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: configured ? 'local' : 'fake', billing: { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 } })
       },
       '/api/billing': () => {
         let prices = {}
@@ -270,12 +275,12 @@
     post: {
       '/api/restart': async (body) => {
         const room = guardRoom()
-        const story = await core.story(String(body.storyId ?? room.storyId ?? 'eldoria'))
-        core.restart(story, { ...(body.mode === 'chat' || body.mode === 'director' ? { mode: body.mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}) })
+        const story = await requirePageCore().story(String(body.storyId ?? room.storyId ?? 'eldoria'))
+        requirePageCore().restart(story, { ...(body.mode === 'chat' || body.mode === 'director' ? { mode: body.mode } : {}), ...(typeof body.autoPublish === 'boolean' ? { autoPublish: body.autoPublish } : {}) })
         return respondJson(200, { ok: true, roomId: ROOM_ID })
       },
       '/api/archive/save': (body) => respondJson(200, nativeInvokeSync('archive.save', { name: String(body.name ?? '').trim() || `存档-${Date.now()}`, archive: { version: 1, exportedAt: new Date().toISOString(), room: guardRoom() } })),
-      '/api/archive/load': (body) => { const archive = nativeInvokeSync('archive.load', { name: String(body.name ?? '') }); nativeInvokeSync('stagecraft.repository', { method: 'importRoom', args: [ROOM_ID, archive] }); core.refresh(); return respondJson(200, { ok: true, name: body.name }) },
+      '/api/archive/load': (body) => { const archive = nativeInvokeSync('archive.load', { name: String(body.name ?? '') }); nativeInvokeSync('stagecraft.repository', { method: 'importRoom', args: [ROOM_ID, archive] }); requirePageCore().refresh(); return respondJson(200, { ok: true, name: body.name }) },
       '/api/archive/delete': (body) => respondJson(200, nativeInvokeSync('archive.delete', { name: String(body.name ?? '') })),
       '/api/story/import': () => respondJson(501, { error: '独立 APK 的剧本文件导入将在系统文件选择器接入后提供。' }),
       '/api/room-config': (body) => {
@@ -529,10 +534,8 @@
 
   // ── fetch 补丁：W6 起同源 /api/* 由主进程 CoreGatewayServer 按 registry 分派 ──
   // 页面 fetch('/api/...') 直通同源 gateway（gateway → core 代理 / main-host handler / 稳定错误）。
-  // 保留回退：gateway 不可用（__STAGECRAFT_GATEWAY__ = false，由 native 侧注入）时，
-  // 回退旧页面内 Core 的 routes 表（见下方 legacyRoutes）。
+  // 保留回退：gateway 不可用（gatewayMode = false）时，回退旧页面内 Core 的 routes 表。
   const originalFetch = window.fetch.bind(window)
-  const gatewayMode = window.__STAGECRAFT_GATEWAY__ !== false
   window.fetch = (input, init = {}) => {
     let url
     try { url = typeof input === 'string' ? new URL(input, window.location.href) : (input && input.url ? new URL(input.url, window.location.href) : null) } catch { return originalFetch(input, init) }
@@ -563,12 +566,12 @@
       })
       return Promise.resolve(new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }))
     }
-    if (pathname === '/api/core/view') return respondJsonAsync(200, core.getView())
+    if (pathname === '/api/core/view') return respondJsonAsync(200, requirePageCore().getView())
     if (pathname === '/api/core/commands') {
       return new Promise(resolve => {
         const body = JSON.parse(String(init.body ?? '{}'))
-        core.dispatchCommand(body)
-          .then(() => resolve(respondJson(200, { ok: true, view: core.getView() })))
+        requirePageCore().dispatchCommand(body)
+          .then(() => resolve(respondJson(200, { ok: true, view: requirePageCore().getView() })))
           .catch(error => resolve(respondJson(400, { error: error.message })))
       })
     }
@@ -667,7 +670,7 @@
       }
       if (payload.room && typeof payload.room === 'object' && payload.room.room && typeof payload.room.room === 'object') {
         nativeInvokeSync('stagecraft.repository', { method: 'importRoom', args: [ROOM_ID, payload.room] })
-        core.refresh()
+        requirePageCore().refresh()
         result.room = true
       }
       if (Array.isArray(payload.saves)) for (const item of payload.saves) if (item && typeof item === 'object' && String(item.name ?? '').trim() && item.archive && typeof item.archive === 'object') { try { nativeInvokeSync('archive.save', { name: String(item.name), archive: item.archive }); result.saves++ } catch { /* 跳过无效存档 */ } }
@@ -685,9 +688,9 @@
       result.saves = saves.length
       const stories = []
       try {
-        const raw = core.stories()
+        const raw = requirePageCore().stories()
         const list = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.stories) ? raw.stories : [])
-        for (const item of list) { const id = String(item?.id ?? '').trim(); if (!id) continue; try { stories.push(await core.story(id)) } catch { /* 跳过不可读剧本 */ } }
+        for (const item of list) { const id = String(item?.id ?? '').trim(); if (!id) continue; try { stories.push(await requirePageCore().story(id)) } catch { /* 跳过不可读剧本 */ } }
       } catch { /* 本地剧本不可用 */ }
       result.stories = stories.length
       const presets = []
