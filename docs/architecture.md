@@ -10,7 +10,7 @@
 
 ## 说明：v1 shipping 与 v2 参考路径
 
-本文主体描述当前仍在发布的 v1 运行时与插件契约。v2 的可替换 Core、M3 组件 manifest、桌面 Host 与 Android Component Store 已实现到 M9，但仍是实验性、未冻结的参考路径；请结合 [`architecture-v2-proposal.md`](./architecture-v2-proposal.md) 与 [`v2-migration-and-usage.md`](./v2-migration-and-usage.md) 阅读。文中 legacy LLM router 不等同于 v2 LLM System：v2 的 Provider Driver 只是供应商适配，Solution 负责 system prompt/prompt assembly。
+本文主体描述当前仍在发布的 v1 运行时与插件契约。v2 的可替换 Core、M3 组件 manifest、桌面 Host 与 Android Component Store 已实现到 M9（2026-09-02 收尾：逐能力授权、LLM 持久化、插件级隔离、传输层真流式、桌面 UI 挂载/恢复入口/loopback token 防护，详见各 v2 文档），但仍是实验性、未冻结的参考路径；请结合 [`architecture-v2-proposal.md`](./architecture-v2-proposal.md) 与 [`v2-migration-and-usage.md`](./v2-migration-and-usage.md) 阅读。文中 legacy LLM router 不等同于 v2 LLM System：v2 的 Provider Driver 只是供应商适配，Solution 负责 system prompt/prompt assembly。
 
 ---
 

@@ -21,3 +21,10 @@ powershell -File scripts/android-v2-smoke.ps1 -Case smoke -Build -Install
 ```
 
 This is a single-device smoke record, not multi-device compatibility certification. Marketplace UI remains outside the M5–M6 scope; the test uses the developer/instrumentation entry only.
+
+## 2026-09-02 收尾增量
+
+- **页面侧逐能力授权**：`buildV2WebConfig` 将 Core manifest 与插件 manifest 一并下发；页面宿主端口按 caller（pluginId+version）对照组件 granted 能力集合逐操作校验（`host.log`→`host.log`、`host.storage.*`→`host.storage`），未识别操作、缺失 caller、能力未声明一律拒绝。
+- **host.storage**：新增 core-native 操作 `storage.read`/`storage.write`（仅 Core WebView 可达，不进 legacy 迁移期例外集）；Java `V2ComponentStorage` 在 Java 侧再次校验 caller 组件 manifest 已声明 `host.storage` 能力，然后读写 `filesDir/v2-storage/<id>/<area>.json`（原子替换写）。这不是秘密存储；密钥级存储仍走 AndroidSecretStore（`secret.*`）。
+- **插件级隔离**：页面桥逐插件 import，失败者隔离并记录诊断，Core 以剩余集合启动；Java 侧的包校验失败仍 fail closed。
+- **守卫收口**：`NativeOperationGuard` 改为消费生成器输出的 `coreNative` 目标集（不再等同 legacy 例外集）；v2 管理面此前漏登记的 `@JavascriptInterface` 方法（含 synchronized 修饰的 7 个 + `chooseV2Component`）已全部补登记，registry 测试的正则现在穷举 synchronized 方法。
