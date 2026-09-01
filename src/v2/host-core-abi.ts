@@ -57,6 +57,11 @@ export interface HostCoreEntry {
   boot(context: CoreBootContext): void | Promise<void>
   /** Host-to-Core generic operation surface; domain semantics stay inside Core. */
   invoke?(operation: string, input: unknown): unknown | Promise<unknown>
+  /**
+   * Optional transfer-level streaming surface. Chunks are forwarded to the
+   * client as they are produced; aborting iteration releases the producer.
+   */
+  stream?(operation: string, input: unknown): AsyncIterable<unknown>
   shutdown?(): void | Promise<void>
 }
 
@@ -138,6 +143,14 @@ export class HostCoreSession {
     if (this.state !== 'ready') throw new Error(`Core invoke unavailable before Core ready (state=${this.state})`)
     if (!this.#entry?.invoke) throw new Error('Core does not expose Host-to-Core invoke')
     return this.#entry.invoke(operation, input)
+  }
+
+  /** Transfer-level streaming: chunks are forwarded as produced; breaking the
+   * iteration releases the Core-side producer. */
+  async *stream(operation: string, input: unknown): AsyncGenerator<unknown> {
+    if (this.state !== 'ready') throw new Error(`Core stream unavailable before Core ready (state=${this.state})`)
+    if (!this.#entry?.stream) throw new Error('Core does not expose Host-to-Core stream')
+    yield* this.#entry.stream(operation, input)
   }
 
   shutdown(): void {

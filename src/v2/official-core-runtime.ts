@@ -154,6 +154,12 @@ export function createOfficialCoreRuntime(coreComponent: LoadedCoreComponent, op
         context.ready(); state = 'ready'
       } catch (error) { state = 'failed'; try { await api.shutdown() } catch {} ; context.failed('official_core_boot_error', error instanceof Error ? error.message : String(error)); throw error }
     },
+    async *stream(operation, input) {
+      const value = (input as Record<string, any>) ?? {}
+      if (state !== 'ready') return yield* (async function* () { fail(`official Core stream unavailable (state=${state})`) })()
+      if (operation === 'llm/stream') return yield* selectLlm(value.llmSystemId).complete({ requestId: String(value.requestId), messages: value.messages ?? [], providerId: value.providerId, model: value.model, credentialProfileId: value.credentialProfileId, credential: value.credential, metadata: value.metadata })
+      return yield* (async function* () { fail(`official Core does not stream operation: ${operation}`) })()
+    },
     async invoke(operation, input) {
       if (state !== 'ready') fail(`official Core invoke unavailable (state=${state})`)
       const value = input as Record<string, any> ?? {}

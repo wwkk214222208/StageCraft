@@ -257,6 +257,34 @@ function createHttpServer(session: HostCoreSession, plan: ComponentLaunchPlan, m
         sendJson(response, 200, { ok: true, result })
         return
       }
+      if (request.method === 'POST' && url.pathname === '/api/v2/core/stream') {
+        const body = await readBody(request, maxBodyBytes)
+        if (!body || typeof body !== 'object' || typeof (body as { operation?: unknown }).operation !== 'string' || !(body as { operation: string }).operation) throw httpError(400, 'invalid_json', 'body must contain a non-empty operation')
+        const iterator = session.stream((body as { operation: string }).operation, (body as { input?: unknown }).input)[Symbol.asyncIterator]()
+        let clientGone = false
+        request.on('close', () => { clientGone = true })
+        const writeFrame = (payload: unknown) => { if (!response.destroyed) response.write(`data: ${JSON.stringify(payload)}\n\n`) }
+        try {
+          // The first next() runs the producer up to its first chunk, so a
+          // missing/unready stream surfaces as a regular JSON error.
+          let current = await iterator.next()
+          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'Connection': 'keep-alive' })
+          while (true) {
+            if (clientGone || response.destroyed) break
+            if (current.done) { writeFrame({ ok: true, done: true }); break }
+            writeFrame({ ok: true, chunk: current.value })
+            current = await iterator.next()
+          }
+          if (!response.destroyed && !response.writableEnded) response.end()
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          if (!response.headersSent) throw httpError(503, 'stream_unavailable', message)
+          if (!response.destroyed) { writeFrame({ ok: false, error: { code: 'stream_failed', message } }); response.end() }
+        } finally {
+          try { await iterator.return?.(undefined) } catch { /* producer already released */ }
+        }
+        return
+      }
       sendJson(response, 404, { ok: false, error: { code: 'not_found', message: 'Not found' } })
     } catch (error) {
       const failure = error as HttpFailure
