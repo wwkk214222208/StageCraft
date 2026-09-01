@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { buildComponentLaunchPlan } from '../src/v2/launch-plan.ts'
 import { startDesktopEntry } from '../src/v2/desktop-entry.ts'
 import { startV2DesktopHost } from '../src/v2/desktop-host.ts'
+import { createInMemoryComponentStorage } from '../src/v2/component-storage.ts'
 import type { ComponentManifest } from '../src/v2/component-contract.ts'
 
 const root = resolve(new URL('..', import.meta.url).pathname.replace(/^\/(\w):/, '$1:'))
@@ -160,5 +161,63 @@ test('v2 desktop host rejects required capability, integrity, path and handshake
     const runtimePath = join(base, 'components', 'example.desktop-core', '1.0.0', 'dist', 'index.js'); const source = `export default { boot(context) { context.ready({ selectedCore: { id: 'wrong.core', version: '1.0.0', manifestHash: 'x' } }) } }`; writeFileSync(runtimePath, source); manifest.integrity.runtime = `sha256-${createHash('sha256').update(source).digest('hex')}`; writeFileSync(manifestPath, JSON.stringify(manifest)); rewritePlan(base, manifest)
     await assert.rejects(() => startV2DesktopHost({ userDataRoot: base, port: 0 }), /\[v2:handshake\/example\.desktop-core\].*identity mismatch/)
     manifest.entrypoints.runtime = '../outside.js'; writeFileSync(manifestPath, JSON.stringify(manifest)); await assert.rejects(() => startV2DesktopHost({ userDataRoot: base, port: 0 }), /\[v2:plan\/example\.desktop-core\]/)
+  } finally { rmSync(base, { recursive: true, force: true }) }
+})
+
+test('v2 host port enforces per-capability authorization and per-caller storage', async () => {
+  const base = mkdtempSync(join(root, '.tmp-v2-host-cap-')); try {
+    setupCore(base, `let savedContext
+export default {
+  async boot(context) {
+    savedContext = context
+    await context.host.call('host.storage.write', { area: 'demo', value: { n: 7 } }, { pluginId: 'example.desktop-core', version: '1.0.0' })
+    context.ready()
+  },
+  async invoke(operation) {
+    const hostCall = (op, input, caller) => savedContext.host.call(op, input, caller ?? { pluginId: 'example.desktop-core', version: '1.0.0' })
+    if (operation === 'storage/read') return hostCall('host.storage.read', { area: 'demo' })
+    if (operation === 'storage/no-caller') return hostCall('host.storage.read', { area: 'demo' }, {})
+    if (operation === 'log') { await hostCall('host.log', { hello: 'world' }); return 'logged' }
+    if (operation === 'deny/unknown-op') return hostCall('host.nonsense', {})
+    throw new Error('unexpected operation ' + operation)
+  },
+}`)
+    const manifestPath = join(base, 'components', 'example.desktop-core', '1.0.0', 'manifest.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ComponentManifest
+    manifest.capabilities = { required: ['host.storage'], optional: ['host.log'] }
+    writeFileSync(manifestPath, JSON.stringify(manifest)); rewritePlan(base, manifest)
+    const storage = createInMemoryComponentStorage()
+    const host = await startV2DesktopHost({ userDataRoot: base, port: 0, storage })
+    const address = host.server.address(); const port = typeof address === 'object' && address ? address.port : 0
+    const call = async (operation: string) => fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', body: JSON.stringify({ operation }) })
+    const granted = await (await call('storage/read')).json() as any
+    assert.deepEqual(granted.result, { ok: true, value: { n: 7 } })
+    const noCaller = await (await call('storage/no-caller')).json() as any
+    assert.match(noCaller.error.message, /requires a caller identity/)
+    const logged = await (await call('log')).json() as any
+    assert.equal(logged.result, 'logged')
+    assert.ok(host.diagnostics.some(entry => entry.startsWith('host.log:')), 'granted host.log must reach diagnostics')
+    const unknownOp = await (await call('deny/unknown-op')).json() as any
+    assert.match(unknownOp.error.message, /Host operation denied: host\.nonsense/)
+    await host.close()
+  } finally { rmSync(base, { recursive: true, force: true }) }
+})
+
+test('v2 host port denies storage for components that never declared the capability', async () => {
+  const base = mkdtempSync(join(root, '.tmp-v2-host-cap-deny-')); try {
+    setupCore(base, `let deniedMessage
+export default {
+  async boot(context) {
+    try { await context.host.call('host.storage.write', { area: 'demo', value: 1 }, { pluginId: 'example.desktop-core', version: '1.0.0' }) } catch (error) { deniedMessage = String(error.message) }
+    context.ready()
+  },
+  invoke() { return deniedMessage },
+}`)
+    const host = await startV2DesktopHost({ userDataRoot: base, port: 0, storage: createInMemoryComponentStorage() })
+    const address = host.server.address(); const port = typeof address === 'object' && address ? address.port : 0
+    const response = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', body: JSON.stringify({ operation: 'denied' }) })
+    const body = await response.json() as any
+    assert.match(body.result, /Host capability denied: host\.storage for example\.desktop-core/)
+    await host.close()
   } finally { rmSync(base, { recursive: true, force: true }) }
 })

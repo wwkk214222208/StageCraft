@@ -327,8 +327,10 @@ public final class CoreService extends Service {
 
     private String buildV2WebConfig(JSONObject plan) throws Exception {
         JSONObject config = new JSONObject(); JSONObject core = plan.getJSONObject("core");
+        JSONObject coreManifest = v2ComponentStore.read(core.optString("id"), core.optString("version"));
         config.put("request", new JSONObject().put("hostApiVersion", plan.optString("hostApiVersion")).put("selectedCore", core).put("pluginSelections", plan.optJSONArray("plugins") == null ? new org.json.JSONArray() : plan.getJSONArray("plugins")).put("planHash", plan.optString("planHash")));
-        config.put("core", new JSONObject().put("id", core.optString("id")).put("version", core.optString("version")).put("url", "/components/" + core.optString("id") + "/" + core.optString("version") + "/" + v2ComponentStore.read(core.optString("id"), core.optString("version")).getJSONObject("entrypoints").getString("runtime")));
+        // core manifest 一并下发：页面侧宿主端口需要它计算 Core 自身的 granted 能力集合。
+        config.put("core", new JSONObject().put("id", core.optString("id")).put("version", core.optString("version")).put("manifest", coreManifest).put("url", "/components/" + core.optString("id") + "/" + core.optString("version") + "/" + coreManifest.getJSONObject("entrypoints").getString("runtime")));
         org.json.JSONArray plugins = new org.json.JSONArray(); org.json.JSONArray selections = plan.optJSONArray("plugins"); if (selections != null) for (int i = 0; i < selections.length(); i++) { JSONObject selected = selections.getJSONObject(i); JSONObject manifest = v2ComponentStore.read(selected.getString("id"), selected.getString("version")); plugins.put(new JSONObject().put("id", selected.getString("id")).put("version", selected.getString("version")).put("manifest", manifest).put("url", "/components/" + selected.getString("id") + "/" + selected.getString("version") + "/" + manifest.getJSONObject("entrypoints").getString("runtime"))); }
         config.put("plugins", plugins); return config.toString();
     }
@@ -802,6 +804,10 @@ public final class CoreService extends Service {
             built = new CoreNativeBridge(NativeOperationGuard.parse("{\"legacyMainCoreException\":[],\"mainHost\":[]}", false));
         }
         registerCorePorts(built);
+        // v2 host.storage（逐能力授权）：caller 携带组件身份，V2ComponentStorage 校验
+        // caller 组件 manifest 已声明 host.storage 能力后，才读写其命名空间（fail closed）。
+        built.registerSync("storage.read", input -> new V2ComponentStorage(getFilesDir(), v2ComponentStore).read(input));
+        built.registerSync("storage.write", input -> new V2ComponentStorage(getFilesDir(), v2ComponentStore).write(input));
         return built;
     }
 

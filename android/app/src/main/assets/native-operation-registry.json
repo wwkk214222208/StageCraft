@@ -11,6 +11,14 @@
     "dispatch",
     "loadMedia",
     "chooseStoryArchive",
+    "getV2ComponentState",
+    "installV2Component",
+    "selectV2Core",
+    "setV2PluginEnabled",
+    "selectV2Rescue",
+    "setV2SafeMode",
+    "clearV2Quarantine",
+    "chooseV2Component",
     "chooseCharacterCard",
     "exportDocument",
     "syncStatus",
@@ -51,7 +59,9 @@
     "archive.save",
     "archive.delete",
     "model.request",
-    "model.cancel"
+    "model.cancel",
+    "storage.read",
+    "storage.write"
   ],
   "legacyMainCoreException": [
     "asset.read",
@@ -130,6 +140,46 @@
     },
     {
       "name": "chooseStoryArchive",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "getV2ComponentState",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "installV2Component",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "selectV2Core",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "setV2PluginEnabled",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "selectV2Rescue",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "setV2SafeMode",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "clearV2Quarantine",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "chooseV2Component",
       "owner": "main-host",
       "legacyExposure": "main"
     },

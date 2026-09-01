@@ -154,6 +154,13 @@ public class GateBcClosureTest {
         assertNotNull(guard.checkCoreNative("pair"), "main-host 操作不得进入 core 侧");
         assertNull(guard.checkCoreNative("stagecraft.repository"));
 
+        // v2 目标态 coreNative 集合：storage.* 仅 Core 侧可达（不进 legacy 例外，通用入口拒绝）
+        assertNotNull("storage.read 不得从主 WebView 通用入口到达", guard.checkGenericDispatch("storage.read"));
+        assertNull("storage.read 必须在 core 侧放行（coreNative 目标集）", guard.checkCoreNative("storage.read"));
+        assertNull(guard.checkCoreNative("storage.write"));
+        assertTrue("coreNative 目标集必须包含全部 legacy 例外（迁移期超集）",
+            guard.coreNative().containsAll(guard.legacyMainCore()));
+
         // legacyCoreBridgeEnabled=false → core-native 从通用入口全部拒绝
         NativeOperationGuard flipped = NativeOperationGuard.parse(readAsset("native-operation-registry.json"), false);
         assertNotNull(flipped.checkGenericDispatch("archive.list"), "翻转后 legacy 例外必须拒绝");

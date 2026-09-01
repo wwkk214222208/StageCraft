@@ -22,19 +22,23 @@ import java.nio.charset.StandardCharsets;
 public final class NativeOperationGuard {
     private final java.util.Set<String> legacyMainCore;
     private final java.util.Set<String> mainHost;
+    /** 目标态 core-native 全集（registry JSON 的 coreNative 数组；旧 JSON 缺失时回退 legacy 集合）。 */
+    private final java.util.Set<String> coreNativeTargets;
     private final boolean legacyCoreBridgeEnabled;
 
     private NativeOperationGuard(java.util.Set<String> legacyMainCore,
                                  java.util.Set<String> mainHost,
+                                 java.util.Set<String> coreNativeTargets,
                                  boolean legacyCoreBridgeEnabled) {
         this.legacyMainCore = legacyMainCore;
         this.mainHost = mainHost;
+        this.coreNativeTargets = coreNativeTargets;
         this.legacyCoreBridgeEnabled = legacyCoreBridgeEnabled;
     }
 
     /** 同包重建（Holder 翻转时用同一份集合数据，仅翻转语义）。 */
     NativeOperationGuard rebuild(boolean legacyCoreBridgeEnabled) {
-        return new NativeOperationGuard(legacyMainCore, mainHost, legacyCoreBridgeEnabled);
+        return new NativeOperationGuard(legacyMainCore, mainHost, coreNativeTargets, legacyCoreBridgeEnabled);
     }
 
     public static NativeOperationGuard parse(String json, boolean legacyCoreBridgeEnabled) {
@@ -50,7 +54,15 @@ public final class NativeOperationGuard {
             if (mainHostArray != null) {
                 for (int index = 0; index < mainHostArray.length(); index++) mainHost.add(mainHostArray.optString(index));
             }
-            return new NativeOperationGuard(legacy, mainHost, legacyCoreBridgeEnabled);
+            java.util.Set<String> coreNativeTargets = new java.util.HashSet<>();
+            org.json.JSONArray coreNativeArray = root.optJSONArray("coreNative");
+            if (coreNativeArray != null) {
+                for (int index = 0; index < coreNativeArray.length(); index++) coreNativeTargets.add(coreNativeArray.optString(index));
+            } else {
+                // 旧版资产只有 legacy 集合（迁移期两者一致）。
+                coreNativeTargets.addAll(legacy);
+            }
+            return new NativeOperationGuard(legacy, mainHost, coreNativeTargets, legacyCoreBridgeEnabled);
         } catch (Exception error) {
             throw new IllegalStateException("native-operation-registry.json 解析失败", error);
         }
@@ -80,17 +92,16 @@ public final class NativeOperationGuard {
         return "operation 未登记于 NativeOperationRegistry（legacy=" + legacyMainCore.size() + ", mainHost=" + mainHost.size() + "）：" + operation;
     }
 
-    /** :core 侧（W5 CoreNative 桥）专用：只允许 core-native。 */
+    /** :core 侧（W5 CoreNative 桥）专用：只允许 core-native 目标集。 */
     public String checkCoreNative(String operation) {
         if (coreNative().contains(operation)) return null;
         return "operation 不在 core-native allowlist：" + operation;
     }
 
     public java.util.Set<String> coreNative() {
-        java.util.Set<String> names = new java.util.HashSet<>();
-        // coreNative 列表 = legacy 例外全集（迁移期两者一致；翻转后仍为 core-native 目标集）
-        names.addAll(legacyMainCore);
-        return names;
+        // 目标态集合：生成器按 owner=core-native 独立输出；不再是 legacy 例外集合的别名，
+        // 因此新增仅 Core WebView 可达的操作（如 storage.*）不会扩大 legacy 例外。
+        return new java.util.HashSet<>(coreNativeTargets);
     }
 
     public java.util.Set<String> mainHost() { return new java.util.HashSet<>(mainHost); }

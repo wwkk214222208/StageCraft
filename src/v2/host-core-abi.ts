@@ -1,10 +1,18 @@
 import { COMPONENT_HOST_API_VERSION } from './component-contract.ts'
 import type { ComponentLaunchPlan, ComponentManifest, ComponentSelection } from './component-contract.ts'
+import type { HostPortCaller } from './component-storage.ts'
 
 export const HOST_CORE_ABI_VERSION = COMPONENT_HOST_API_VERSION
 
+export type { HostPortCaller }
+
 export interface HostPort {
-  call(operation: string, input: unknown): Promise<unknown>
+  /**
+   * `caller` identifies the calling component so the Host can enforce
+   * per-capability authorization. Capability-gated operations are denied
+   * (fail closed) when the caller is missing or not granted the capability.
+   */
+  call(operation: string, input: unknown, caller?: HostPortCaller): Promise<unknown>
 }
 
 export interface CoreBootRequest {
@@ -99,7 +107,9 @@ export class HostCoreSession {
     const context: CoreBootContext = {
       request: this.request,
       components: this.#components,
-      host: { call: (operation, input) => this.callHost(operation, input) },
+      // The boot-context port is available while the Core boots (diagnostics,
+      // persisted-state loads) and after ready; it is denied once failed/shutdown.
+      host: { call: (operation, input, caller) => this.#dispatchHost(operation, input, caller) },
       ready: signal => this.accept({ type: 'ready', hostApiVersion: signal?.hostApiVersion ?? this.request.hostApiVersion, selectedCore: signal?.selectedCore ?? this.request.selectedCore, planHash: signal?.planHash ?? this.request.planHash }),
       failed: (code, message) => this.accept({ type: 'failed', code, message }),
     }
@@ -114,9 +124,14 @@ export class HostCoreSession {
     if (this.state === 'failed') throw new Error(this.failure?.message ?? 'Core boot failed')
   }
 
-  async callHost(operation: string, input: unknown): Promise<unknown> {
+  async callHost(operation: string, input: unknown, caller?: HostPortCaller): Promise<unknown> {
     if (this.state !== 'ready') throw new Error(`Host port unavailable before Core ready (state=${this.state})`)
-    return this.#backingHost.call(operation, input)
+    return this.#backingHost.call(operation, input, caller)
+  }
+
+  async #dispatchHost(operation: string, input: unknown, caller?: HostPortCaller): Promise<unknown> {
+    if (this.state === 'failed' || this.state === 'shutdown') throw new Error(`Host port unavailable (state=${this.state})`)
+    return this.#backingHost.call(operation, input, caller)
   }
 
   async invoke(operation: string, input: unknown): Promise<unknown> {

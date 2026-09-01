@@ -86,7 +86,7 @@ test('WebView 侧 SYNC_OPERATIONS 全部命中 core-native 目标归属', () => 
 
 test('NativeBridge @JavascriptInterface 方法全部登记为 main-host（interface-method 全集）', () => {
   const bridge = read('android', 'app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'NativeBridge.java')
-  const methods = [...new Set([...bridge.matchAll(/@JavascriptInterface\s+public\s+\S+\s+(\w+)\(/g)].map(match => match[1]))]
+  const methods = [...new Set([...bridge.matchAll(/@JavascriptInterface\s+public\s+(?:synchronized\s+)?(?:static\s+)?\S+\s+(\w+)\(/g)].map(match => match[1]))]
   const coreNativeSet = new Set(coreNativeAllowlist())
   const unregistered = methods.filter(name => !registered.has(name))
   assert.deepEqual(unregistered, [], `主 WebView bridge 新增了 registry 未登记的方法：${unregistered.join(', ')}`)

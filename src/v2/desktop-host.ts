@@ -12,6 +12,7 @@ import type { ComponentLaunchPlan, ComponentManifest } from './component-contrac
 import { validateComponentLaunchPlan } from './launch-plan.ts'
 import { validateComponentManifest, isPortableRelativePath } from './component-validation.ts'
 import { negotiateCapabilities } from './capabilities.ts'
+import { capabilityForHostOperation, createNodeFileComponentStorage, type ComponentStoragePort, type HostPortCaller } from './component-storage.ts'
 import { HOST_CORE_ABI_VERSION, type HostCoreEntry, type LoadedCoreComponent, HostCoreSession } from './host-core-abi.ts'
 
 export interface V2DesktopHostOptions {
@@ -22,6 +23,8 @@ export interface V2DesktopHostOptions {
   port?: number
   availableCapabilities?: readonly string[]
   maxBodyBytes?: number
+  /** Defaults to the Node file store under `<userDataRoot>/data/v2-storage`. */
+  storage?: ComponentStoragePort
 }
 
 export interface V2DesktopHost {
@@ -54,9 +57,12 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
   }
   if (coreManifest.hostApi?.version !== HOST_CORE_ABI_VERSION) throw stageError('manifest', coreManifest.id, `Host API ${coreManifest.hostApi?.version ?? 'missing'} is not supported (expected ${HOST_CORE_ABI_VERSION})`)
   const diagnostics: string[] = []
+  const grantedCapabilities = new Map<string, ReadonlySet<string>>()
+  const availableCapabilities = options.availableCapabilities ?? ['host.log', 'host.storage']
   for (const selectedManifest of selectedManifests) {
-    const capabilityResult = negotiateCapabilities(selectedManifest.capabilities, options.availableCapabilities ?? ['host.log'])
+    const capabilityResult = negotiateCapabilities(selectedManifest.capabilities, availableCapabilities)
     if (!capabilityResult.ok) throw stageError('capability', selectedManifest.id, `required capabilities unavailable: ${capabilityResult.missingRequired.join(', ')}`)
+    grantedCapabilities.set(selectedManifest.id, new Set(capabilityResult.granted))
     diagnostics.push(...capabilityResult.deniedOptional.map(capability => `optional capability denied: ${capability}`))
   }
   const verified = selectedManifests.map(component => ({
@@ -85,7 +91,11 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
   } catch (error) {
     throw stageError('import', coreManifest.id, error instanceof Error ? error.message : String(error))
   }
-  const session = new HostCoreSession(plan, createHostPort(diagnostics), loadedComponents)
+  const session = new HostCoreSession(plan, createHostPort({
+    diagnostics,
+    grants: grantedCapabilities,
+    storage: options.storage ?? createNodeFileComponentStorage(join(options.userDataRoot, 'data', 'v2-storage')),
+  }), loadedComponents)
   try {
     await session.boot(entry)
   } catch (error) {
@@ -169,7 +179,7 @@ function adaptCoreExport(value: unknown, manifest: ComponentManifest): HostCoreE
         authoringContext = {
           apiVersion: HOST_CORE_ABI_VERSION, pluginId: manifest.id, config: {},
           components: context.components,
-          log(level, message, details) { void context.host.call('host.log', { level, message, details }).catch(() => undefined) },
+          log(level, message, details) { void context.host.call('host.log', { level, message, details }, { pluginId: manifest.id, version: manifest.version }).catch(() => undefined) },
           registerCommand(name, handler) { if (commands.has(name)) throw new Error(`duplicate core command: ${name}`); commands.set(name, handler) },
           ready() { context.ready() },
         }
@@ -192,8 +202,28 @@ interface M2CoreContext {
   ready(): void
 }
 
-function createHostPort(diagnostics: string[]): { call(operation: string, input: unknown): Promise<unknown> } {
-  return { async call(operation, input) { if (operation !== 'host.log') throw new Error(`Host operation denied: ${operation}`); diagnostics.push(`host.log: ${JSON.stringify(input)}`); return { ok: true } } }
+interface HostPortOptions {
+  diagnostics: string[]
+  grants: ReadonlyMap<string, ReadonlySet<string>>
+  storage: ComponentStoragePort
+}
+
+/** Per-capability authorization: every operation maps to a capability that the
+ * identified caller must have been granted during negotiation; unknown
+ * operations, unidentified callers and ungranted capabilities all fail closed. */
+function createHostPort(options: HostPortOptions): { call(operation: string, input: unknown, caller?: HostPortCaller): Promise<unknown> } {
+  return { async call(operation, input, caller) {
+    const capability = capabilityForHostOperation(operation)
+    if (!capability) throw new Error(`Host operation denied: ${operation}`)
+    if (!caller || typeof caller.pluginId !== 'string' || !caller.pluginId) throw new Error(`Host operation ${operation} requires a caller identity`)
+    const granted = options.grants.get(caller.pluginId)
+    if (!granted || !granted.has(capability)) throw new Error(`Host capability denied: ${capability} for ${caller.pluginId}`)
+    if (operation === 'host.log') { options.diagnostics.push(`host.log: ${JSON.stringify(input)}`); return { ok: true } }
+    const body = (input ?? {}) as { area?: unknown; value?: unknown }
+    if (operation === 'host.storage.read') return { ok: true, value: await options.storage.read(caller, String(body.area ?? '')) ?? null }
+    if (operation === 'host.storage.write') { await options.storage.write(caller, String(body.area ?? ''), body.value); return { ok: true } }
+    throw new Error(`Host operation denied: ${operation}`)
+  } }
 }
 
 function createHttpServer(session: HostCoreSession, plan: ComponentLaunchPlan, manifest: ComponentManifest, diagnostics: readonly string[], uiEntries: readonly { id: string; version: string; path: string }[], maxBodyBytes: number): Server {

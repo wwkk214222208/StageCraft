@@ -56,6 +56,9 @@ const coreNativeOperations: NativeOperation[] = [
   { name: 'archive.delete', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
   { name: 'model.request', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core', note: '流式回调经进程内桥逐事件投递；凭据不回传页面（§5.5）。' },
   { name: 'model.cancel', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'legacy-main-core' },
+  // v2 host.storage（逐能力授权）：仅 Core WebView 可达，不是 legacy 迁移期例外。
+  { name: 'storage.read', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'core', note: 'v2 每组件命名空间 KV（host.storage 能力）；caller 必须携带组件身份并已声明 host.storage 能力。' },
+  { name: 'storage.write', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'core', note: '同 storage.read；原子替换写。' },
 ]
 
 const mainHostOperations: NativeOperation[] = [
@@ -69,6 +72,15 @@ const mainHostOperations: NativeOperation[] = [
   { name: 'dispatch', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: '远程模式命令传输通道（RemoteCoreConnection）；本地模式命令走同源 gateway，不经此口。' },
   { name: 'loadMedia', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
   { name: 'chooseStoryArchive', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: 'SAF 文件选择属宿主边界（§1.4）；选中的内容交给 core owner API 处理。' },
+  // v2 组件管理面（M5/M6，此前 synchronized 方法漏测漏登记，2026-09-02 收口）
+  { name: 'getV2ComponentState', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: 'v2 Component Store 状态读取（installed/plan/recovery）。' },
+  { name: 'installV2Component', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: 'v2 组件 zip 安装（SAF uri）。' },
+  { name: 'selectV2Core', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: '选择外部 v2 Core，需 acknowledgeRisk。' },
+  { name: 'setV2PluginEnabled', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: '启用/停用外部 v2 ordinary plugin，需 acknowledgeRisk + 有效外部 Core plan。' },
+  { name: 'selectV2Rescue', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: '清空 v2 plan 回到内置 rescue Core。' },
+  { name: 'setV2SafeMode', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: 'v2 安全模式开关（回落 last-good plan）。' },
+  { name: 'clearV2Quarantine', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: '清除 v2 Core 隔离记录。' },
+  { name: 'chooseV2Component', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main', note: 'SAF 选择 v2 组件 zip（宿主边界）；安装经 installV2Component。' },
   { name: 'chooseCharacterCard', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
   { name: 'exportDocument', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },
   { name: 'syncStatus', owner: 'main-host', surface: 'interface-method', legacyExposure: 'main' },

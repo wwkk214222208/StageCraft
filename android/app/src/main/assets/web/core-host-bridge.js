@@ -432,6 +432,57 @@
 
   /** Provisional v2 browser loader: verify Java has already checked files and
    * integrity, then load ordinary modules before the selected Core. */
+  const HOST_AVAILABLE_CAPABILITIES = ['host.log', 'host.storage']
+  function capabilityForHostOperation(operation) {
+    if (operation === 'host.log') return 'host.log'
+    if (operation === 'host.storage.read' || operation === 'host.storage.write') return 'host.storage'
+    return null
+  }
+  function grantedCapabilities(manifest) {
+    const granted = new Set()
+    const declared = (manifest && manifest.capabilities) || {}
+    for (const kind of ['required', 'optional']) {
+      for (const capability of (declared[kind] || [])) if (HOST_AVAILABLE_CAPABILITIES.indexOf(capability) >= 0) granted.add(capability)
+    }
+    return granted
+  }
+  /** Per-capability authorization: operations map to capabilities that the
+   * identified caller must have been granted; everything else fails closed.
+   * host.storage goes through CoreNative, whose Java side re-verifies the
+   * caller's manifest capability before touching per-component storage. */
+  function createV2HostPort(config) {
+    const grants = new Map()
+    if (config.core && config.core.manifest) grants.set(config.core.id, grantedCapabilities(config.core.manifest))
+    for (const plugin of (config.plugins || [])) if (plugin.manifest) grants.set(plugin.id, grantedCapabilities(plugin.manifest))
+    return {
+      call: function (operation, input, caller) {
+        const capability = capabilityForHostOperation(operation)
+        if (!capability) return Promise.reject(new Error('Host operation denied: ' + operation))
+        if (!caller || !caller.pluginId) return Promise.reject(new Error('Host operation ' + operation + ' requires a caller identity'))
+        const granted = grants.get(caller.pluginId)
+        if (!granted || !granted.has(capability)) return Promise.reject(new Error('Host capability denied: ' + capability + ' for ' + caller.pluginId))
+        if (operation === 'host.log') {
+          if (window.CoreHostBridgePort) window.CoreHostBridgePort.send({ type: 'log', text: JSON.stringify(input) })
+          return Promise.resolve({ ok: true })
+        }
+        if (operation === 'host.storage.read' || operation === 'host.storage.write') {
+          if (!window.CoreNative || typeof window.CoreNative.invokeSync !== 'function') return Promise.reject(new Error('CoreNative storage port unavailable'))
+          let raw
+          try {
+            raw = window.CoreNative.invokeSync(operation === 'host.storage.read' ? 'storage.read' : 'storage.write', JSON.stringify({ caller: caller, area: (input || {}).area, value: (input || {}).value }))
+          } catch (error) {
+            return Promise.reject(error instanceof Error ? error : new Error(String(error)))
+          }
+          let result
+          try { result = JSON.parse(raw) } catch (error) { return Promise.reject(new Error('storage result is not JSON')) }
+          if (!result || result.ok !== true) return Promise.reject(new Error((result && result.error && result.error.message) || 'storage operation failed'))
+          return Promise.resolve(result)
+        }
+        return Promise.reject(new Error('Host operation denied: ' + operation))
+      },
+    }
+  }
+
   async function startV2Core(config) {
     const modules = await Promise.all((config.plugins || []).map(function (component) { return import(component.url) }))
     const coreModule = await import(config.core.url)
@@ -464,7 +515,7 @@
       await candidate.boot({
         request: config.request,
         components: modules.map(function (module, index) { return Object.freeze({ manifest: config.plugins[index].manifest, defaultExport: module.default, module: module }) }),
-        host: { call: function (operation, input) { if (operation !== 'host.log') return Promise.reject(new Error('Host operation denied: ' + operation)); if (window.CoreHostBridgePort) window.CoreHostBridgePort.send({ type: 'log', text: JSON.stringify(input) }); return Promise.resolve({ ok: true }) } },
+        host: createV2HostPort(config),
         ready: function (signal) {
           if (failedCalled) throw new Error('Core already reported failure')
           if (readyCalled) throw new Error('Core ready called more than once')
@@ -488,7 +539,9 @@
     if (candidate && candidate.kind === 'core' && typeof candidate.start === 'function') {
       const commands = {}
       let readyCalled = false
-      const startContext = { apiVersion: config.request.hostApiVersion, pluginId: config.core.id, config: {}, components: modules.map(function (module, index) { return Object.freeze({ manifest: config.plugins[index].manifest, defaultExport: module.default, module: module }) }), log: function (level, message, details) { if (window.CoreHostBridgePort) window.CoreHostBridgePort.send({ type: 'log', text: level + ': ' + message + ' ' + JSON.stringify(details || null) }) }, registerCommand: function (name, handler) { commands[name] = handler }, ready: function () { readyCalled = true } }
+      const hostPort = createV2HostPort(config)
+      const coreCaller = { pluginId: config.core.id, version: config.core.version }
+      const startContext = { apiVersion: config.request.hostApiVersion, pluginId: config.core.id, config: {}, components: modules.map(function (module, index) { return Object.freeze({ manifest: config.plugins[index].manifest, defaultExport: module.default, module: module }) }), log: function (level, message, details) { hostPort.call('host.log', { level: level, message: message, details: details }, coreCaller).catch(function () { }) }, registerCommand: function (name, handler) { commands[name] = handler }, ready: function () { readyCalled = true } }
       await candidate.start(startContext)
       if (!readyCalled) throw new Error('v2 Core start returned without ready handshake')
       const coreEntry = {
