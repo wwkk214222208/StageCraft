@@ -484,7 +484,23 @@
   }
 
   async function startV2Core(config) {
-    const modules = await Promise.all((config.plugins || []).map(function (component) { return import(component.url) }))
+    // Plugin-level isolation: a plugin whose module fails at import time is
+    // quarantined (diagnostic only); the Core boots with the remaining set.
+    // Java-side verification failures never reach this loader (fail closed).
+    const loadedPlugins = []
+    for (const componentConfig of (config.plugins || [])) {
+      try {
+        loadedPlugins.push({ config: componentConfig, module: await import(componentConfig.url) })
+      } catch (error) {
+        const reason = error && error.message ? error.message : String(error)
+        if (window.CoreHostBridgePort) window.CoreHostBridgePort.send({ type: 'log', text: 'plugin quarantined: ' + componentConfig.id + '@' + componentConfig.version + ' import failed: ' + reason })
+      }
+    }
+    const effectiveRequest = Object.assign({}, config.request, {
+      pluginSelections: (config.request.pluginSelections || []).filter(function (selection) {
+        return loadedPlugins.some(function (entry) { return entry.config.id === selection.id && entry.config.version === selection.version })
+      }),
+    })
     const coreModule = await import(config.core.url)
     const candidate = coreModule.default
     if (candidate && candidate.manifest) {
@@ -513,8 +529,8 @@
       let readyCalled = false
       let failedCalled = false
       await candidate.boot({
-        request: config.request,
-        components: modules.map(function (module, index) { return Object.freeze({ manifest: config.plugins[index].manifest, defaultExport: module.default, module: module }) }),
+        request: effectiveRequest,
+        components: loadedPlugins.map(function (entry) { return Object.freeze({ manifest: entry.config.manifest, defaultExport: entry.module.default, module: entry.module }) }),
         host: createV2HostPort(config),
         ready: function (signal) {
           if (failedCalled) throw new Error('Core already reported failure')
@@ -541,7 +557,7 @@
       let readyCalled = false
       const hostPort = createV2HostPort(config)
       const coreCaller = { pluginId: config.core.id, version: config.core.version }
-      const startContext = { apiVersion: config.request.hostApiVersion, pluginId: config.core.id, config: {}, components: modules.map(function (module, index) { return Object.freeze({ manifest: config.plugins[index].manifest, defaultExport: module.default, module: module }) }), log: function (level, message, details) { hostPort.call('host.log', { level: level, message: message, details: details }, coreCaller).catch(function () { }) }, registerCommand: function (name, handler) { commands[name] = handler }, ready: function () { readyCalled = true } }
+      const startContext = { apiVersion: config.request.hostApiVersion, pluginId: config.core.id, config: {}, components: loadedPlugins.map(function (entry) { return Object.freeze({ manifest: entry.config.manifest, defaultExport: entry.module.default, module: entry.module }) }), log: function (level, message, details) { hostPort.call('host.log', { level: level, message: message, details: details }, coreCaller).catch(function () { }) }, registerCommand: function (name, handler) { commands[name] = handler }, ready: function () { readyCalled = true } }
       await candidate.start(startContext)
       if (!readyCalled) throw new Error('v2 Core start returned without ready handshake')
       const coreEntry = {

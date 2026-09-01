@@ -29,29 +29,37 @@ function validateIdentity(component: LoadedCoreComponent): AnyPlugin {
 
 function selectionKey(selection: ComponentSelection): string { return `${selection.id}@${selection.version}` }
 
-function orderComponents(components: readonly LoadedCoreComponent[], selected: readonly ComponentSelection[]): LoadedCoreComponent[] {
+/** Dependency-ordered load with plugin-level isolation: a component whose
+ * dependency chain fails is quarantined with a reason instead of failing the
+ * whole boot. The Core itself is validated separately by the caller. */
+function orderComponents(components: readonly LoadedCoreComponent[], selected: readonly ComponentSelection[]): { ordered: LoadedCoreComponent[]; quarantined: Map<string, string> } {
   const byKey = new Map(components.map(component => [selectionKey({ id: component.manifest.id, version: component.manifest.version, manifestHash: '' }), component]))
   const requested = new Map(selected.map(selection => [selectionKey(selection), selection]))
-  const ordered: LoadedCoreComponent[] = []; const visiting = new Set<string>(); const visited = new Set<string>()
+  const ordered: LoadedCoreComponent[] = []; const quarantined = new Map<string, string>(); const visiting = new Set<string>(); const visited = new Set<string>()
   const visit = (component: LoadedCoreComponent) => {
     const key = `${component.manifest.id}@${component.manifest.version}`
     if (visited.has(key)) return
     if (visiting.has(key)) fail(`component dependency cycle at ${key}`)
     visiting.add(key)
-    for (const dependency of [...(component.manifest.dependencies ?? [])].sort((a, b) => a.id.localeCompare(b.id) || a.version.localeCompare(b.version))) {
-      const depKey = `${dependency.id}@${dependency.version}`; const dep = byKey.get(depKey)
-      if (!dep) { if (!dependency.optional) fail(`missing required component dependency: ${depKey}`); continue }
-      visit(dep)
-    }
-    visiting.delete(key); visited.add(key); ordered.push(component)
+    try {
+      for (const dependency of [...(component.manifest.dependencies ?? [])].sort((a, b) => a.id.localeCompare(b.id) || a.version.localeCompare(b.version))) {
+        const depKey = `${dependency.id}@${dependency.version}`; const dep = byKey.get(depKey)
+        if (!dep) { if (!dependency.optional) fail(`missing required component dependency: ${depKey}`); continue }
+        visit(dep)
+      }
+      visiting.delete(key); visited.add(key); ordered.push(component)
+    } catch (error) { visiting.delete(key); throw error }
   }
   for (const selection of [...selected].sort((a, b) => a.id.localeCompare(b.id) || a.version.localeCompare(b.version))) {
-    const component = byKey.get(selectionKey(selection))
-    if (!component) fail(`selected component is not loaded: ${selectionKey(selection)}`)
-    visit(component)
-    requested.delete(selectionKey(selection))
+    const key = selectionKey(selection)
+    const component = byKey.get(key)
+    if (!component) { quarantined.set(key, 'selected component is not loaded'); requested.delete(key); continue }
+    try { visit(component); requested.delete(key) } catch (error) { quarantined.set(key, error instanceof Error ? error.message : String(error)) }
   }
-  return ordered
+  // Selected components that never reached a complete visit (cycle members or
+  // dependents of a quarantined dependency) are quarantined as well.
+  for (const [key, selection] of requested) quarantined.set(key, quarantined.get(key) ?? `dependency chain failed for ${selection.id}@${selection.version}`)
+  return { ordered, quarantined }
 }
 
 function context(manifest: { id: string; version: string }, config: Readonly<Record<string, unknown>>, host: CoreBootContext['host']): AuthoringContext {
@@ -81,8 +89,16 @@ export interface OfficialCoreRuntimeOptions {
   readonly config?: Readonly<Record<string, unknown>>
 }
 
+export interface OfficialCorePluginQuarantine {
+  readonly id: string
+  readonly version: string
+  readonly reason: string
+}
+
 export interface OfficialCoreRuntime extends HostCoreEntry, OfficialCorePluginApi {
   readonly status: 'pending' | 'ready' | 'stopped' | 'failed'
+  /** Ordinary plugins excluded during boot, with the isolation reason. */
+  listQuarantined(): readonly OfficialCorePluginQuarantine[]
 }
 
 /** Creates an authoring-SDK Core entry that can be passed directly to HostCoreSession.boot. */
@@ -90,13 +106,14 @@ export function createOfficialCoreRuntime(coreComponent: LoadedCoreComponent, op
   let bootContext: CoreBootContext | undefined
   let core: CorePlugin | undefined
   let coreCommands = new Map<string, (input: unknown) => unknown | Promise<unknown>>()
-  let loaded: LoadedCoreComponent[] = []; let pluginValues = new Map<string, AnyPlugin>(); let active = new Set<string>(); let disposedUi = new Set<string>(); let llm = new Map<string, LlmSystemHarness>(); let stopped = false; let coreStarted = false; let state: OfficialCoreRuntime['status'] = 'pending'
+  let loaded: LoadedCoreComponent[] = []; let pluginValues = new Map<string, AnyPlugin>(); let active = new Set<string>(); let disposedUi = new Set<string>(); let llm = new Map<string, LlmSystemHarness>(); let stopped = false; let coreStarted = false; let state: OfficialCoreRuntime['status'] = 'pending'; const quarantinedPlugins: { id: string; version: string; reason: string }[] = []
   /** options.config merged with the persisted core config area once boot loads it. */
   let resolvedConfig: Record<string, unknown> = { ...(options.config ?? {}) }
   const descriptors = () => loaded.filter(c => active.has(selectionKey({ id: c.manifest.id, version: c.manifest.version, manifestHash: '' }))).map(c => ({ id: c.manifest.id, version: c.manifest.version, pluginCategory: c.manifest.pluginCategory! as OfficialCorePluginDescriptor['pluginCategory'] }))
   const api: OfficialCoreRuntime = {
     profile: 'stagecraft.core-plugin/0.1', get status() { return state },
     listPlugins: () => Object.freeze(descriptors()),
+    listQuarantined: () => Object.freeze([...quarantinedPlugins.map(entry => ({ ...entry }))]),
     async loadPlugin(descriptor) { const key = `${descriptor.id}@${descriptor.version}`; const component = loaded.find(c => `${c.manifest.id}@${c.manifest.version}` === key); if (!component || component.manifest.componentType !== 'plugin') fail(`plugin is not selected: ${key}`); active.add(key) },
     async unloadPlugin(id) { const keys = [...active].filter(key => key === id || key.startsWith(`${id}@`)); const errors: unknown[] = []; for (const key of keys.reverse()) { const plugin = pluginValues.get(key); try { if (plugin?.kind === 'llm-system') { await llm.get(key)?.stop(); llm.delete(key) }; if (plugin?.kind === 'ui' && !disposedUi.has(key)) { await (plugin as UiPlugin).dispose?.(context(plugin.manifest, resolvedConfig, bootContext!.host)); disposedUi.add(key) } } catch (error) { errors.push(error) } active.delete(key) } if (errors.length) throw new AggregateError(errors, `failed to unload plugin ${id}`) },
     async boot(context) {
@@ -109,14 +126,26 @@ export function createOfficialCoreRuntime(coreComponent: LoadedCoreComponent, op
         if (persistedConfig && typeof persistedConfig === 'object' && !Array.isArray(persistedConfig)) resolvedConfig = { ...(options.config ?? {}), ...(persistedConfig as Record<string, unknown>) }
         core = validateIdentity(coreComponent) as CorePlugin
         const selected = context.request.pluginSelections
-        const ordered = orderComponents(context.components, selected)
-        loaded = ordered; for (const component of ordered) pluginValues.set(`${component.manifest.id}@${component.manifest.version}`, validateIdentity(component))
-        const drivers = ordered.map(c => pluginValues.get(`${c.manifest.id}@${c.manifest.version}`)).filter((p): p is ProviderDriver => p?.kind === 'provider-driver')
+        const { ordered, quarantined: chainFailures } = orderComponents(context.components, selected)
+        loaded = ordered
+        const quarantined = new Map(chainFailures)
+        pluginValues = new Map()
         for (const component of ordered) {
-          const plugin = pluginValues.get(`${component.manifest.id}@${component.manifest.version}`)!
-          if (plugin.kind === 'llm-system') llm.set(`${component.manifest.id}@${component.manifest.version}`, await createAuthoringLlmSystemHarness(plugin as LlmSystemPlugin, resolvedConfig, { drivers, store: createHostLlmStore(context.host, plugin.manifest) }))
+          const key = `${component.manifest.id}@${component.manifest.version}`
+          try { pluginValues.set(key, validateIdentity(component)) } catch (error) { quarantined.set(key, error instanceof Error ? error.message : String(error)) }
+        }
+        const drivers = [...pluginValues.values()].filter((p): p is ProviderDriver => p?.kind === 'provider-driver')
+        for (const component of ordered) {
+          const key = `${component.manifest.id}@${component.manifest.version}`
+          const plugin = pluginValues.get(key)
+          if (!plugin) continue
+          if (plugin.kind === 'llm-system') {
+            try { llm.set(key, await createAuthoringLlmSystemHarness(plugin as LlmSystemPlugin, resolvedConfig, { drivers, store: createHostLlmStore(context.host, plugin.manifest) })) }
+            catch (error) { quarantined.set(key, `llm system init failed: ${error instanceof Error ? error.message : String(error)}`); continue }
+          }
           await api.loadPlugin({ id: component.manifest.id, version: component.manifest.version, pluginCategory: component.manifest.pluginCategory! as OfficialCorePluginDescriptor['pluginCategory'] })
         }
+        quarantinedPlugins.splice(0, quarantinedPlugins.length, ...[...quarantined].map(([key, reason]) => { const separator = key.lastIndexOf('@'); return { id: key.slice(0, separator), version: key.slice(separator + 1), reason } }))
         let innerReady = false
         const authoringContext = { ...contextForCore(context, () => { if (innerReady) fail('Core ready() called more than once'); innerReady = true }), components: context.components.map(c => ({ manifest: c.manifest as unknown as Readonly<Record<string, unknown>>, defaultExport: c.defaultExport, module: c.module })) }
         coreStarted = true
@@ -128,7 +157,8 @@ export function createOfficialCoreRuntime(coreComponent: LoadedCoreComponent, op
     async invoke(operation, input) {
       if (state !== 'ready') fail(`official Core invoke unavailable (state=${state})`)
       const value = input as Record<string, any> ?? {}
-      if (operation === 'plugins/list' || operation === 'plugins/status') return api.listPlugins()
+      if (operation === 'plugins/list') return api.listPlugins()
+      if (operation === 'plugins/status') return { plugins: api.listPlugins(), quarantined: api.listQuarantined() }
       if (operation === 'solution/assemble') { const solution = select<SolutionPlugin>('solution', value.solutionId); const assembled = await solution.assemblePrompt({ user: String(value.user ?? ''), state: value.state, history: value.history }, context(solution.manifest, resolvedConfig, bootContext!.host)); const messages = [...(solution.systemPrompt ? [{ role: 'system', content: solution.systemPrompt }] : []), { role: 'user', content: assembled }]; return { systemPrompt: solution.systemPrompt, assembled, messages } }
       if (operation === 'solution/command') { const solution = select<SolutionPlugin>('solution', value.solutionId); if (!solution.handleCommand) fail(`solution ${solution.manifest.id} has no command handler`); return solution.handleCommand(value.command, context(solution.manifest, resolvedConfig, bootContext!.host)) }
       if (operation === 'llm/complete' || operation === 'llm/stream') { const harness = selectLlm(value.llmSystemId); const chunks = []; for await (const chunk of harness.complete({ requestId: String(value.requestId), messages: value.messages ?? [], providerId: value.providerId, model: value.model, credentialProfileId: value.credentialProfileId, credential: value.credential, metadata: value.metadata })) chunks.push(chunk); return chunks }

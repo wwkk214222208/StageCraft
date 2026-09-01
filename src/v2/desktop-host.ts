@@ -31,6 +31,9 @@ export interface V2DesktopHost {
   readonly server: Server
   readonly session: HostCoreSession
   readonly plan: ComponentLaunchPlan
+  /** The plan actually executed: original plan minus import-quarantined plugins. */
+  readonly effectivePlan: ComponentLaunchPlan
+  readonly quarantinedPlugins: readonly { id: string; version: string; reason: string }[]
   readonly coreManifest: ComponentManifest
   readonly diagnostics: readonly string[]
   close(): Promise<void>
@@ -74,15 +77,24 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
   }))
   const uiEntries = verified.filter(component => component.uiPath).map(component => ({ id: component.manifest.id, version: component.manifest.version, path: component.uiPath! }))
   const loadedComponents: LoadedCoreComponent[] = []
+  const quarantinedPlugins: { id: string; version: string; reason: string }[] = []
   // All selected artifacts are checked before any third-party module is imported.
+  // A plugin whose module fails at import time is quarantined with a diagnostic
+  // and excluded from the effective selections; the Core still boots. Verification
+  // failures above remain fail-closed startup errors.
   for (const component of verified.slice(1)) {
     try {
       const loaded = await import(`${pathToFileURL(component.runtimePath).href}?stagecraftM4=${++importNonce}`)
       loadedComponents.push(Object.freeze({ manifest: immutableJson(component.manifest), defaultExport: loaded.default, module: Object.freeze({ ...loaded }) }))
     } catch (error) {
-      throw stageError('import', component.manifest.id, error instanceof Error ? error.message : String(error))
+      const reason = error instanceof Error ? error.message : String(error)
+      quarantinedPlugins.push({ id: component.manifest.id, version: component.manifest.version, reason })
+      diagnostics.push(`plugin quarantined: ${component.manifest.id}@${component.manifest.version} import failed: ${reason}`)
     }
   }
+  const effectivePlan = quarantinedPlugins.length
+    ? { ...plan, plugins: plan.plugins.filter(selection => !quarantinedPlugins.some(quarantined => quarantined.id === selection.id && quarantined.version === selection.version)) }
+    : plan
   let entry: HostCoreEntry
   try {
     const moduleUrl = `${pathToFileURL(verified[0].runtimePath).href}?stagecraftM4=${++importNonce}`
@@ -91,7 +103,7 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
   } catch (error) {
     throw stageError('import', coreManifest.id, error instanceof Error ? error.message : String(error))
   }
-  const session = new HostCoreSession(plan, createHostPort({
+  const session = new HostCoreSession(effectivePlan, createHostPort({
     diagnostics,
     grants: grantedCapabilities,
     storage: options.storage ?? createNodeFileComponentStorage(join(options.userDataRoot, 'data', 'v2-storage')),
@@ -116,7 +128,7 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
   }
   let closed = false
   return {
-    server, session, plan, coreManifest, diagnostics,
+    server, session, plan, effectivePlan, quarantinedPlugins, coreManifest, diagnostics,
     async close() {
       if (closed) return
       closed = true

@@ -36,16 +36,21 @@ test('official runtime boots through HostCoreSession and exposes generic operati
   await runtime.shutdown!(); assert.equal(runtime.status, 'stopped'); assert.deepEqual(events, ['llm:start', 'request:assembled:hi', 'ui:dispose', 'llm:stop', 'core:stop'])
 })
 
-test('official runtime rejects missing, cyclic, and identity/category-invalid components', async () => {
+test('official runtime quarantines missing, cyclic and identity-invalid plugins instead of failing boot', async () => {
   const core = defineCore({ id: 'example.core2', version: '1.0.0', title: 'Core', start(ctx) { ctx.ready() } })
   const base = component(core, 'core')
   const missing = createOfficialCoreRuntime(base)
-  await assert.rejects(() => new HostCoreSession({ ...plan(), core: sel('example.core2'), plugins: [sel('example.missing')] } as any, { call: async () => null }, []).boot(missing), /selected component is not loaded/)
+  await new HostCoreSession({ ...plan(), core: sel('example.core2'), plugins: [sel('example.missing')] } as any, { call: async () => null }, []).boot(missing)
+  assert.equal(missing.status, 'ready'); assert.equal(missing.listPlugins().length, 0)
+  assert.match(missing.listQuarantined()[0].reason, /selected component is not loaded/)
   const a = defineToolPlugin({ id: 'example.a', version: '1.0.0', title: 'A', execute: () => 1 }); const b = defineToolPlugin({ id: 'example.b', version: '1.0.0', title: 'B', execute: () => 1 })
   const ca = component(a, 'tool', [{ id: 'example.b', version: '1.0.0' }]); const cb = component(b, 'tool', [{ id: 'example.a', version: '1.0.0' }]); const cycle = createOfficialCoreRuntime(base)
-  await assert.rejects(() => new HostCoreSession({ ...plan(), core: sel('example.core2'), plugins: [sel('example.a'), sel('example.b')] } as any, { call: async () => null }, [ca, cb]).boot(cycle), /dependency cycle/)
+  await new HostCoreSession({ ...plan(), core: sel('example.core2'), plugins: [sel('example.a'), sel('example.b')] } as any, { call: async () => null }, [ca, cb]).boot(cycle)
+  assert.equal(cycle.listQuarantined().length, 2, 'both cycle members must be quarantined')
   const bad: any = component(a, 'solution'); const invalid = createOfficialCoreRuntime(base)
-  await assert.rejects(() => new HostCoreSession({ ...plan(), core: sel('example.core2'), plugins: [sel('example.a')] } as any, { call: async () => null }, [bad]).boot(invalid), /category mismatch/)
+  await new HostCoreSession({ ...plan(), core: sel('example.core2'), plugins: [sel('example.a')] } as any, { call: async () => null }, [bad]).boot(invalid)
+  assert.equal(invalid.listPlugins().length, 0)
+  assert.match(invalid.listQuarantined()[0].reason, /category mismatch/)
 })
 
 test('selection is explicit when multiple plugins share a category', async () => {

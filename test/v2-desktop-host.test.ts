@@ -221,3 +221,23 @@ export default {
     await host.close()
   } finally { rmSync(base, { recursive: true, force: true }) }
 })
+
+test('v2 desktop host quarantines a plugin that throws at import and boots the Core without it', async () => {
+  const base = mkdtempSync(join(root, '.tmp-v2-host-quarantine-')); try {
+    setupCoreWithPlugin(base)
+    const badDir = join(base, 'components', 'example.bad', '1.0.0'); const badRuntime = join(badDir, 'dist', 'index.js')
+    mkdirSync(join(badDir, 'dist'), { recursive: true }); writeFileSync(badRuntime, `throw new Error('boom at import')`)
+    const bad: ComponentManifest = { schemaVersion: '0.1', id: 'example.bad', version: '1.0.0', title: 'Bad', componentType: 'plugin', pluginCategory: 'tool', entrypoints: { runtime: 'dist/index.js' }, integrity: { runtime: `sha256-${createHash('sha256').update(readFileSync(badRuntime)).digest('hex')}` } }
+    writeFileSync(join(badDir, 'manifest.json'), JSON.stringify(bad, null, 2))
+    const corePath = join(base, 'components', 'example.desktop-core', '1.0.0', 'manifest.json')
+    const core = JSON.parse(readFileSync(corePath, 'utf8')) as ComponentManifest
+    const good = JSON.parse(readFileSync(join(base, 'components', 'example.tool', '1.0.0', 'manifest.json'), 'utf8')) as ComponentManifest
+    writeFileSync(join(base, 'data', 'component-launch-plan.v2.json'), JSON.stringify(buildComponentLaunchPlan({ core, plugins: [good, bad], hostApiVersion: '0.1', stateSchemaVersion: 'state-1' })))
+    const host = await startV2DesktopHost({ userDataRoot: base, port: 0 })
+    assert.equal(host.session.state, 'ready', 'Core must still boot when a plugin fails at import')
+    assert.deepEqual(host.quarantinedPlugins, [{ id: 'example.bad', version: '1.0.0', reason: 'boom at import' }])
+    assert.deepEqual(host.session.request.pluginSelections.map(selection => selection.id), ['example.tool'], 'effective selections must exclude the quarantined plugin')
+    assert.ok(host.diagnostics.some(entry => entry.includes('plugin quarantined: example.bad@1.0.0')))
+    await host.close()
+  } finally { rmSync(base, { recursive: true, force: true }); delete (globalThis as { __m4CoreImported?: boolean }).__m4CoreImported }
+})
