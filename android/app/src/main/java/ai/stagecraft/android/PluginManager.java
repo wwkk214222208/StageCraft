@@ -30,10 +30,17 @@ public final class PluginManager {
         public final String id;
         public final String version;
         public final String manifestHash;
+        public final String kind;
+        public final String title;
         PluginCatalog(String id, String version, String manifestHash) {
+            this(id, version, manifestHash, "", "");
+        }
+        PluginCatalog(String id, String version, String manifestHash, String kind, String title) {
             this.id = id;
             this.version = version;
             this.manifestHash = manifestHash;
+            this.kind = kind;
+            this.title = title;
         }
     }
 
@@ -61,7 +68,9 @@ public final class PluginManager {
                         catalog.add(new PluginCatalog(
                             plugin.optString("id", ""),
                             plugin.optString("version", ""),
-                            plugin.optString("manifestHash", "")));
+                            plugin.optString("manifestHash", ""),
+                            plugin.optString("kind", ""),
+                            plugin.optString("title", "")));
                     }
                 }
             }
@@ -124,16 +133,16 @@ public final class PluginManager {
         return true;
     }
 
-    /** effective：desired − quarantined（id 列表）。 */
+    /** effective：候选集目录驱动（desired 缺省启用）− quarantined（id 列表）。 */
     public List<String> effectiveEnabled() {
         JSONObject desired = desiredEnabled();
         List<String> result = new ArrayList<>();
-        if (desired != null) {
-            java.util.Iterator<String> keys = desired.keys();
-            while (keys.hasNext()) {
-                String id = keys.next();
-                if (desired.optBoolean(id, true) && !isQuarantined(id)) result.add(id);
-            }
+        for (PluginCatalog entry : catalog) {
+            // 只遍历 desired 已存键会漏掉"未写启用意图 = 缺省启用"的插件（首次安装时恒为空），
+            // 必须以构建期目录为准；desired=false 或被隔离者不进 effective。
+            if (desired != null && !desired.optBoolean(entry.id, true)) continue;
+            if (isQuarantined(entry.id)) continue;
+            result.add(entry.id);
         }
         return result;
     }

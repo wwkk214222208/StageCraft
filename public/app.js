@@ -1207,8 +1207,104 @@ async function refreshArchiveList() {
     listEl.innerHTML = `<p class="error">${escape(error.message)}</p>`
   }
 }
-async function loadArchive(name) { const ok = await api('/api/archive/load', { name }); if (ok) refreshArchiveList() }
+async function loadArchive(name) {
+  // 存档插件依赖提示（§7.4）：加载前对照当前环境提示缺失/不兼容；只提示、不阻断。
+  // Android 本地该路由为 desktop-only（unsupported）→ 静默跳过。
+  try {
+    const response = await fetch('/api/archive/check', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) })
+    if (response.ok) {
+      const advice = await response.json()
+      if (advice?.recorded && advice.message && !confirm(`${advice.message}\n\n仍要加载该存档吗？`)) return
+    }
+  } catch { /* 提示通道不可用时不阻塞读档 */ }
+  const ok = await api('/api/archive/load', { name })
+  if (ok) refreshArchiveList()
+}
 async function deleteArchive(name) { if (!confirm(`删除存档「${name}」？`)) return; const response = await fetch('/api/archive/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) }); const data = await response.json().catch(() => ({})); if (!response.ok || data?.ok === false) { const error = data?.error; alert(typeof error === 'string' ? error : error?.message || '删除失败'); return } await refreshArchiveList() }
+
+// ── 插件管理（D2：独立于 Core 的管理面；D1 改动重启生效）──
+// 通道判别：Android 本地模式（__STAGECRAFT_LOCAL__ 且有 StageCraftNative）走 native 桥
+// （HTTP /api/plugins 在 Android 为 desktop-only → 稳定 unsupported）；桌面与远程配对走 HTTP。
+function pluginNativeBridge() { return window.__STAGECRAFT_LOCAL__ && window.StageCraftNative?.getPluginState ? window.StageCraftNative : null }
+async function fetchPluginState() {
+  const nativeBridge = pluginNativeBridge()
+  if (nativeBridge) {
+    const data = JSON.parse(nativeBridge.getPluginState())
+    if (data.error) throw new Error(data.error)
+    const quarantineById = new Map((data.quarantined ?? []).map(record => [record.pluginId, record]))
+    return {
+      plugins: (data.catalog ?? []).map(entry => ({
+        id: entry.id,
+        version: entry.version,
+        title: entry.title ?? entry.id,
+        kind: entry.kind ?? '',
+        state: quarantineById.has(entry.id) ? 'quarantined' : data.desired?.[entry.id] === false ? 'disabled' : 'enabled',
+        ...(quarantineById.has(entry.id) ? { quarantine: quarantineById.get(entry.id) } : {}),
+      })),
+      pluginSetHash: '',
+    }
+  }
+  const response = await fetch('/api/plugins')
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : '读取插件状态失败。')
+  return data
+}
+async function setPluginEnabledRemote(id, enabled) {
+  const nativeBridge = pluginNativeBridge()
+  if (nativeBridge) {
+    const data = JSON.parse(nativeBridge.setPluginEnabled(id, enabled))
+    if (data.ok !== true) throw new Error(data.error ?? '修改失败。')
+    return { restartRequired: data.restartRequired === true }
+  }
+  const response = await fetch('/api/plugins/enable', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, enabled }) })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data?.ok === false) throw new Error(typeof data.error === 'string' ? data.error : '修改失败。')
+  return { restartRequired: true }
+}
+const PLUGIN_STATE_LABEL = { enabled: '启用', disabled: '已停用', quarantined: '被隔离' }
+async function refreshPluginPanel() {
+  const list = $('#plugin-list')
+  if (!list) return
+  try {
+    const data = await fetchPluginState()
+    const plugins = data.plugins ?? []
+    list.innerHTML = ''
+    if (!plugins.length) { list.innerHTML = '<p class="hint">没有已登记的插件。</p>'; return }
+    for (const plugin of plugins) {
+      const row = document.createElement('div')
+      row.className = `plugin-item plugin-${plugin.state}`
+      row.innerHTML =
+        `<div class="plugin-head"><strong>${escape(plugin.title ?? plugin.id)}</strong><span class="plugin-state">${PLUGIN_STATE_LABEL[plugin.state] ?? escape(plugin.state)}</span></div>` +
+        `<div class="hint">${escape(plugin.id)} · v${escape(plugin.version)}${plugin.kind ? ' · ' + escape(plugin.kind) : ''}${plugin.description ? ' · ' + escape(plugin.description) : ''}</div>` +
+        (plugin.quarantine ? `<div class="plugin-quarantine">隔离原因：${escape(plugin.quarantine.reason)}（阶段 ${escape(plugin.quarantine.stage)}，${escape(plugin.quarantine.at)}）</div>` : '') +
+        `<button type="button" class="small-btn" data-plugin-toggle="${escape(plugin.id)}" data-plugin-enabled="${plugin.state === 'enabled' ? 'false' : 'true'}">${plugin.state === 'enabled' ? '停用' : '启用'}</button>`
+      list.append(row)
+    }
+  } catch (error) {
+    list.innerHTML = `<p class="hint">插件管理不可用：${escape(error instanceof Error ? error.message : String(error))}</p>`
+  }
+}
+async function togglePlugin(button) {
+  const id = button.dataset.pluginToggle
+  const enabled = button.dataset.pluginEnabled === 'true'
+  try {
+    const result = await setPluginEnabledRemote(id, enabled)
+    await refreshPluginPanel()
+    if (!result.restartRequired) return
+    const target = pluginNativeBridge() ? 'Core' : '应用'
+    if (confirm(`已${enabled ? '启用' : '停用'} ${id}。立即重启${target}使其生效？`)) {
+      if (pluginNativeBridge()) await api('/api/host/restart', {})
+      else alert(`请手动重启应用（关闭后重新启动服务）以应用插件改动。`)
+    }
+  } catch (error) {
+    alert(error instanceof Error ? error.message : String(error))
+  }
+}
+$('#plugin-settings')?.addEventListener('click', () => { $('#plugin-modal').showModal(); void refreshPluginPanel() })
+document.addEventListener('click', event => {
+  const button = event.target.closest?.('[data-plugin-toggle]')
+  if (button) void togglePlugin(button)
+})
 
 // ── 世界书条目编辑（任务 B）──
 function openLoreEditor(index) {

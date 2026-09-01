@@ -250,6 +250,7 @@ export const API_ROUTES: readonly ApiRoute[] = [
   { method: 'POST', pattern: '/api/archive/load', owner: 'core', capability: 'archive.port', auth: 'none', handlerId: 'archive.load', note: '写入 Core state，必须由 Core 串行执行（§7.1）。' },
   { method: 'POST', pattern: '/api/archive/delete', owner: 'core', capability: 'archive.port', auth: 'none', handlerId: 'archive.delete' },
   { method: 'POST', pattern: '/api/archive/import', owner: 'core', capability: 'archive.port', auth: 'none', handlerId: 'archive.import' },
+  { method: 'POST', pattern: '/api/archive/check', owner: 'desktop-only', capability: 'archive.port', auth: 'none', handlerId: 'archive.check', note: '存档插件依赖提示（§7.4）：对照当前候选集产出缺失/不兼容警告；只读、不阻断加载。Android 本地存档走原生通道，UI 对 unsupported 静默跳过提示。' },
 
   // ── 创作者工作台 / ST 卡（core，桌面已实现；shim 降级项由共享 handler 补齐） ──
   { method: 'POST', pattern: '/api/creator/preview', owner: 'core', capability: 'creator.workbench', auth: 'none', handlerId: 'creator.preview' },
@@ -271,6 +272,10 @@ export const API_ROUTES: readonly ApiRoute[] = [
   { method: 'POST', pattern: '/api/update/download', owner: 'main-host', capability: 'host.update', auth: 'none', handlerId: 'host.update.download' },
   { method: 'POST', pattern: '/api/restart', owner: 'core', capability: 'room.command', auth: 'none', handlerId: 'room.restart', note: '业务语义：重开剧本（与桌面一致）——清除当前回合/草稿/已批准正文，按 storyId/mode 重开房间。' },
   { method: 'POST', pattern: '/api/host/restart', owner: 'main-host', capability: 'host.lifecycle', auth: 'none', handlerId: 'host.restart', note: '宿主重启（Core 进程/launch plan 变更生效）：生成新 launch plan 并重启 Core 进程（§4.3）。与业务重开剧本（/api/restart）分离。' },
+
+  // ── 插件管理（desktop-only：D2 管理层独立于 Core；Android 本地经 native 桥等价访问） ──
+  { method: 'GET', pattern: '/api/plugins', owner: 'desktop-only', capability: 'plugins.manage', auth: 'none', handlerId: 'plugins.list', note: '插件管理状态（manifest/启用意图/隔离记录/launch plan hash）。只依赖 PluginConfigStore（不 import 主运行时），Core 不可用时仍可用；Android 本地走 StageCraftNative.getPluginState。' },
+  { method: 'POST', pattern: '/api/plugins/enable', owner: 'desktop-only', capability: 'plugins.manage', auth: 'none', handlerId: 'plugins.enable', note: '写插件启用意图并重生成 launch plan；D1 不热加载，重启后生效（返回 restartRequired）。' },
 
   // ── DSH agent（desktop-only：仅远程端声明 capability 时可代理） ─────────
   { method: 'GET', pattern: '/api/agent/capability', owner: 'desktop-only', capability: 'agent.dsh', auth: 'none', handlerId: 'agent.capability', note: '桌面实际形状 {available,native,modelSelection,reason?}（dsh-story-session.ts）；Android 端由 gateway 返回 unsupported_capability 时 UI 必须容错。' },

@@ -88,7 +88,9 @@ public final class NativeBridge implements AutoCloseable {
                 catalog.put(new JSONObject()
                     .put("id", entry.id)
                     .put("version", entry.version)
-                    .put("manifestHash", entry.manifestHash));
+                    .put("manifestHash", entry.manifestHash)
+                    .put("kind", entry.kind == null ? "" : entry.kind)
+                    .put("title", entry.title == null ? "" : entry.title));
             }
             result.put("catalog", catalog);
             return result.toString();

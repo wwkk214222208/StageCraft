@@ -121,8 +121,8 @@ export interface BootstrapInput {
   manifests: readonly PluginManifest[]
   /** desiredEnabled：主进程 PluginConfigStore 的启用意图（缺省视为启用）。 */
   desiredEnabled?: Record<string, boolean>
-  /** 宿主提供的装载器：把 manifest 装进容器，返回 Disposable。按单插件粒度 try/catch。 */
-  install: (manifest: PluginManifest) => { dispose: () => void } | void
+  /** 宿主提供的装载器：把 manifest 装进容器，返回 Disposable（可异步）。按单插件粒度 try/catch。 */
+  install: (manifest: PluginManifest) => { dispose: () => void } | void | Promise<{ dispose: () => void } | void>
   /** Core API 版本要求（requires.coreApi 不匹配 → stage 'dependency'）。 */
   coreApiVersion?: string
   now?: () => string
@@ -136,13 +136,14 @@ export interface BootstrapResult {
 /**
  * 逐插件装载（§6.3）：任一失败只隔离该插件并继续；失败插件是必要插件时由调用方
  * 依据 report.degraded 决定 Core 进入 degraded/failed——主进程管理器始终可用。
+ * install 允许异步（如 Cordis fiber await）；reject 同步抛错同样只隔离该插件。
  *
  * 评审修订（早期评审后短周期）：
  *  - provides 冲突只在"启用意图"集合内计算——被禁用的插件不参与，避免误伤正常插件；
  *  - 安装前逐条校验依赖满足：缺失 / 被禁用 / 被隔离 / 装载失败的依赖都会阻断依赖者（stage 'dependency'）；
  *  - 装载顺序仍按依赖拓扑，成环时全部隔离。
  */
-export function bootstrapPlugins(input: BootstrapInput): BootstrapResult {
+export async function bootstrapPlugins(input: BootstrapInput): Promise<BootstrapResult> {
   const now = input.now ?? (() => new Date().toISOString())
   const quarantined: QuarantineRecord[] = []
   const enabled: string[] = []
@@ -203,7 +204,7 @@ export function bootstrapPlugins(input: BootstrapInput): BootstrapResult {
       continue
     }
     try {
-      const disposable = input.install(manifest)
+      const disposable = await input.install(manifest)
       if (disposable) disposables.push(disposable)
       installed.add(manifest.id)
       enabled.push(manifest.id)

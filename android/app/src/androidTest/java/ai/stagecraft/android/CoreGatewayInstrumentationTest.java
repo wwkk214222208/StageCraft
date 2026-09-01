@@ -86,4 +86,47 @@ public final class CoreGatewayInstrumentationTest {
         }
         assertTrue("Core 必须在 30s 内握手就绪（ready/degraded）", ready);
     }
+
+    private static String httpPost(int port, String path) throws Exception {
+        java.net.HttpURLConnection connection = (java.net.HttpURLConnection) new java.net.URL("http://127.0.0.1:" + port + path).openConnection();
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(3000);
+        connection.setReadTimeout(5000);
+        int status = connection.getResponseCode();
+        StringBuilder body = new StringBuilder();
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(
+                status < 400 ? connection.getInputStream() : connection.getErrorStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) body.append(line);
+        }
+        connection.disconnect();
+        return status + " " + body;
+    }
+
+    /**
+     * 插件配置变更的生效链（阶段 5 验收）：host.restart 必须真正重建 Core。
+     * 回归背景：:core 内 stopSelf 在绑定存活时不重建（真机实测）——旧实现 stopGracefully
+     * 掏空服务实例后 gateway 永久失联；现实现 kill :core pid → binder death → 幂等重绑 →
+     * BIND_AUTO_CREATE 重建。断言：重启后 30s 内 health 恢复 ready（进程重建证据）。
+     */
+    @Test public void hostRestartRecreatesCoreAndRestoresHealth() throws Exception {
+        MainActivity activity = activityRule.getActivity();
+        assertTrue("重启前 Core 必须就绪", awaitCoreReady(activity, 30_000L));
+        String restart = httpPost(activity.gatewayPortForTest(), "/api/host/restart");
+        assertTrue("host.restart 必须受理（200）", restart.startsWith("200") && restart.contains("restarting"));
+        // 重启窗口：旧 Core 停止 → binder death → 重绑 → 新 Core 握手；30s 内 health 必须 ready
+        assertTrue("重启后 Core 必须在 30s 内重建并恢复 ready", awaitCoreReady(activity, 30_000L));
+    }
+
+    private static boolean awaitCoreReady(MainActivity activity, long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                String response = httpGet(activity.gatewayPortForTest(), "/api/core/health");
+                if (response.contains("\"status\":\"ready\"") || response.contains("\"status\":\"degraded\"")) return true;
+            } catch (Exception ignored) { }
+            Thread.sleep(500L);
+        }
+        return false;
+    }
 }

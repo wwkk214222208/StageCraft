@@ -662,3 +662,16 @@ html.android-device #story-edit-modal .creator-editor{min-height:0}
 #boot-loading[hidden]{display:none}
 .boot-loading-spinner{width:30px;height:30px;border:3px solid rgba(215,220,230,.2);border-top-color:#7aa2f7;border-radius:50%;animation:boot-loading-spin .8s linear infinite}
 @keyframes boot-loading-spin{to{transform:rotate(360deg)}}
+
+/* ── 插件管理面板（D2：独立于 Core 的管理面；桌面/安卓共用）── */
+#plugin-list{display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow-y:auto}
+.plugin-item{border:1px solid #2d3a55;border-radius:8px;padding:10px 12px;background:#1a2234}
+.plugin-item.plugin-quarantined{border-color:#7a3b3b;background:#241a22}
+.plugin-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.plugin-head strong{font-size:14px}
+.plugin-state{font-size:12px;white-space:nowrap}
+.plugin-enabled .plugin-state{color:#8fd6a0}
+.plugin-disabled .plugin-state{color:#8b93a7}
+.plugin-quarantined .plugin-state{color:#ff9d8f}
+.plugin-quarantine{margin:8px 0 4px;padding:8px 10px;border-radius:6px;background:#3a2328;color:#ffb4a0;font-size:12px;line-height:1.5}
+.plugin-item .small-btn{margin-top:6px}

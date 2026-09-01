@@ -9,9 +9,12 @@
  *   RP_REMOTE_SESSION_TTL_MS  会话 token 有效期（毫秒，缺省 12 小时）
  */
 import os from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { startTavern } from './app-boot.ts'
+import { startPluginFallbackServer } from './plugin-fallback-server.ts'
 
+const root = fileURLToPath(new URL('..', import.meta.url))
 const userDataRoot = process.env.STAGECRAFT_USER_DATA || (() => {
   const base = process.env.APPDATA || (process.platform === 'darwin' ? join(os.homedir(), 'Library', 'Application Support') : process.env.XDG_CONFIG_HOME || join(os.homedir(), '.config'))
   return join(base, 'stagecraft')
@@ -30,5 +33,22 @@ const remoteAccess = remoteEnabled
       ...(parseTtl(process.env.RP_REMOTE_SESSION_TTL_MS) ? { sessionTtlMs: parseTtl(process.env.RP_REMOTE_SESSION_TTL_MS)! } : {}),
     }
   : undefined
+const port = Number(process.env.PORT ?? '8787')
 
-await startTavern({ userDataRoot, ...(host ? { host } : {}), ...(remoteAccess ? { remoteAccess } : {}) })
+try {
+  await startTavern({ userDataRoot, ...(host ? { host } : {}), ...(remoteAccess ? { remoteAccess } : {}) })
+} catch (error) {
+  // D2 兜底（§3.5）：主运行时失败也必须能进插件管理（查看隔离原因 / 停用问题插件），
+  // 否则"坏插件 → 起不来 → 进不去管理关掉它"死锁。兜底服务器只依赖 PluginConfigStore。
+  console.error('[StageCraft] 主运行时启动失败：', error instanceof Error ? error.stack ?? error.message : error)
+  try {
+    const fallbackPort = Number.isInteger(port) && port > 0 ? port : 8787
+    const server = await startPluginFallbackServer({ root, userDataRoot, port: fallbackPort, ...(host && !remoteEnabled ? { host: '127.0.0.1' } : {}) })
+    const address = server.address()
+    const actualPort = typeof address === 'object' && address ? address.port : fallbackPort
+    console.error(`[StageCraft] 已进入恢复模式：打开 http://127.0.0.1:${actualPort}/admin/plugins 查看插件状态并停用问题插件，修改后重启应用。`)
+  } catch (fallbackError) {
+    console.error('[StageCraft] 恢复模式服务器启动失败：', fallbackError instanceof Error ? fallbackError.message : fallbackError)
+    process.exitCode = 1
+  }
+}

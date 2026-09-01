@@ -41,14 +41,14 @@ test('manifestHash 确定性：键序无关、宿主无关，内容变化即变�
   assert.equal(stableStringify({ b: 2, a: [1, { d: 4, c: 3 }] }), '{"a":[1,{"c":3,"d":4}],"b":2}')
 })
 
-test('依赖拓扑：被依赖者先装载；成环时 bootstrap 全部隔离且不装载', () => {
+test('依赖拓扑：被依赖者先装载；成环时 bootstrap 全部隔离且不装载', async () => {
   const order = resolveLoadOrder([
     manifest({ id: 'stagecraft.app', requires: { plugins: ['stagecraft.core'] } }),
     manifest({ id: 'stagecraft.core' }),
   ])
   assert.deepEqual(order.map(item => item.id), ['stagecraft.core', 'stagecraft.app'])
 
-  const cycle = bootstrapPlugins({
+  const cycle = await bootstrapPlugins({
     manifests: [
       manifest({ id: 'stagecraft.a', requires: { plugins: ['stagecraft.b'] } }),
       manifest({ id: 'stagecraft.b', requires: { plugins: ['stagecraft.a'] } }),
@@ -61,9 +61,9 @@ test('依赖拓扑：被依赖者先装载；成环时 bootstrap 全部隔离且
   assert.match(cycle.report.quarantined[0].reason, /依赖成环/)
 })
 
-test('provides 冲突预检：同 id 双声明 → 双方隔离，其他插件继续', () => {
+test('provides 冲突预检：同 id 双声明 → 双方隔离，其他插件继续', async () => {
   assert.deepEqual(checkProvidesConflicts([manifest(), manifest({ id: 'stagecraft.other' })]).length, 0)
-  const result = bootstrapPlugins({
+  const result = await bootstrapPlugins({
     manifests: [
       manifest({ id: 'stagecraft.p1', provides: { stateModules: ['shared'] } }),
       manifest({ id: 'stagecraft.p2', provides: { stateModules: ['shared'] } }),
@@ -76,8 +76,8 @@ test('provides 冲突预检：同 id 双声明 → 双方隔离，其他插件�
   assert.ok(result.report.quarantined.every(record => record.stage === 'dependency' && record.reason.includes('provides')))
 })
 
-test('单插件 install 抛错只隔离该插件，其余继续装载（§6.3）', () => {
-  const result = bootstrapPlugins({
+test('单插件 install 抛错只隔离该插件，其余继续装载（§6.3）', async () => {
+  const result = await bootstrapPlugins({
     manifests: [manifest({ id: 'stagecraft.good' }), manifest({ id: 'stagecraft.bad' }), manifest({ id: 'stagecraft.good2', requires: { plugins: ['stagecraft.good'] } })],
     install: candidate => {
       if (candidate.id === 'stagecraft.bad') throw new Error('install 爆炸')
@@ -92,8 +92,8 @@ test('单插件 install 抛错只隔离该插件，其余继续装载（§6.3）
   assert.equal(result.disposables.length, 2)
 })
 
-test('desiredEnabled=false → disabled（不装载、不隔离）；coreApi 不匹配 → dependency 隔离', () => {
-  const result = bootstrapPlugins({
+test('desiredEnabled=false → disabled（不装载、不隔离）；coreApi 不匹配 → dependency 隔离', async () => {
+  const result = await bootstrapPlugins({
     manifests: [manifest({ id: 'stagecraft.off' }), manifest({ id: 'stagecraft.old', requires: { coreApi: '1.0' } })],
     desiredEnabled: { 'stagecraft.off': false },
     coreApiVersion: '1.1',
@@ -168,8 +168,8 @@ test('launch plan 形状符合 §2.4 契约（供 Java/数据面 fixture 复用�
   assert.deepEqual(withConfig.plugins[0].config, { threshold: 3 })
 })
 
-test('反例（评审修订）：依赖缺失的插件不得安装，必须 dependency 隔离', () => {
-  const result = bootstrapPlugins({
+test('反例（评审修订）：依赖缺失的插件不得安装，必须 dependency 隔离', async () => {
+  const result = await bootstrapPlugins({
     manifests: [manifest({ id: 'stagecraft.app', requires: { plugins: ['stagecraft.missing'] } })],
     install: () => assert.fail('依赖缺失时不得触发 install'),
   })
@@ -179,8 +179,8 @@ test('反例（评审修订）：依赖缺失的插件不得安装，必须 depe
   assert.match(record.reason, /依赖缺失：stagecraft.missing/)
 })
 
-test('反例（评审修订）：依赖被禁用 / 被隔离 / install 失败，依赖者都不得安装', () => {
-  const disabled = bootstrapPlugins({
+test('反例（评审修订）：依赖被禁用 / 被隔离 / install 失败，依赖者都不得安装', async () => {
+  const disabled = await bootstrapPlugins({
     manifests: [
       manifest({ id: 'stagecraft.dep' }),
       manifest({ id: 'stagecraft.app', requires: { plugins: ['stagecraft.dep'] } }),
@@ -191,7 +191,7 @@ test('反例（评审修订）：依赖被禁用 / 被隔离 / install 失败，
   assert.deepEqual(disabled.report.enabled, [])
   assert.match(disabled.report.quarantined[0].reason, /依赖被禁用/)
 
-  const failed = bootstrapPlugins({
+  const failed = await bootstrapPlugins({
     manifests: [
       manifest({ id: 'stagecraft.dep' }),
       manifest({ id: 'stagecraft.app', requires: { plugins: ['stagecraft.dep'] } }),
@@ -202,7 +202,7 @@ test('反例（评审修订）：依赖被禁用 / 被隔离 / install 失败，
   const record = failed.report.quarantined.find(item => item.pluginId === 'stagecraft.app')
   assert.match(record?.reason ?? '', /依赖未装载成功（被隔离或 install 失败）：stagecraft.dep/)
 
-  const quarantined = bootstrapPlugins({
+  const quarantined = await bootstrapPlugins({
     manifests: [
       manifest({ id: 'stagecraft.dep', version: 'bad-version' }),
       manifest({ id: 'stagecraft.app', requires: { plugins: ['stagecraft.dep'] } }),
@@ -212,8 +212,8 @@ test('反例（评审修订）：依赖被禁用 / 被隔离 / install 失败，
   assert.deepEqual(quarantined.report.enabled, [], 'manifest 校验失败被隔离的依赖同样阻断依赖者')
 })
 
-test('反例（评审修订）：被禁用插件不参与 provides 冲突，正常插件不受误伤', () => {
-  const result = bootstrapPlugins({
+test('反例（评审修订）：被禁用插件不参与 provides 冲突，正常插件不受误伤', async () => {
+  const result = await bootstrapPlugins({
     manifests: [
       manifest({ id: 'stagecraft.enabled', provides: { stateModules: ['shared'] } }),
       manifest({ id: 'stagecraft.disabled', provides: { stateModules: ['shared'] } }),
@@ -239,8 +239,8 @@ test('反例（评审修订）：存档版本必须比较——主版本不同 /
   assert.equal(validateArchiveDependencies([{ id: 'stagecraft.core', version: '1.0.0', manifestHash: 'h' }], [manifest({ id: 'stagecraft.core', version: '1.2.0' })]).verdict, 'ok', '存档未声明 schema 时不追加约束')
 })
 
-test('反例（评审批复建议）：重复插件 id 必须拒绝——bootstrap 隔离后续出现，launch plan 直接抛错', () => {
-  const result = bootstrapPlugins({
+test('反例（评审批复建议）：重复插件 id 必须拒绝——bootstrap 隔离后续出现，launch plan 直接抛错', async () => {
+  const result = await bootstrapPlugins({
     manifests: [
       manifest({ id: 'stagecraft.dup' }),
       manifest({ id: 'stagecraft.dup', version: '9.9.9' }),
@@ -264,4 +264,18 @@ test('反例（评审批复建议）：存档版本必须完整匹配 semver，�
   assert.equal(isVersionCompatible('1.2.3garbage', '1.2.0'), false)
   assert.equal(isVersionCompatible('1.2.0-beta.1', '1.2.0'), true, '完整 semver 允许 prerelease 后缀')
   assert.equal(isVersionCompatible('1.2', '1.2.0'), false, '不完整的 semver 不兼容')
+})
+
+test('install 允许异步：Promise resolve/dispose 照常收集，reject 与同步抛错同样只隔离该插件', async () => {
+  const result = await bootstrapPlugins({
+    manifests: [manifest({ id: 'stagecraft.async-ok' }), manifest({ id: 'stagecraft.async-bad' })],
+    install: async candidate => {
+      if (candidate.id === 'stagecraft.async-bad') throw new Error('异步 install 失败')
+      return { dispose: () => undefined }
+    },
+  })
+  assert.deepEqual(result.report.enabled, ['stagecraft.async-ok'])
+  assert.equal(result.report.quarantined[0]?.reason, '异步 install 失败')
+  assert.equal(result.report.quarantined[0]?.stage, 'install')
+  assert.equal(result.disposables.length, 1)
 })

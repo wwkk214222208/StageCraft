@@ -232,8 +232,8 @@ node scripts/certify-platform.mjs
 
 ```
 src/
-  server.ts                  服务入口（node:http 启动）
-  app-boot.ts                应用引导（桌面组合根：装配 Core / UI / DSH）
+  server.ts                  服务入口（node:http 启动；startTavern 失败时进入插件管理恢复模式）
+  app-boot.ts                应用引导（桌面组合根：经 PluginBootstrap 装配 Core / UI / DSH）
   core/                      运行时内核（容器、状态仓储、Workflow、协议、平台端口）
     protocol.ts              CoreEvent / HumanCommand / Workflow / ModelRequest 类型（事件真相）
     runtime.ts               CoreRuntimeSkeleton（状态事务、投影、emit 广播）
@@ -242,6 +242,12 @@ src/
     solutions.ts             默认方案：三条 Workflow + 群聊/导演/管理端口
     http-human-plugin.ts     HTTP 人机插件（/api/core/* + SSE envelope）
     platform.ts              端口定义（Clock / IdFactory / ...）
+  plugin-contract.ts         插件契约：manifest / 状态 / 隔离记录 / LaunchPlan / 存档依赖快照 / ConfigStore
+  plugin-bootstrap.ts        引导层（唯一深度校验实现）：manifest 校验、依赖拓扑、provides 预检、单插件失败隔离
+  plugin-config-store.ts     插件配置存储（独立于 Core；内存 + Node 文件实现）
+  plugin-manifests.ts        桌面内置插件候选集（与 Android BUILTIN_PLUGIN_MANIFESTS 同契约）
+  plugin-admin.ts            管理层（D2）：状态聚合、启用意图、存档依赖提示、/admin/plugins 兜底页
+  plugin-fallback-server.ts  桌面恢复模式兜底服务器（startTavern 失败时仍可管理插件；不 import 主运行时）
   platform/                  Node 适配：node.ts, node-sqlite-repository.ts, composition.ts, model-gateway-transport.ts
   portable/                  android-core.ts, android-composition.ts（Android 本地组合根 + 权威事件源）
   stagecraft-*.ts            业务服务：chat / director / management / repository
@@ -262,6 +268,7 @@ governance/                  治理数据（裁决/工单/期限；不进运行�
 ## 11. 当前完成状态与限制
 
 - Core 通用内核、插件容器、状态仓储、Workflow Registry/Executor、HTTP 人机插件、LLM 路由边界已进入正式启动链；StageCraft 的 Store-backed domain services 仍是当前业务状态变化的执行者，并通过 Core 投影与事务仓储保持一致。
+- **插件管理器已闭环（D1/D2/D3）**：桌面组合根经 `plugin-bootstrap.ts` 装载内置插件（§6.3：manifest 校验 / 依赖拓扑 / provides 预检 / 单插件失败隔离——坏插件只进 quarantined，不再拖垮启动）；配置存独立 `PluginConfigStore`（`<dataDir>/plugins.json`，Core 未启动仍可读写）；管理面 = 主工作台「插件」面板（`/api/plugins`，Android 走 native 桥等价通道）+ `/admin/plugins` 兜底页；`server.ts` 在 `startTavern` 失败时进入恢复模式（兜底链不 import 主运行时，有契约测试强制）。D1：改动启用状态重启生效，不做热加载。D3（2026-09-01 拍板弱化）：存档导出写插件依赖快照（`plugins` 字段），导入前经 `/api/archive/check` 提示缺失/不兼容，**只提示、不阻断**（无"禁止产生新剧情"放行门）。
 - Android 同 APK 独立 Core、Gateway、PluginManager 和恢复链已完成主体施工，当前仅有 **FOA-AL00 / API 31** 真机证据；其他版本 / release 变体 / 多设备矩阵未验证，不承诺兼容。
 - Workflow Executor 当前负责固定定义的注册 / 投影 / 合法转换，**不是通用自动业务编排器**；LLM 或 Author Pack 不允许直接修改 Definition（未来走版本化 `WorkflowPatchProposal` 且需授权校验）。
 - 兼容层：ST 卡导入在 `st-card-import.ts`；ST/MVU 兼容器在 `src/compat/st-mvu.ts`（前瞻、部分落地）；旧接口 / 外部调用经 `compat/`。

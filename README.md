@@ -33,6 +33,7 @@ StageCraft 是一个自托管、插件化的多角色角色扮演（RP）运行�
 - **思维链精细化控制**：玩法声明 `forceThinkingOff` 强制关闭（含导演选角），`thinking-params.ts` 按模型家族差异化设置（DeepSeek / GLM / 豆包 `thinking:disabled`、OpenAI `reasoning_effort:none`、Gemini `minimal`、Kimi `low`、Claude / 未知提示词引导）；正文输出完毕后思维链默认折叠。
 - **Debug 控制台**：网关 `onDetail` 下发模型完整返回与最终提交提示词，前端 Debug 开关过滤详情（`src/model-gateway.ts` / `src/thinking-params.ts`）。
 - **开放插件架构**：Core 为唯一状态权威，四层插件边界（人机交互 / 核心运行时 / 玩法方案 / LLM 路由）（`src/core/`；`docs/architecture.md`）。
+- **插件管理器**：内置插件经引导层装载（manifest 校验 / 依赖拓扑 / provides 预检 / 单插件失败隔离，坏插件不再拖垮启动）；「插件」面板与 `/admin/plugins` 兜底页独立于 Core 可用（D2）；改动启用状态重启生效（D1 不热加载）；存档导出记录插件依赖快照、换环境加载前提示差异（D3，只提示不阻断）。Android 本地经 native 桥提供等价管理能力。
 - **DSH 辅助剧本编辑**：生成 / 润色 / 一致性检查 / 扩开场（`src/dsh-story-bridge.ts`；`creator-workbench-*.ts`）。
 - **崩溃安全**：状态变化一次 SQLite 事务提交（`src/core/state-transaction.ts`）。
 - **开发者调试沙箱**：sandbox 协议 + worker 管理 / RPC（`src/debug/`）。

@@ -52,15 +52,20 @@ public final class PluginManagerTest {
     @Test public void managerTracksDesiredEffectiveQuarantined() throws Exception {
         File file = tempStore();
         PluginManager manager = new PluginManager(new PluginConfigStore(file));
-        manager.setEnabled("stagecraft.chat", true);
+        // effective 以构建期目录为准（desired 缺省启用）：先注入目录，再写启用意图/隔离
+        manager.catalog().add(new PluginManager.PluginCatalog("stagecraft.chat", "1.0.0", "h"));
+        manager.catalog().add(new PluginManager.PluginCatalog("bad.plugin", "1.0.0", "h"));
+        manager.catalog().add(new PluginManager.PluginCatalog("off.plugin", "1.0.0", "h"));
         manager.setEnabled("bad.plugin", true);
+        manager.setEnabled("off.plugin", false);
         // Core 上报隔离 bad.plugin
         JSONArray quarantine = new JSONArray();
         quarantine.put(new JSONObject().put("pluginId", "bad.plugin").put("reason", "install failed").put("stage", "install"));
         manager.updateQuarantine(quarantine);
-        // effective = desired − quarantined
-        assertTrue("正常插件必须 effective", manager.effectiveEnabled().contains("stagecraft.chat"));
+        // effective = 目录候选（desired 缺省启用）− desired=false − quarantined
+        assertTrue("正常插件必须 effective（含未写启用意图者）", manager.effectiveEnabled().contains("stagecraft.chat"));
         assertFalse("隔离插件必须不进 effective", manager.effectiveEnabled().contains("bad.plugin"));
+        assertFalse("desired=false 必须不进 effective", manager.effectiveEnabled().contains("off.plugin"));
         assertEquals("隔离记录必须可读", "install failed", manager.quarantined().optJSONObject(0).optString("reason"));
     }
 

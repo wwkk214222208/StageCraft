@@ -36,6 +36,12 @@ import { coreRuntimeCordisPlugin, createStageCraftService, humanCordisPlugin, ll
 import { REMOTE_SESSION_COOKIE, RemoteAccessService, isLoopbackAddress, isLoopbackHost, type RemoteAccessOptions } from './remote-access.ts'
 import { setupAdbReverse } from './platform/adb-reverse.ts'
 import { DshStorySessionService } from './dsh-story-session.ts'
+import { bootstrapPlugins } from './plugin-bootstrap.ts'
+import { DESKTOP_BUILTIN_PLUGIN_MANIFESTS } from './plugin-manifests.ts'
+import { createNodeFilePluginConfigStore } from './plugin-config-store.ts'
+import { PluginAdminService, desktopPluginConfigFilePath, handlePluginAdminApi } from './plugin-admin.ts'
+import type { PluginDependencySnapshot } from './plugin-contract.ts'
+import { CORE_PROTOCOL_VERSION } from './core/protocol.ts'
 
 /** 把 SillyTavern 预设 JSON 转成 StageCraft 预设（本地确定性转换，不调用模型）。 */
 function convertSillyTavernPreset(source: string, message: string): { reply: string; preset: Record<string, unknown>; warnings: string[]; mapping: Array<Record<string, string>> } {
@@ -108,6 +114,8 @@ export interface TavernOptions {
   memoryStore?: import('./memory-store.ts').MemoryStore
   /** 可注入的 adb 命令执行器（测试用）；缺省调用系统 adb。 */
   adbRunner?: import('./platform/adb-reverse.ts').AdbReverseRunner
+  /** 测试用：让指定 id 的内置插件 install 抛错，验证引导层单插件隔离（§6.3）。 */
+  pluginInstallFault?: string
 }
 
 export interface TavernApp {
@@ -158,6 +166,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const bundleStoriesDirs: string[] = userDataRoot ? [join(root, 'stories')] : []
   const saveRoot = userDataRoot ? join(userDataRoot, 'save') : options.saveRoot ?? join(root, 'save')
   const dataDir = userDataRoot ? join(userDataRoot, 'data') : options.dataDir ?? join(root, 'data')
+  // 插件管理（D2）：配置持久化独立于 Core（data/plugins.json），Core 未启动/失败时仍可读写；
+  // server.ts 兜底入口用 desktopPluginConfigFilePath 定位同一份文件。
+  const pluginConfigStore = createNodeFilePluginConfigStore(desktopPluginConfigFilePath({ root, userDataRoot, dataDir: options.dataDir }))
+  const pluginAdmin = new PluginAdminService(pluginConfigStore, DESKTOP_BUILTIN_PLUGIN_MANIFESTS)
   const billing = new BillingStore(join(dataDir, 'billing-prices.json'), join(dataDir, 'billing-stats.json'))
   // 提示词模板始终来自包内（只读发布资源）；用户自定义提示词（custom）落在 userDataRoot。
   const promptsFilePath = options.promptsFilePath ?? join(root, 'prompts', 'prompts.json')
@@ -349,20 +361,38 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     const serviceFiber = ctx.plugin(stageCraftServicePlugin(stagecraft))
     await serviceFiber
     trackFiber(serviceFiber)
-    for (const plugin of [
-      coreRuntimeCordisPlugin(),
-      stateRepositoryCordisPlugin(new StoreCoreStateRepository(store)),
-      humanCordisPlugin(humanCore),
-      solutionCordisPlugin(solution),
-    ]) {
-      const fiber = ctx.plugin(plugin)
-      await fiber
-      trackFiber(fiber)
-    }
   } catch (error) {
     await compensateStartFailure()
     throw error
   }
+  // 引导层装配（§6.3/D2）：manifest 驱动 + 依赖拓扑 + 单插件失败隔离。
+  // 任一内置插件失败只进入 quarantined 并继续装载其余插件，不再整体失败
+  // （坏插件不再让服务器白屏死锁）；隔离记录与 launch plan 持久化到独立
+  // PluginConfigStore，管理面板与 /admin/plugins 兜底入口可见。
+  const manifestInstallers: Record<string, () => import('@deepseek-ai/cordis').Plugin> = {
+    'stagecraft.core': () => coreRuntimeCordisPlugin(),
+    'stagecraft.state': () => stateRepositoryCordisPlugin(new StoreCoreStateRepository(store)),
+    'stagecraft.human.http': () => humanCordisPlugin(humanCore),
+    'stagecraft.solution': () => solutionCordisPlugin(solution),
+  }
+  const pluginLoadReport = (await bootstrapPlugins({
+    manifests: DESKTOP_BUILTIN_PLUGIN_MANIFESTS,
+    desiredEnabled: pluginConfigStore.readEnabled(),
+    coreApiVersion: CORE_PROTOCOL_VERSION,
+    install: async manifest => {
+      if (options.pluginInstallFault === manifest.id) throw new Error(`注入的插件装载失败（测试）：${manifest.id}`)
+      const factory = manifestInstallers[manifest.id]
+      if (!factory) throw new Error(`桌面候选集插件缺少装配器：${manifest.id}`)
+      const fiber = ctx.plugin(factory())
+      await fiber
+      trackFiber(fiber)
+    },
+  })).report
+  pluginConfigStore.writeQuarantine(pluginLoadReport.quarantined)
+  pluginAdmin.attachLoadReport(pluginLoadReport)
+  pluginAdmin.regenerateLaunchPlan()
+  for (const record of pluginLoadReport.quarantined) console.warn(`[StageCraft] 插件被隔离：${record.pluginId}（阶段 ${record.stage}）—— ${record.reason}`)
+  if (pluginLoadReport.degraded) console.warn('[StageCraft] 插件装载降级：详情见「插件」面板或 /admin/plugins。')
   try {
     const restoredCoreState = core.restoreState(roomId)
     const initialRoom = runtime.get(roomId)
@@ -401,9 +431,25 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
           return json(response, 500, { ok: false, detail: [error instanceof Error ? error.message : 'adb reverse 执行失败。'] })
         }
       }
-      const protectedPath = ['/api', '/assets', '/custom', '/story-assets'].some(prefix => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
+      const protectedPath = ['/api', '/assets', '/custom', '/story-assets', '/admin'].some(prefix => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
       const requiresAuthorization = protectedPath && (remoteAccess.authenticateLoopback || !isLoopbackAddress(request.socket.remoteAddress))
       if (requiresAuthorization && !remoteAccess.authorizeRequest(request)) return json(response, 401, { error: 'Unauthorized' })
+      // 插件管理（D2：独立于 Core 的管理面；Android 本地经 native 桥 getPluginState 等价访问，
+      // HTTP 路由 owner=desktop-only，Android gateway 返回稳定 unsupported_capability）。
+      if (url.pathname === '/admin/plugins' || url.pathname === '/api/plugins' || url.pathname === '/api/plugins/enable') {
+        const adminResponse = handlePluginAdminApi(pluginAdmin, {
+          method: request.method,
+          pathname: url.pathname,
+          ...(url.pathname === '/api/plugins/enable' && request.method === 'POST' ? { body: await readJson(request) } : {}),
+        })
+        if (!adminResponse) return json(response, 404, { error: 'Not found' })
+        if (typeof adminResponse.body === 'string') {
+          response.writeHead(adminResponse.status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
+          response.end(adminResponse.body)
+          return
+        }
+        return json(response, adminResponse.status, adminResponse.body)
+      }
       // 会话吊销：带 token（Bearer 或远程会话 Cookie）= 该会话自注销；本机（loopback）无 token 调用 = 清空所有已配对会话。
       if (url.pathname === '/api/remote/revoke' && request.method === 'POST') {
         const token = remoteAccess.sessionToken(request)
@@ -513,6 +559,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
           billing.savePrices(body.billing.prices as Record<string, unknown>)
         }
         if (body.room && typeof body.room === 'object') await dispatchManagement('import-archive', { archive: body.room })
+        const roomAdvice = archiveDependencyAdvice(body.room)
         if (Array.isArray(body.saves)) for (const item of body.saves) {
           const name = String(item?.name ?? '').replace(/[\\/:*?"<>|]/g, '_').trim()
           if (name && item?.archive && typeof item.archive === 'object') writeFileSync(join(saveRoot, `${name}.json`), `${JSON.stringify(item.archive, null, 2)}\n`, 'utf8')
@@ -527,16 +574,33 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
           const presets = Array.isArray(presetSource) ? presetSource : (Array.isArray((presetSource as any).presets) ? (presetSource as any).presets : [])
           for (const preset of presets) if (preset && typeof preset === 'object' && String((preset as any).id ?? '').trim()) updatePromptPreset(preset as any, promptsFilePath)
         }
-        return json(response, 200, { ok: true, files: listSaves() })
+        return json(response, 200, { ok: true, files: listSaves(), ...(roomAdvice.message ? { pluginWarning: roomAdvice.message } : {}) })
       }
       
       if (url.pathname === '/api/archive/export' && request.method === 'GET') {
-        const body = Buffer.from(`${JSON.stringify(runtime.exportArchive(roomId), null, 2)}\n`, 'utf8')
+        const body = Buffer.from(`${JSON.stringify(exportArchiveWithPlugins(), null, 2)}\n`, 'utf8')
         response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="${encodeURIComponent(roomId)}.json"`, 'Content-Length': body.length, 'Cache-Control': 'no-store' })
         response.end(body)
         return
       }
-      if (url.pathname === '/api/archive/import' && request.method === 'POST') { await dispatchManagement('import-archive', { archive: await readJson(request) }); return json(response, 200, { ok: true }) }
+      if (url.pathname === '/api/archive/check' && request.method === 'POST') {
+        const body = await readJson(request)
+        const archive = body.archive && typeof body.archive === 'object'
+          ? body.archive
+          : (() => {
+              const file = String(body.name ?? '').replace(/[\\/:*?"<>|]/g, '_')
+              const path = join(saveRoot, `${file}.json`)
+              if (!file || !existsSync(path)) throw new Error('存档不存在。')
+              return JSON.parse(readFileSync(path, 'utf8'))
+            })()
+        return json(response, 200, { ok: true, ...archiveDependencyAdvice(archive) })
+      }
+      if (url.pathname === '/api/archive/import' && request.method === 'POST') {
+        const body = await readJson(request)
+        const advice = archiveDependencyAdvice(body)
+        await dispatchManagement('import-archive', { archive: body })
+        return json(response, 200, { ok: true, ...(advice.message ? { warning: advice.message } : {}) })
+      }
       if (url.pathname === '/api/archive/save' && request.method === 'POST') {
         const body = await readJson(request)
         let name = String(body.name ?? '').trim()
@@ -550,7 +614,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
           name = `${base}${String(samePrefix + 1).padStart(2, '0')}`
         }
         name = name.replace(/[\\/:*?"<>|]/g, '_').trim() || `存档-${Date.now()}`
-        const archive = runtime.exportArchive(roomId)
+        const archive = exportArchiveWithPlugins()
         writeFileSync(join(saveRoot, `${name}.json`), `${JSON.stringify(archive, null, 2)}\n`, 'utf8')
         return json(response, 200, { ok: true, name, files: listSaves() })
       }
@@ -560,8 +624,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         const file = String(body.name ?? '').replace(/[\\/:*?"<>|]/g, '_')
         const path = join(saveRoot, `${file}.json`)
         if (!file || !existsSync(path)) throw new Error('存档不存在。')
-        await dispatchManagement('import-archive', { archive: JSON.parse(readFileSync(path, 'utf8')) })
-        return json(response, 200, { ok: true })
+        const archive = JSON.parse(readFileSync(path, 'utf8'))
+        const advice = archiveDependencyAdvice(archive)
+        await dispatchManagement('import-archive', { archive })
+        return json(response, 200, { ok: true, ...(advice.message ? { warning: advice.message } : {}) })
       }
       if (url.pathname === '/api/archive/delete' && request.method === 'POST') {
         const body = await readJson(request)
@@ -594,7 +660,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         if (typeof revision !== 'number') throw new Error('分支点无效。')
         if (runtime.get(roomId).phase !== 'awaiting-player-input') throw new Error('回合进行中无法分支；请先取消当前回合。')
         // 1) 先存档当前状态（分支存档）
-        const archive = runtime.exportArchive(roomId)
+        const archive = exportArchiveWithPlugins()
         const name = `分支-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`
         writeFileSync(join(saveRoot, `${name}.json`), `${JSON.stringify(archive, null, 2)}\n`, 'utf8')
         // 2) 再回滚
@@ -1237,6 +1303,24 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     return Buffer.concat(chunks)
   }
   async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> { return JSON.parse((await readBody(request, 4 * 1024 * 1024)).toString('utf8') || '{}') as Record<string, unknown> }
+
+  /** 存档插件依赖快照（§7.4）：记录导出时启用的插件集；导入时只产出提示、不阻断加载（2026-09-01 拍板）。 */
+  function exportArchiveWithPlugins(): Record<string, unknown> {
+    const plan = pluginConfigStore.readLaunchPlan()
+    const byId = new Map(DESKTOP_BUILTIN_PLUGIN_MANIFESTS.map(manifest => [manifest.id, manifest]))
+    const plugins = (plan?.plugins ?? []).filter(plugin => plugin.enabled).map(plugin => ({
+      id: plugin.id,
+      version: plugin.version,
+      manifestHash: plugin.manifestHash,
+      ...(byId.get(plugin.id)?.stateSchemaVersion ? { stateSchemaVersion: byId.get(plugin.id)!.stateSchemaVersion } : {}),
+    }))
+    return { ...runtime.exportArchive(roomId), ...(plugins.length ? { plugins } : {}) }
+  }
+
+  /** 存档插件依赖建议（提示用）：缺失/不兼容明细与 message 一并返回，由 UI 在加载前展示。 */
+  function archiveDependencyAdvice(archive: unknown): { recorded: boolean; missing: string[]; incompatible: string[]; message: string } {
+    return pluginAdmin.archiveDependencyAdvice((archive as { plugins?: PluginDependencySnapshot[] } | undefined)?.plugins)
+  }
 
   function listSaves(): string[] {
     try {

@@ -162,7 +162,14 @@ public final class CoreConnection {
         }
     }
 
-    /** 请求优雅停止（fire-and-forget）。 */
+    /**
+     * 请求优雅停止（fire-and-forget）。
+     *
+     * ⚠ 注意：:core 内 stopSelf 在绑定存活时不会触发重建（真机实测，见 CoreService renderer-gone
+     * 注释）——本方法只会让服务实例掏空自己（数据面停、WebView 销毁），进程与绑定都还在。
+     * 需要"重启 Core 生效"语义（如插件配置变更）请走 host.restart 的进程恢复链（kill :core pid），
+     * 复用本类既有 binder-death 幂等重绑。
+     */
     public void requestStop() {
         ICoreControl current = core;
         if (current == null) return;
