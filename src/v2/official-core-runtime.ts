@@ -4,7 +4,7 @@
  */
 import type { ComponentManifest, ComponentSelection } from './component-contract.ts'
 import type { CoreBootContext, HostCoreEntry, LoadedCoreComponent } from './host-core-abi.ts'
-import { createAuthoringLlmSystemHarness, type AuthoringContext, type AuthoringPlugin, type CorePlugin, type LlmSystemHarness, type LlmSystemPlugin, type ProviderDriver, type SolutionPlugin, type ToolPlugin, type UiPlugin, type UiSurface, type UiView } from '../sdk/authoring.ts'
+import { createAuthoringLlmSystemHarness, type AuthoringContext, type AuthoringPlugin, type CorePlugin, type LlmSystemHarness, type LlmSystemPlugin, type LlmHarnessSnapshot, type LlmHarnessStore, type ProviderDriver, type SolutionPlugin, type ToolPlugin, type UiPlugin, type UiSurface, type UiView } from '../sdk/authoring.ts'
 import type { OfficialCorePluginApi, OfficialCorePluginDescriptor } from './official-core-plugin-api.ts'
 
 type AnyPlugin = AuthoringPlugin & { kind: string }
@@ -58,6 +58,25 @@ function context(manifest: { id: string; version: string }, config: Readonly<Rec
   return { apiVersion: '0.1', pluginId: manifest.id, config, log: (level, message, details) => { void host.call('host.log', { level, message, details }, { pluginId: manifest.id, version: manifest.version }).catch(() => {}) } }
 }
 
+/** Per-LLM-system persistence over the Host `host.storage` capability. Storage
+ * denial degrades to in-memory behavior (read errors are swallowed by the
+ * harness; write errors are fire-and-forget). */
+function createHostLlmStore(host: CoreBootContext['host'], manifest: { id: string; version: string }): LlmHarnessStore {
+  const caller = { pluginId: manifest.id, version: manifest.version }
+  return {
+    async read() {
+      const result = await host.call('host.storage.read', { area: 'llm-harness' }, caller) as { value?: unknown } | undefined
+      return result?.value && typeof result.value === 'object' && !Array.isArray(result.value) ? result.value as LlmHarnessSnapshot : undefined
+    },
+    async write(snapshot) { await host.call('host.storage.write', { area: 'llm-harness', value: snapshot }, caller) },
+  }
+}
+
+async function readHostArea(host: CoreBootContext['host'], caller: { pluginId: string; version: string }, area: string): Promise<unknown | undefined> {
+  const result = await host.call('host.storage.read', { area }, caller) as { value?: unknown } | undefined
+  return result?.value === null || result?.value === undefined ? undefined : result.value
+}
+
 export interface OfficialCoreRuntimeOptions {
   readonly config?: Readonly<Record<string, unknown>>
 }
@@ -72,17 +91,22 @@ export function createOfficialCoreRuntime(coreComponent: LoadedCoreComponent, op
   let core: CorePlugin | undefined
   let coreCommands = new Map<string, (input: unknown) => unknown | Promise<unknown>>()
   let loaded: LoadedCoreComponent[] = []; let pluginValues = new Map<string, AnyPlugin>(); let active = new Set<string>(); let disposedUi = new Set<string>(); let llm = new Map<string, LlmSystemHarness>(); let stopped = false; let coreStarted = false; let state: OfficialCoreRuntime['status'] = 'pending'
+  /** options.config merged with the persisted core config area once boot loads it. */
+  let resolvedConfig: Record<string, unknown> = { ...(options.config ?? {}) }
   const descriptors = () => loaded.filter(c => active.has(selectionKey({ id: c.manifest.id, version: c.manifest.version, manifestHash: '' }))).map(c => ({ id: c.manifest.id, version: c.manifest.version, pluginCategory: c.manifest.pluginCategory! as OfficialCorePluginDescriptor['pluginCategory'] }))
   const api: OfficialCoreRuntime = {
     profile: 'stagecraft.core-plugin/0.1', get status() { return state },
     listPlugins: () => Object.freeze(descriptors()),
     async loadPlugin(descriptor) { const key = `${descriptor.id}@${descriptor.version}`; const component = loaded.find(c => `${c.manifest.id}@${c.manifest.version}` === key); if (!component || component.manifest.componentType !== 'plugin') fail(`plugin is not selected: ${key}`); active.add(key) },
-    async unloadPlugin(id) { const keys = [...active].filter(key => key === id || key.startsWith(`${id}@`)); const errors: unknown[] = []; for (const key of keys.reverse()) { const plugin = pluginValues.get(key); try { if (plugin?.kind === 'llm-system') { await llm.get(key)?.stop(); llm.delete(key) }; if (plugin?.kind === 'ui' && !disposedUi.has(key)) { await (plugin as UiPlugin).dispose?.(context(plugin.manifest, options.config ?? {}, bootContext!.host)); disposedUi.add(key) } } catch (error) { errors.push(error) } active.delete(key) } if (errors.length) throw new AggregateError(errors, `failed to unload plugin ${id}`) },
+    async unloadPlugin(id) { const keys = [...active].filter(key => key === id || key.startsWith(`${id}@`)); const errors: unknown[] = []; for (const key of keys.reverse()) { const plugin = pluginValues.get(key); try { if (plugin?.kind === 'llm-system') { await llm.get(key)?.stop(); llm.delete(key) }; if (plugin?.kind === 'ui' && !disposedUi.has(key)) { await (plugin as UiPlugin).dispose?.(context(plugin.manifest, resolvedConfig, bootContext!.host)); disposedUi.add(key) } } catch (error) { errors.push(error) } active.delete(key) } if (errors.length) throw new AggregateError(errors, `failed to unload plugin ${id}`) },
     async boot(context) {
       if (state !== 'pending') fail(`official Core boot is only valid from pending (state=${state})`)
       bootContext = context
       try {
         if (coreComponent.manifest.id !== context.request.selectedCore.id || coreComponent.manifest.version !== context.request.selectedCore.version) fail(`selected Core identity mismatch: expected ${context.request.selectedCore.id}@${context.request.selectedCore.version}, got ${coreComponent.manifest.id}@${coreComponent.manifest.version}`)
+        const coreIdentity = { pluginId: coreComponent.manifest.id, version: coreComponent.manifest.version }
+        const persistedConfig = await readHostArea(context.host, coreIdentity, 'config').catch(() => undefined)
+        if (persistedConfig && typeof persistedConfig === 'object' && !Array.isArray(persistedConfig)) resolvedConfig = { ...(options.config ?? {}), ...(persistedConfig as Record<string, unknown>) }
         core = validateIdentity(coreComponent) as CorePlugin
         const selected = context.request.pluginSelections
         const ordered = orderComponents(context.components, selected)
@@ -90,7 +114,7 @@ export function createOfficialCoreRuntime(coreComponent: LoadedCoreComponent, op
         const drivers = ordered.map(c => pluginValues.get(`${c.manifest.id}@${c.manifest.version}`)).filter((p): p is ProviderDriver => p?.kind === 'provider-driver')
         for (const component of ordered) {
           const plugin = pluginValues.get(`${component.manifest.id}@${component.manifest.version}`)!
-          if (plugin.kind === 'llm-system') llm.set(`${component.manifest.id}@${component.manifest.version}`, await createAuthoringLlmSystemHarness(plugin as LlmSystemPlugin, options.config ?? {}, { drivers }))
+          if (plugin.kind === 'llm-system') llm.set(`${component.manifest.id}@${component.manifest.version}`, await createAuthoringLlmSystemHarness(plugin as LlmSystemPlugin, resolvedConfig, { drivers, store: createHostLlmStore(context.host, plugin.manifest) }))
           await api.loadPlugin({ id: component.manifest.id, version: component.manifest.version, pluginCategory: component.manifest.pluginCategory! as OfficialCorePluginDescriptor['pluginCategory'] })
         }
         let innerReady = false
@@ -105,28 +129,32 @@ export function createOfficialCoreRuntime(coreComponent: LoadedCoreComponent, op
       if (state !== 'ready') fail(`official Core invoke unavailable (state=${state})`)
       const value = input as Record<string, any> ?? {}
       if (operation === 'plugins/list' || operation === 'plugins/status') return api.listPlugins()
-      if (operation === 'solution/assemble') { const solution = select<SolutionPlugin>('solution', value.solutionId); const assembled = await solution.assemblePrompt({ user: String(value.user ?? ''), state: value.state, history: value.history }, context(solution.manifest, options.config ?? {}, bootContext!.host)); const messages = [...(solution.systemPrompt ? [{ role: 'system', content: solution.systemPrompt }] : []), { role: 'user', content: assembled }]; return { systemPrompt: solution.systemPrompt, assembled, messages } }
-      if (operation === 'solution/command') { const solution = select<SolutionPlugin>('solution', value.solutionId); if (!solution.handleCommand) fail(`solution ${solution.manifest.id} has no command handler`); return solution.handleCommand(value.command, context(solution.manifest, options.config ?? {}, bootContext!.host)) }
+      if (operation === 'solution/assemble') { const solution = select<SolutionPlugin>('solution', value.solutionId); const assembled = await solution.assemblePrompt({ user: String(value.user ?? ''), state: value.state, history: value.history }, context(solution.manifest, resolvedConfig, bootContext!.host)); const messages = [...(solution.systemPrompt ? [{ role: 'system', content: solution.systemPrompt }] : []), { role: 'user', content: assembled }]; return { systemPrompt: solution.systemPrompt, assembled, messages } }
+      if (operation === 'solution/command') { const solution = select<SolutionPlugin>('solution', value.solutionId); if (!solution.handleCommand) fail(`solution ${solution.manifest.id} has no command handler`); return solution.handleCommand(value.command, context(solution.manifest, resolvedConfig, bootContext!.host)) }
       if (operation === 'llm/complete' || operation === 'llm/stream') { const harness = selectLlm(value.llmSystemId); const chunks = []; for await (const chunk of harness.complete({ requestId: String(value.requestId), messages: value.messages ?? [], providerId: value.providerId, model: value.model, credentialProfileId: value.credentialProfileId, credential: value.credential, metadata: value.metadata })) chunks.push(chunk); return chunks }
       if (operation === 'llm/cancel') { await selectLlm(value.llmSystemId).cancel(String(value.requestId)); return { ok: true } }
       if (operation === 'llm/usage/query') return selectLlm(value.llmSystemId).queryUsage(value.filter)
       if (operation === 'llm/usage/aggregate') return selectLlm(value.llmSystemId).aggregateUsage(value.filter)
-      if (operation === 'tool/execute') { const tool = select<ToolPlugin>('tool', value.toolId); return tool.execute(value.input, { ...context(tool.manifest, options.config ?? {}, bootContext!.host), signal: value.signal }) }
-      if (operation === 'ui/render') { const ui = select<UiPlugin>('ui', value.uiId); const surface = value.surface as UiSurface; return ui.render({ surface, view: value.view as UiView | undefined }, context(ui.manifest, options.config ?? {}, bootContext!.host)) }
-      if (operation === 'ui/dispose') { const ui = select<UiPlugin>('ui', value.uiId); const key = `${ui.manifest.id}@${ui.manifest.version}`; if (!disposedUi.has(key)) { await ui.dispose?.(context(ui.manifest, options.config ?? {}, bootContext!.host)); disposedUi.add(key) }; return { ok: true } }
+      if (operation === 'llm/credential/set') { const harness = selectLlm(value.llmSystemId); harness.setCredentialSecret(String(value.profileId), value.secret === undefined || value.secret === null ? undefined : String(value.secret)); return { ok: true } }
+      if (operation === 'llm/credential/list') { const harness = selectLlm(value.llmSystemId); return harness.listCredentialProfiles().map(profile => ({ ...profile, hasSecret: harness.hasCredentialSecret(profile.id) })) }
+      if (operation === 'config/get') return { ...resolvedConfig }
+      if (operation === 'config/update') { const patch = value as Record<string, unknown>; if (!patch || typeof patch !== 'object' || Array.isArray(patch)) fail('config/update input must be an object'); Object.assign(resolvedConfig, patch); const coreCaller = { pluginId: coreComponent.manifest.id, version: coreComponent.manifest.version }; await bootContext!.host.call('host.storage.write', { area: 'config', value: { ...resolvedConfig } }, coreCaller); return { ...resolvedConfig } }
+      if (operation === 'tool/execute') { const tool = select<ToolPlugin>('tool', value.toolId); return tool.execute(value.input, { ...context(tool.manifest, resolvedConfig, bootContext!.host), signal: value.signal }) }
+      if (operation === 'ui/render') { const ui = select<UiPlugin>('ui', value.uiId); const surface = value.surface as UiSurface; return ui.render({ surface, view: value.view as UiView | undefined }, context(ui.manifest, resolvedConfig, bootContext!.host)) }
+      if (operation === 'ui/dispose') { const ui = select<UiPlugin>('ui', value.uiId); const key = `${ui.manifest.id}@${ui.manifest.version}`; if (!disposedUi.has(key)) { await ui.dispose?.(context(ui.manifest, resolvedConfig, bootContext!.host)); disposedUi.add(key) }; return { ok: true } }
       if (operation === 'core/command') { const command = coreCommands.get(String(value.name)); if (!command) fail(`unknown Core command: ${value.name}`); return command(value.input) }
       fail(`unknown official Core operation: ${operation}`)
     },
     async shutdown() {
       if (stopped) return; stopped = true
       const errors: unknown[] = []
-      for (const key of [...active].reverse()) { const plugin = pluginValues.get(key); try { if (plugin?.kind === 'llm-system') { await llm.get(key)?.stop(); llm.delete(key) }; if (plugin?.kind === 'ui' && !disposedUi.has(key)) { await (plugin as UiPlugin).dispose?.(context(plugin.manifest, options.config ?? {}, bootContext!.host)); disposedUi.add(key) } } catch (e) { errors.push(e) } active.delete(key) }
+      for (const key of [...active].reverse()) { const plugin = pluginValues.get(key); try { if (plugin?.kind === 'llm-system') { await llm.get(key)?.stop(); llm.delete(key) }; if (plugin?.kind === 'ui' && !disposedUi.has(key)) { await (plugin as UiPlugin).dispose?.(context(plugin.manifest, resolvedConfig, bootContext!.host)); disposedUi.add(key) } } catch (e) { errors.push(e) } active.delete(key) }
       llm.clear(); try { if (coreStarted) await core?.stop?.(contextForCore(bootContext!)) } catch (e) { errors.push(e) }
       state = 'stopped'; if (errors.length) throw new AggregateError(errors, 'one or more official Core plugins failed to stop')
     },
   }
   function select<T extends AnyPlugin>(kind: string, id: string | undefined): T { const matches = [...pluginValues.entries()].filter(([key, p]) => active.has(key) && p.kind === kind).map(([, p]) => p); if (id) { const value = matches.find(p => p.manifest.id === id || `${p.manifest.id}@${p.manifest.version}` === id); if (!value) fail(`no ${kind} plugin selected: ${id}`); return value as T }; if (matches.length !== 1) fail(`${kind} selection is required when ${matches.length} plugins are available`); return matches[0] as T }
   function selectLlm(id: string | undefined): LlmSystemHarness { const p = select<LlmSystemPlugin>('llm-system', id); return llm.get(`${p.manifest.id}@${p.manifest.version}`)! }
-  function contextForCore(c: CoreBootContext, ready: () => void = () => {}): any { const coreManifest = { id: core?.manifest.id ?? c.request.selectedCore.id, version: core?.manifest.version ?? c.request.selectedCore.version }; return { apiVersion: '0.1', pluginId: coreManifest.id, config: options.config ?? {}, log(level: string, message: string, details?: unknown) { void c.host.call('host.log', { level, message, details }, { pluginId: coreManifest.id, version: coreManifest.version }).catch(() => {}) }, registerCommand(name: string, handler: any) { if (coreCommands.has(name)) fail(`duplicate core command: ${name}`); coreCommands.set(name, handler) }, ready } }
+  function contextForCore(c: CoreBootContext, ready: () => void = () => {}): any { const coreManifest = { id: core?.manifest.id ?? c.request.selectedCore.id, version: core?.manifest.version ?? c.request.selectedCore.version }; return { apiVersion: '0.1', pluginId: coreManifest.id, config: resolvedConfig, log(level: string, message: string, details?: unknown) { void c.host.call('host.log', { level, message, details }, { pluginId: coreManifest.id, version: coreManifest.version }).catch(() => {}) }, registerCommand(name: string, handler: any) { if (coreCommands.has(name)) fail(`duplicate core command: ${name}`); coreCommands.set(name, handler) }, ready } }
   return api
 }

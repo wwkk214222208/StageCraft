@@ -115,6 +115,21 @@ export interface LlmUsageRecord {
   readonly timestamp?: string
 }
 
+/** Persistable harness state. Secrets live here for the reference path only;
+ * production deployments should move them to a platform secret store. */
+export interface LlmHarnessSnapshot {
+  readonly credentialProfiles: readonly CredentialProfileMetadata[]
+  readonly usage: readonly LlmUsageRecord[]
+  readonly secrets: Readonly<Record<string, string>>
+}
+
+/** Persistence seam for credential profiles, usage and secrets. Reads happen
+ * once at harness start; writes are best-effort and never break the stream. */
+export interface LlmHarnessStore {
+  read(): Promise<LlmHarnessSnapshot | undefined>
+  write(snapshot: LlmHarnessSnapshot): Promise<void>
+}
+
 export interface LlmSystemAuthoringContext extends AuthoringContext {
   registerDriver(driver: ProviderDriver): void
   listDrivers(): readonly ProviderDriver[]
@@ -281,6 +296,8 @@ export interface LlmSystemHarness {
   listModels(providerId?: string): readonly { providerId: string; models: readonly string[] }[]
   listCredentialProfiles(): readonly CredentialProfileMetadata[]
   upsertCredentialProfile(profile: CredentialProfileMetadata): void
+  setCredentialSecret(profileId: string, secret: string | undefined): void
+  hasCredentialSecret(profileId: string): boolean
   route(input: Parameters<LlmSystemPlugin['route']>[0]): Promise<LlmRouteSelection>
   complete(input: { requestId: string; messages: readonly { role: string; content: string }[]; providerId?: string; model?: string; credentialProfileId?: string; credential?: CredentialMaterial; metadata?: Readonly<Record<string, unknown>> }): AsyncIterable<ProviderChunk>
   cancel(requestId: string): Promise<void>
@@ -293,17 +310,33 @@ export interface LlmSystemHarness {
 export interface LlmSystemHarnessOptions {
   /** Drivers supplied by the Core from selected plugin components. */
   readonly drivers?: readonly ProviderDriver[]
+  /** Optional persistence for credential profiles, usage and secrets. */
+  readonly store?: LlmHarnessStore
 }
 
 /** In-memory authoring harness exercising the complete LLM System/Driver boundary. */
 export async function createAuthoringLlmSystemHarness(plugin: LlmSystemPlugin, config: Readonly<Record<string, unknown>> = {}, options: LlmSystemHarnessOptions = {}): Promise<LlmSystemHarness> {
-  const drivers = new Map<string, ProviderDriver>(); const profiles = new Map<string, CredentialProfileMetadata>(); const usage: LlmUsageRecord[] = []; const active = new Map<string, { controller: AbortController; driver: ProviderDriver }>(); let stopped = false
+  const drivers = new Map<string, ProviderDriver>(); const profiles = new Map<string, CredentialProfileMetadata>(); const usage: LlmUsageRecord[] = []; const secrets = new Map<string, string>(); const active = new Map<string, { controller: AbortController; driver: ProviderDriver }>(); let stopped = false
+  const snapshot = (): LlmHarnessSnapshot => Object.freeze({ credentialProfiles: Object.freeze([...profiles.values()].map(profile => ({ ...profile }))), usage: Object.freeze(usage.map(record => ({ ...record }))), secrets: Object.freeze(Object.fromEntries(secrets)) })
+  // Best-effort persistence: writes are serialized per harness and never break
+  // plugin start(), profile upserts or the chunk stream.
+  let writeChain: Promise<void> = Promise.resolve()
+  const persist = (): void => { if (!options.store) return; const state = snapshot(); writeChain = writeChain.then(() => options.store!.write(state)).catch(() => undefined) }
+  const store = options.store
+  if (store) {
+    const restored = await store.read().catch(() => undefined)
+    if (restored) {
+      for (const profile of restored.credentialProfiles ?? []) profiles.set(profile.id, Object.freeze({ ...profile }))
+      for (const record of restored.usage ?? []) usage.push(Object.freeze({ ...record }))
+      for (const [profileId, secret] of Object.entries(restored.secrets ?? {})) secrets.set(profileId, secret)
+    }
+  }
   const context: LlmSystemAuthoringContext = {
     apiVersion: STAGECRAFT_AUTHORING_API, pluginId: plugin.manifest.id, config, log() {},
     registerDriver(driver) { if (driver.kind !== 'provider-driver') throw new TypeError('only provider drivers may be registered'); if (drivers.has(driver.providerId)) throw new Error(`duplicate provider driver: ${driver.providerId}`); drivers.set(driver.providerId, driver) },
     listDrivers: () => Object.freeze([...drivers.values()]),
     listModels: providerId => Object.freeze([...drivers.values()].filter(d => !providerId || d.providerId === providerId).map(d => Object.freeze({ providerId: d.providerId, models: Object.freeze([...d.models]) }))),
-    upsertCredentialProfile(profile) { if (!profile?.id || !profile.providerId) throw new Error('credential profile id and providerId are required'); profiles.set(profile.id, Object.freeze({ ...profile })) },
+    upsertCredentialProfile(profile) { if (!profile?.id || !profile.providerId) throw new Error('credential profile id and providerId are required'); const existing = profiles.get(profile.id); profiles.set(profile.id, Object.freeze({ ...existing, ...profile })); persist() },
     listCredentialProfiles: () => Object.freeze([...profiles.values()]),
   }
   for (const driver of options.drivers ?? []) context.registerDriver(driver)
@@ -311,9 +344,9 @@ export async function createAuthoringLlmSystemHarness(plugin: LlmSystemPlugin, c
   const route = async input => { if (stopped) throw new Error('llm-system is stopped'); const selected = await plugin.route(input, context); if (!selected?.providerId || !selected.model) throw new Error('llm-system route must select providerId and model'); const driver = drivers.get(selected.providerId); if (!driver) throw new Error(`no provider driver registered for ${selected.providerId}`); if (!driver.models.includes(selected.model)) throw new Error(`driver ${selected.providerId} does not provide model ${selected.model}`); if (selected.credentialProfileId) { const profile = profiles.get(selected.credentialProfileId); if (!profile) throw new Error(`unknown credential profile: ${selected.credentialProfileId}`); if (profile.providerId !== selected.providerId) throw new Error(`credential profile ${selected.credentialProfileId} belongs to ${profile.providerId}`) } return Object.freeze({ ...selected }) }
   const complete = (input: { requestId: string; messages: readonly { role: string; content: string }[]; providerId?: string; model?: string; credentialProfileId?: string; credential?: CredentialMaterial; metadata?: Readonly<Record<string, unknown>> }): AsyncIterable<ProviderChunk> => {
     if (active.has(input.requestId)) throw new Error(`requestId already active: ${input.requestId}`)
-    const iterator = (async function* () { const selected = await route({ providerId: input.providerId, model: input.model, credentialProfileId: input.credentialProfileId, metadata: input.metadata }); const driver = drivers.get(selected.providerId)!; if (input.credential && input.credential.profileId !== selected.credentialProfileId) throw new Error('credential material does not match selected profile'); const controller = new AbortController(); active.set(input.requestId, { controller, driver }); try { for await (const chunk of driver.request({ requestId: input.requestId, providerId: selected.providerId, model: selected.model, credentialProfileId: selected.credentialProfileId, credential: input.credential, messages: input.messages, signal: controller.signal, metadata: input.metadata }, context)) { if (controller.signal.aborted) break; yield chunk; if (chunk.type === 'usage' && chunk.usage) usage.push(Object.freeze({ requestId: input.requestId, providerId: selected.providerId, model: selected.model, ...chunk.usage, timestamp: new Date().toISOString() })) } } finally { active.delete(input.requestId) } })(); return iterator
+    const iterator = (async function* () { const selected = await route({ providerId: input.providerId, model: input.model, credentialProfileId: input.credentialProfileId, metadata: input.metadata }); const driver = drivers.get(selected.providerId)!; if (input.credential && input.credential.profileId !== selected.credentialProfileId) throw new Error('credential material does not match selected profile'); const storedSecret = selected.credentialProfileId ? secrets.get(selected.credentialProfileId) : undefined; const credential = input.credential ?? (storedSecret !== undefined ? { profileId: selected.credentialProfileId!, secret: storedSecret } : undefined); const controller = new AbortController(); active.set(input.requestId, { controller, driver }); try { for await (const chunk of driver.request({ requestId: input.requestId, providerId: selected.providerId, model: selected.model, credentialProfileId: selected.credentialProfileId, credential, messages: input.messages, signal: controller.signal, metadata: input.metadata }, context)) { if (controller.signal.aborted) break; yield chunk; if (chunk.type === 'usage' && chunk.usage) { usage.push(Object.freeze({ requestId: input.requestId, providerId: selected.providerId, model: selected.model, ...chunk.usage, timestamp: new Date().toISOString() })); persist() } } } finally { active.delete(input.requestId) } })(); return iterator
   }
-  return { get status() { return status }, listDrivers: context.listDrivers, listModels: context.listModels, listCredentialProfiles: context.listCredentialProfiles, upsertCredentialProfile: context.upsertCredentialProfile, route, complete, async cancel(requestId) { const current = active.get(requestId); if (!current) return; current.controller.abort(); await current.driver.cancel?.(requestId, context) }, recordUsage(record) { usage.push(Object.freeze({ ...record })) }, queryUsage(filter = {}) { return Object.freeze(usage.filter(r => (!filter.providerId || r.providerId === filter.providerId) && (!filter.model || r.model === filter.model))) }, aggregateUsage(filter = {}) { const rows = usage.filter(r => (!filter.providerId || r.providerId === filter.providerId) && (!filter.model || r.model === filter.model)); return Object.freeze({ inputTokens: rows.reduce((n, r) => n + (r.inputTokens ?? 0), 0), outputTokens: rows.reduce((n, r) => n + (r.outputTokens ?? 0), 0), requests: new Set(rows.map(r => r.requestId)).size }) }, async stop() { if (stopped) return; stopped = true; for (const requestId of [...active.keys()]) await this.cancel(requestId); await plugin.stop?.(context); status = 'stopped' } }
+  return { get status() { return status }, listDrivers: context.listDrivers, listModels: context.listModels, listCredentialProfiles: context.listCredentialProfiles, upsertCredentialProfile: context.upsertCredentialProfile, setCredentialSecret(profileId, secret) { if (!profiles.has(profileId)) throw new Error(`unknown credential profile: ${profileId}`); if (secret === undefined) secrets.delete(profileId); else secrets.set(profileId, secret); persist() }, hasCredentialSecret: profileId => secrets.has(profileId), route, complete, async cancel(requestId) { const current = active.get(requestId); if (!current) return; current.controller.abort(); await current.driver.cancel?.(requestId, context) }, recordUsage(record) { usage.push(Object.freeze({ ...record })); persist() }, queryUsage(filter = {}) { return Object.freeze(usage.filter(r => (!filter.providerId || r.providerId === filter.providerId) && (!filter.model || r.model === filter.model))) }, aggregateUsage(filter = {}) { const rows = usage.filter(r => (!filter.providerId || r.providerId === filter.providerId) && (!filter.model || r.model === filter.model)); return Object.freeze({ inputTokens: rows.reduce((n, r) => n + (r.inputTokens ?? 0), 0), outputTokens: rows.reduce((n, r) => n + (r.outputTokens ?? 0), 0), requests: new Set(rows.map(r => r.requestId)).size }) }, async stop() { if (stopped) return; stopped = true; for (const requestId of [...active.keys()]) await this.cancel(requestId); await plugin.stop?.(context); status = 'stopped' } }
 }
 
 export interface AuthoringCoreHarness {

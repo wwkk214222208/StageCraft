@@ -30,7 +30,7 @@ test('official runtime boots through HostCoreSession and exposes generic operati
   assert.deepEqual(await session.invoke('llm/complete', { llmSystemId: 'example.llm', requestId: 'r1', messages: [{ role: 'user', content: 'assembled:hi' }] }), [{ type: 'text', text: 'ok' }, { type: 'usage', usage: { inputTokens: 2, outputTokens: 3 } }])
   assert.deepEqual(await session.invoke('llm/usage/aggregate', { llmSystemId: 'example.llm' }), { inputTokens: 2, outputTokens: 3, requests: 1 })
   assert.deepEqual(await session.invoke('tool/execute', { toolId: 'example.tool', input: 7 }), { input: 7 })
-  await new Promise(resolve => setTimeout(resolve, 0)); assert.deepEqual(hostCalls, ['host.log'])
+  await new Promise(resolve => setTimeout(resolve, 0)); assert.deepEqual([...hostCalls].sort(), ['host.log', 'host.storage.read', 'host.storage.read', 'host.storage.write'])
   assert.deepEqual(await session.invoke('ui/render', { uiId: 'example.ui', surface: { id: 's', render: (view: any) => ({ surfaceId: 's', view }) }, view: { type: 'text', text: 'x' } }), { surfaceId: 's', view: { type: 'text', text: 'x' } })
   await session.invoke('ui/dispose', { uiId: 'example.ui' })
   await runtime.shutdown!(); assert.equal(runtime.status, 'stopped'); assert.deepEqual(events, ['llm:start', 'request:assembled:hi', 'ui:dispose', 'llm:stop', 'core:stop'])
