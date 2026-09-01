@@ -2,9 +2,9 @@
  * M4 desktop v2 Host reference path. This is deliberately separate from the
  * v1 app-boot composition root; selecting a v2 plan never constructs it.
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isLoopbackHost } from '../remote-access.ts'
@@ -14,6 +14,7 @@ import { validateComponentManifest, isPortableRelativePath } from './component-v
 import { negotiateCapabilities } from './capabilities.ts'
 import { capabilityForHostOperation, createNodeFileComponentStorage, type ComponentStoragePort, type HostPortCaller } from './component-storage.ts'
 import { HOST_CORE_ABI_VERSION, type HostCoreEntry, type LoadedCoreComponent, HostCoreSession } from './host-core-abi.ts'
+import { renderUiMountPage } from './ui-mount.ts'
 
 export interface V2DesktopHostOptions {
   userDataRoot: string
@@ -25,6 +26,8 @@ export interface V2DesktopHostOptions {
   maxBodyBytes?: number
   /** Defaults to the Node file store under `<userDataRoot>/data/v2-storage`. */
   storage?: ComponentStoragePort
+  /** Loopback API token for invoke/stream. Generated and persisted when absent. */
+  authToken?: string
 }
 
 export interface V2DesktopHost {
@@ -36,6 +39,8 @@ export interface V2DesktopHost {
   readonly quarantinedPlugins: readonly { id: string; version: string; reason: string }[]
   readonly coreManifest: ComponentManifest
   readonly diagnostics: readonly string[]
+  /** Loopback API token required by invoke/stream (and injected into the UI mount page). */
+  readonly authToken: string
   close(): Promise<void>
 }
 
@@ -117,8 +122,13 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
     throw stageError('handshake', coreManifest.id, cleanupError ? `${message}; cleanup failed: ${errorMessage(cleanupError)}` : message)
   }
   let server: Server | undefined
+  const authToken = options.authToken ?? randomBytes(32).toString('hex')
   try {
-    server = createHttpServer(session, plan, coreManifest, diagnostics, uiEntries, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES)
+    try {
+      mkdirSync(join(options.userDataRoot, 'data'), { recursive: true })
+      writeFileSync(join(options.userDataRoot, 'data', 'v2-host-token'), authToken, { encoding: 'utf8', mode: 0o600 })
+    } catch { /* best effort: embedded callers use the returned authToken */ }
+    server = createHttpServer(session, plan, coreManifest, diagnostics, uiEntries, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES, authToken)
     await listen(server, port, host)
   } catch (error) {
     let cleanupError: unknown
@@ -128,7 +138,7 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
   }
   let closed = false
   return {
-    server, session, plan, effectivePlan, quarantinedPlugins, coreManifest, diagnostics,
+    server, session, plan, effectivePlan, quarantinedPlugins, coreManifest, diagnostics, authToken,
     async close() {
       if (closed) return
       closed = true
@@ -238,12 +248,30 @@ function createHostPort(options: HostPortOptions): { call(operation: string, inp
   } }
 }
 
-function createHttpServer(session: HostCoreSession, plan: ComponentLaunchPlan, manifest: ComponentManifest, diagnostics: readonly string[], uiEntries: readonly { id: string; version: string; path: string }[], maxBodyBytes: number): Server {
+function createHttpServer(session: HostCoreSession, plan: ComponentLaunchPlan, manifest: ComponentManifest, diagnostics: readonly string[], uiEntries: readonly { id: string; version: string; path: string }[], maxBodyBytes: number, authToken: string): Server {
+  const requireToken = (request: IncomingMessage, url: URL): void => {
+    const provided = String(request.headers['x-stagecraft-token'] ?? url.searchParams.get('token') ?? '')
+    const providedBytes = Buffer.from(provided); const expectedBytes = Buffer.from(authToken)
+    if (providedBytes.length !== expectedBytes.length || !timingSafeEqual(providedBytes, expectedBytes)) throw httpError(401, 'unauthorized', 'a valid x-stagecraft-token is required for this operation')
+  }
+  // DNS-rebinding guard: a web page must not reach the Host through a
+  // rebinded domain name; loopback literals only.
+  const requireLoopbackHostHeader = (request: IncomingMessage): void => {
+    const hostHeader = String(request.headers.host ?? '').split(':')[0]
+    if (!isLoopbackHost(hostHeader)) throw httpError(403, 'forbidden_host', 'Host header must be a loopback literal')
+  }
   return createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
+      if (request.method === 'GET' && url.pathname === '/api/v2/ui') {
+        requireLoopbackHostHeader(request)
+        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
+        response.end(renderUiMountPage(authToken))
+        return
+      }
       if (request.method === 'GET' && url.pathname === '/api/v2/core/status') {
-        sendJson(response, 200, { ok: session.state === 'ready', state: session.state, core: { id: manifest.id, version: manifest.version }, planHash: plan.planHash, diagnostics, uiEntries: uiEntries.map(entry => ({ id: entry.id, version: entry.version, url: `/api/v2/components/${encodeURIComponent(entry.id)}/${encodeURIComponent(entry.version)}/ui` })) })
+        requireLoopbackHostHeader(request)
+        sendJson(response, 200, { ok: session.state === 'ready', state: session.state, core: { id: manifest.id, version: manifest.version }, planHash: plan.planHash, diagnostics, mountUrl: '/api/v2/ui', uiEntries: uiEntries.map(entry => ({ id: entry.id, version: entry.version, url: `/api/v2/components/${encodeURIComponent(entry.id)}/${encodeURIComponent(entry.version)}/ui` })) })
         return
       }
       if (request.method === 'GET') {
@@ -251,6 +279,8 @@ function createHttpServer(session: HostCoreSession, plan: ComponentLaunchPlan, m
         if (ui) { response.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(readFileSync(ui.path)); return }
       }
       if (request.method === 'POST' && url.pathname === '/api/v2/core/invoke') {
+        requireLoopbackHostHeader(request)
+        requireToken(request, url)
         const body = await readBody(request, maxBodyBytes)
         if (!body || typeof body !== 'object' || typeof (body as { operation?: unknown }).operation !== 'string' || !(body as { operation: string }).operation) throw httpError(400, 'invalid_json', 'body must contain a non-empty operation')
         const result = await session.invoke((body as { operation: string }).operation, (body as { input?: unknown }).input)
@@ -258,6 +288,8 @@ function createHttpServer(session: HostCoreSession, plan: ComponentLaunchPlan, m
         return
       }
       if (request.method === 'POST' && url.pathname === '/api/v2/core/stream') {
+        requireLoopbackHostHeader(request)
+        requireToken(request, url)
         const body = await readBody(request, maxBodyBytes)
         if (!body || typeof body !== 'object' || typeof (body as { operation?: unknown }).operation !== 'string' || !(body as { operation: string }).operation) throw httpError(400, 'invalid_json', 'body must contain a non-empty operation')
         const iterator = session.stream((body as { operation: string }).operation, (body as { input?: unknown }).input)[Symbol.asyncIterator]()

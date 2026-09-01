@@ -16,6 +16,7 @@ import { startTavern } from './app-boot.ts'
 import { startPluginFallbackServer } from './plugin-fallback-server.ts'
 import { startV2DesktopHost } from './v2/desktop-host.ts'
 import { startDesktopEntry } from './v2/desktop-entry.ts'
+import { startV2DesktopRecoveryServer } from './v2/desktop-recovery.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const userDataRoot = process.env.STAGECRAFT_USER_DATA || (() => {
@@ -53,6 +54,15 @@ try {
   console.error('[StageCraft] 主运行时启动失败：', error instanceof Error ? error.stack ?? error.message : error)
   try {
     const fallbackPort = Number.isInteger(port) && port > 0 ? port : 8787
+    const v2PlanPath = join(userDataRoot, 'data', 'component-launch-plan.v2.json')
+    if (existsSync(v2PlanPath)) {
+      // v2 计划存在时走 v2 恢复入口：v1 兜底页不认识 v2 组件，修不了 v2 计划。
+      const recovery = await startV2DesktopRecoveryServer({ userDataRoot, port: fallbackPort, failure: error instanceof Error ? error.message : String(error) })
+      const address = recovery.server.address()
+      const actualPort = typeof address === 'object' && address ? address.port : fallbackPort
+      console.error(`[StageCraft] 已进入 v2 恢复模式：打开 http://127.0.0.1:${actualPort}/admin/v2 查看启动失败原因、停用问题插件或清除 v2 计划，修改后重启应用。`)
+      return
+    }
     const server = await startPluginFallbackServer({ root, userDataRoot, port: fallbackPort, ...(host && !remoteEnabled ? { host: '127.0.0.1' } : {}) })
     const address = server.address()
     const actualPort = typeof address === 'object' && address ? address.port : fallbackPort

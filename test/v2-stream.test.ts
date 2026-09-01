@@ -81,28 +81,28 @@ test('v2 desktop host forwards transfer-level SSE frames and fails closed for st
     const host = await startV2DesktopHost({ userDataRoot: base, port: 0 })
     const address = host.server.address(); const port = typeof address === 'object' && address ? address.port : 0
     const url = `http://127.0.0.1:${port}/api/v2/core/stream`
-    const response = await fetch(url, { method: 'POST', body: JSON.stringify({ operation: 'count' }) })
+    const response = await fetch(url, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation: 'count' }) })
     assert.equal(response.status, 200)
     assert.match(response.headers.get('content-type') ?? '', /text\/event-stream/)
     const frames = (await response.text()).split('\n\n').filter(frame => frame.startsWith('data: ')).map(frame => JSON.parse(frame.slice(6)))
     assert.deepEqual(frames, [{ ok: true, chunk: { i: 1 } }, { ok: true, chunk: { i: 2 } }, { ok: true, chunk: { i: 3 } }, { ok: true, done: true }])
 
-    const failing = await fetch(url, { method: 'POST', body: JSON.stringify({ operation: 'fail' }) })
+    const failing = await fetch(url, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation: 'fail' }) })
     const failureFrames = (await failing.text()).split('\n\n').filter(frame => frame.startsWith('data: ')).map(frame => JSON.parse(frame.slice(6)))
     assert.deepEqual(failureFrames, [{ ok: true, chunk: { partial: true } }, { ok: false, error: { code: 'stream_failed', message: 'mid-stream failure' } }])
 
-    const notStreamable = await fetch(url, { method: 'POST', body: JSON.stringify({ operation: 'invoke-only' }) })
+    const notStreamable = await fetch(url, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation: 'invoke-only' }) })
     assert.equal(notStreamable.status, 503)
     assert.equal(((await notStreamable.json()) as any).error.code, 'stream_unavailable')
 
     // Client disconnect: the producer is released and the Host keeps serving.
     const controller = new AbortController()
-    const aborted = await fetch(url, { method: 'POST', body: JSON.stringify({ operation: 'count' }), signal: controller.signal })
+    const aborted = await fetch(url, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation: 'count' }), signal: controller.signal })
     const reader = aborted.body!.getReader()
     await reader.read()
     controller.abort()
     await sleep(20)
-    const echo = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', body: JSON.stringify({ operation: 'echo', input: 1 }) })
+    const echo = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation: 'echo', input: 1 }) })
     assert.equal(echo.status, 200)
     await host.close()
   } finally { rmSync(base, { recursive: true, force: true }) }

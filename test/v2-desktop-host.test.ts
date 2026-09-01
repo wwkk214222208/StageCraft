@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { request as httpRequest } from 'node:http'
 import { buildComponentLaunchPlan } from '../src/v2/launch-plan.ts'
 import { startDesktopEntry } from '../src/v2/desktop-entry.ts'
 import { startV2DesktopHost } from '../src/v2/desktop-host.ts'
@@ -64,9 +65,9 @@ test('v2 desktop host verifies artifact before import and serves status/invoke',
     const host = await startV2DesktopHost({ userDataRoot: base, port: 0, maxBodyBytes: 32 })
     const address = host.server.address(); const port = typeof address === 'object' && address ? address.port : 0
     const status = await fetch(`http://127.0.0.1:${port}/api/v2/core/status`); assert.equal(status.status, 200); const statusBody = await json(status); assert.equal(statusBody.state, 'ready')
-    const invoke = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', body: JSON.stringify({ operation: 'echo', input: 3 }) }); assert.equal(invoke.status, 200); assert.deepEqual((await json(invoke)).result, { operation: 'echo', input: 3 })
-    const badJson = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', body: '{' }); assert.equal(badJson.status, 400); assert.equal((await json(badJson)).error.code, 'invalid_json')
-    const tooLarge = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', body: JSON.stringify({ operation: 'echo', input: 'x'.repeat(100) }) }); assert.equal(tooLarge.status, 413); assert.equal((await json(tooLarge)).error.code, 'body_too_large')
+    const invoke = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation: 'echo', input: 3 }) }); assert.equal(invoke.status, 200); assert.deepEqual((await json(invoke)).result, { operation: 'echo', input: 3 })
+    const badJson = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: '{' }); assert.equal(badJson.status, 400); assert.equal((await json(badJson)).error.code, 'invalid_json')
+    const tooLarge = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation: 'echo', input: 'x'.repeat(100) }) }); assert.equal(tooLarge.status, 413); assert.equal((await json(tooLarge)).error.code, 'body_too_large')
     await host.close(); assert.equal((globalThis as { __m4Shutdown?: number }).__m4Shutdown, 1); await host.close(); assert.equal((globalThis as { __m4Shutdown?: number }).__m4Shutdown, 1)
   } finally { rmSync(base, { recursive: true, force: true }) }
 })
@@ -77,7 +78,7 @@ test('v2 desktop host adapts an M2 defineCore default export to generic invoke',
     const manifestPath = join(base, 'components', 'example.desktop-core', '1.0.0', 'manifest.json'); const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
     const runtimePath = join(base, 'components', 'example.desktop-core', '1.0.0', 'dist', 'index.js'); manifest.integrity.runtime = `sha256-${createHash('sha256').update(readFileSync(runtimePath)).digest('hex')}`; writeFileSync(manifestPath, JSON.stringify(manifest))
     const host = await startV2DesktopHost({ userDataRoot: base, port: 0 }); const address = host.server.address(); const port = typeof address === 'object' && address ? address.port : 0
-    const invoke = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', body: JSON.stringify({ operation: 'echo', input: 'hello' }) }); assert.equal(invoke.status, 200); assert.deepEqual((await json(invoke)).result, { from: 'm2', input: 'hello' })
+    const invoke = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation: 'echo', input: 'hello' }) }); assert.equal(invoke.status, 200); assert.deepEqual((await json(invoke)).result, { from: 'm2', input: 'hello' })
     await host.close()
   } finally { rmSync(base, { recursive: true, force: true }) }
 })
@@ -189,7 +190,7 @@ export default {
     const storage = createInMemoryComponentStorage()
     const host = await startV2DesktopHost({ userDataRoot: base, port: 0, storage })
     const address = host.server.address(); const port = typeof address === 'object' && address ? address.port : 0
-    const call = async (operation: string) => fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', body: JSON.stringify({ operation }) })
+    const call = async (operation: string) => fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation }) })
     const granted = await (await call('storage/read')).json() as any
     assert.deepEqual(granted.result, { ok: true, value: { n: 7 } })
     const noCaller = await (await call('storage/no-caller')).json() as any
@@ -215,7 +216,7 @@ export default {
 }`)
     const host = await startV2DesktopHost({ userDataRoot: base, port: 0, storage: createInMemoryComponentStorage() })
     const address = host.server.address(); const port = typeof address === 'object' && address ? address.port : 0
-    const response = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', body: JSON.stringify({ operation: 'denied' }) })
+    const response = await fetch(`http://127.0.0.1:${port}/api/v2/core/invoke`, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation: 'denied' }) })
     const body = await response.json() as any
     assert.match(body.result, /Host capability denied: host\.storage for example\.desktop-core/)
     await host.close()
@@ -240,4 +241,39 @@ test('v2 desktop host quarantines a plugin that throws at import and boots the C
     assert.ok(host.diagnostics.some(entry => entry.includes('plugin quarantined: example.bad@1.0.0')))
     await host.close()
   } finally { rmSync(base, { recursive: true, force: true }); delete (globalThis as { __m4CoreImported?: boolean }).__m4CoreImported }
+})
+
+test('v2 host protects invoke/stream with a loopback token and loopback Host header', async () => {
+  const base = mkdtempSync(join(root, '.tmp-v2-host-token-')); try {
+    setupCore(base)
+    const host = await startV2DesktopHost({ userDataRoot: base, port: 0 })
+    const address = host.server.address(); const port = typeof address === 'object' && address ? address.port : 0
+    const url = `http://127.0.0.1:${port}/api/v2/core/invoke`
+    const denied = await fetch(url, { method: 'POST', body: JSON.stringify({ operation: 'echo', input: 1 }) })
+    assert.equal(denied.status, 401)
+    const wrongToken = await fetch(url, { method: 'POST', headers: { 'x-stagecraft-token': 'nope' }, body: JSON.stringify({ operation: 'echo', input: 1 }) })
+    assert.equal(wrongToken.status, 401)
+    const queryToken = await fetch(`${url}?token=${encodeURIComponent(host.authToken)}`, { method: 'POST', body: JSON.stringify({ operation: 'echo', input: 1 }) })
+    assert.equal(queryToken.status, 200, 'query parameter token must be accepted')
+    const tokenHeader = await fetch(url, { method: 'POST', headers: { 'x-stagecraft-token': host.authToken }, body: JSON.stringify({ operation: 'echo', input: 2 }) })
+    assert.equal(tokenHeader.status, 200)
+    // DNS-rebinding guard: Host header must be a loopback literal. fetch() forbids
+    // overriding Host, so use a raw http request.
+    const rebound: any = await new Promise((resolveRebound, rejectRebound) => {
+      const req = httpRequest({ host: '127.0.0.1', port, method: 'POST', path: '/api/v2/core/invoke', headers: { host: 'evil.example.com', 'x-stagecraft-token': host.authToken, 'content-type': 'application/json' } }, res => { let data = ''; res.on('data', chunk => { data += chunk }); res.on('end', () => resolveRebound({ status: res.statusCode, body: JSON.parse(data) })) })
+      req.on('error', rejectRebound); req.end(JSON.stringify({ operation: 'echo', input: 3 }))
+    })
+    assert.equal(rebound.status, 403)
+    assert.equal(rebound.body.error.code, 'forbidden_host')
+    // status stays open (read-only) and reports the mount URL
+    const status = await (await fetch(`http://127.0.0.1:${port}/api/v2/core/status`)).json() as any
+    assert.equal(status.mountUrl, '/api/v2/ui')
+    // token file persisted for legitimate local launchers
+    assert.equal(readFileSync(join(base, 'data', 'v2-host-token'), 'utf8'), host.authToken)
+    // UI mount page renders with the token injected
+    const page = await (await fetch(`http://127.0.0.1:${port}/api/v2/ui`)).text()
+    assert.match(page, /v2 UI mount/)
+    assert.match(page, new RegExp(host.authToken.slice(0, 8)))
+    await host.close()
+  } finally { rmSync(base, { recursive: true, force: true }) }
 })
