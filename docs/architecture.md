@@ -155,9 +155,12 @@ Core 通过小型平台端口使用时间、UUID、仓储、资源、秘密、�
 6. `createStageCraftService(core, roomId, container, repository => core.attachStateRepository(repository))` —— 把 Store-backed 领域服务（chat / director / management）接到 Core。
 7. `core.restoreState(roomId)` + `core.projectRoom(initialRoom, ...)`（恢复后仍提交一次：事件 `INSERT OR IGNORE` 幂等，内存投影与 Repository 保持一致）。
 8. 有真实 provider 时 `installProvider`（`ModelGatewayRouterAdapter` + `createRealWorkers`，模型请求经 `core.requestModel` / `core.cancel`）。
-9. `createServer`：远程访问授权（非 loopback 需配对）→ 旧业务路由 → `humanCore.handle(...)`（`/api/core/*` 协议端点）。
+9. `createServer`：远程访问授权（非 loopback 需配对；**adb reverse 隧道以 loopback 呈现，经 `/api/remote/device-token` 免配对码直发会话**）→ 旧业务路由 → `humanCore.handle(...)`（`/api/core/*` 协议端点）。
 
-> 关键路由语义：`/api/remote/sync`（仅配对后可达，含 API Key）、`/api/state/rollback` / `branch`（先存档再按 revision 截断，仅 `awaiting-player-input` 可执行）、`/api/creator/*`（预览→应用→回滚，基线冲突校验）、`/api/agent/*`（DSH 会话，独立模式 503）。
+> 关键路由语义：`/api/remote/sync`（仅配对后可达，含 API Key）、`/api/remote/device-token`（仅本机回环
+> = adb reverse 隧道可达，免配对码直发会话 token，供手机 ADB 免码绑定）、`/api/state/rollback` / `branch`
+> （先存档再按 revision 截断，仅 `awaiting-player-input` 可执行）、`/api/creator/*`（预览→应用→回滚，基线冲突校验）、
+> `/api/agent/*`（DSH 会话，独立模式 503）。
 
 ### 6.2 Android 本地组合根
 
@@ -263,3 +266,5 @@ governance/                  治理数据（裁决/工单/期限；不进运行�
 - Workflow Executor 当前负责固定定义的注册 / 投影 / 合法转换，**不是通用自动业务编排器**；LLM 或 Author Pack 不允许直接修改 Definition（未来走版本化 `WorkflowPatchProposal` 且需授权校验）。
 - 兼容层：ST 卡导入在 `st-card-import.ts`；ST/MVU 兼容器在 `src/compat/st-mvu.ts`（前瞻、部分落地）；旧接口 / 外部调用经 `compat/`。
 - 创作者工作台的 AI 编辑（生成 / 润色 / 一致性检查 / 扩开场）当前依赖 dsh（`dsh-story-bridge`）；脱离 dsh 的独立模式暂不保证可用。
+- **ADB 免码直连**：手机经 `adb reverse tcp:8787 tcp:8787` 把本机回环映射到电脑后，`POST /api/remote/device-token`
+  以 loopback 身份免配对码直发会话 token（与配对码同一会话表）；配对码通道完整保留，二者互不影响。

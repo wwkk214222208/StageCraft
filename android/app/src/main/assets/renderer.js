@@ -200,7 +200,23 @@ export function createRenderer({ document, bridge }) {
   }
 
   byId('allow-http').addEventListener('change', event => { byId('http-warning').hidden = !event.target.checked })
+  // 地址输入为本机回环（adb reverse 隧道）时提示可免配对码直连
+  byId('server-address').addEventListener('input', event => {
+    const host = (() => { try { return new URL(event.target.value).hostname } catch { return '' } })()
+    byId('adb-hint').hidden = !(host === '127.0.0.1' || host === 'localhost' || host === '::1')
+  })
   byId('pair-button').addEventListener('click', () => bridge.pair(byId('server-address').value.trim(), byId('allow-http').checked, byId('pairing-code').value.trim()))
+  // ADB reverse 免码直连：地址必须是本机回环（adb reverse tcp:8787 tcp:8787 后手机 localhost 直达电脑）
+  byId('adb-pair-button').addEventListener('click', () => {
+    const address = byId('server-address').value.trim() || 'http://127.0.0.1:8787'
+    const host = (() => { try { return new URL(address).hostname } catch { return '' } })()
+    if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+      status('地址无效', 'ADB 直连地址必须是本机回环（http://127.0.0.1:8787）。')
+      return
+    }
+    byId('server-address').value = address
+    bridge.adbPair(address, true)
+  })
   byId('reconnect-button').addEventListener('click', () => bridge.reconnect())
   byId('disconnect-button').addEventListener('click', () => bridge.disconnect())
   byId('forget-button').addEventListener('click', () => bridge.clearSession())
@@ -231,6 +247,7 @@ if (typeof window !== 'undefined' && window.document) {
       disconnect: embedded.stop,
       loadMedia: () => {},
       pair: () => {},
+      adbPair: () => {},
       clearSession: () => {},
       chooseCharacterCard: () => {},
     }

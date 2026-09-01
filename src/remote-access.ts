@@ -112,6 +112,21 @@ export class RemoteAccessPolicy {
     if (!pending || pending.expiresAt <= now) return { ok: false, status: this.recordFailure(clientKey, now) ? 'limited' : 'invalid' }
     this.pairingCodes.delete(codeHash)
     this.failures.delete(clientKey)
+    return { ok: true, session: this.issueSession(now) }
+  }
+
+  /**
+   * ADB reverse（`adb reverse tcp:<port> tcp:<port>`）把手机的 localhost 端口映射到电脑
+   * 本机回环：请求以 127.0.0.1 到达桌面，且只有已授权的 adb 设备能建立该隧道。因此
+   * 回环设备可免配对码直接换取会话 token（配对码本身只防局域网第三方，不防本机回环）。
+   */
+  createTrustedSession(): RemoteSession {
+    if (!this.enabled) throw new Error('Remote access is disabled.')
+    this.prune()
+    return this.issueSession(this.clock.now())
+  }
+
+  private issueSession(now: number): RemoteSession {
     let token: string | undefined
     for (let attempt = 0; attempt < 8; attempt++) {
       const candidate = Buffer.from(this.random(32)).toString('base64url')
@@ -121,7 +136,7 @@ export class RemoteAccessPolicy {
     const expiresAt = now + this.sessionTtlMsValue
     this.sessions.set(hashSecret(token), { expiresAt })
     this.persistSessions()
-    return { ok: true, session: { token, expiresAt } }
+    return { token, expiresAt }
   }
 
   authorize(token: string | undefined): boolean {
@@ -242,6 +257,23 @@ export class RemoteAccessService {
       const pairing = this.createPairingCode()
       console.log(`[remote] pairing-code issued from ${request.socket.remoteAddress}: ${pairing.code}`)
       this.send(response, 200, pairing)
+      return true
+    }
+    if (url.pathname === '/api/remote/device-token') {
+      // ADB reverse 免码直连：只有本机回环（= 已授权 adb 设备的 reverse 隧道）能拿到会话 token，
+      // 等价于配对码只对局域网第三方保密、对本机回环不设防的既有信任模型。
+      if (!isLoopbackAddress(request.socket.remoteAddress)) {
+        this.send(response, 404, { error: 'Not found.' })
+        return true
+      }
+      if (!this.enabled || request.method !== 'POST') {
+        console.log(`[remote] device-token denied from ${request.socket.remoteAddress} (enabled=${this.enabled})`)
+        this.send(response, 403, { error: 'Operator request denied.' })
+        return true
+      }
+      const session = this.policy.createTrustedSession()
+      console.log(`[remote] device-token issued from ${request.socket.remoteAddress}`)
+      this.send(response, 200, { token: session.token, expiresAt: session.expiresAt })
       return true
     }
     if (url.pathname !== '/api/remote/pair') return false

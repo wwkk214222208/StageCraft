@@ -259,6 +259,8 @@ export const API_ROUTES: readonly ApiRoute[] = [
 
   // ── 远程配对 / 同步（main-host，始终主进程处理） ────────────────────────
   { method: 'POST', pattern: '/api/remote/pairing-code', owner: 'main-host', capability: 'remote.pairing', auth: 'none', handlerId: 'host.remote.pairing-code', note: '桌面已实现（remote-access.ts 生成配对码）；Android 侧返回稳定 unsupported_capability（配对码由远程桌面生成）。' },
+  { method: 'POST', pattern: '/api/remote/device-token', owner: 'main-host', capability: 'remote.pairing', auth: 'none', handlerId: 'host.remote.device-token', note: 'ADB reverse 免码直连：仅本机回环（= 已授权 adb 设备的 reverse 隧道）可换取会话 token；Android 侧返回稳定 unsupported_capability（token 由远程桌面签发）。' },
+  { method: 'POST', pattern: '/api/remote/adb-reverse', owner: 'main-host', capability: 'remote.pairing', auth: 'none', handlerId: 'host.remote.adb-reverse', note: '桌面设置页「开启 ADB 反向隧道」按钮：仅本机回环（操作员）调用，电脑端执行 adb reverse 使手机可免配对码直连；Android 侧返回稳定 unsupported_capability（adb 在电脑侧）。' },
   { method: 'POST', pattern: '/api/remote/revoke', owner: 'main-host', capability: 'remote.pairing', auth: 'none', handlerId: 'host.remote.revoke' },
   { method: 'GET', pattern: '/api/remote/sync', owner: 'main-host', capability: 'remote.sync', auth: 'none', handlerId: 'host.remote.sync.get' },
   { method: 'PUT', pattern: '/api/remote/sync', owner: 'main-host', capability: 'remote.sync', auth: 'none', handlerId: 'host.remote.sync.put' },

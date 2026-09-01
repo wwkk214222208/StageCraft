@@ -71,4 +71,12 @@ public final class ServerAddressValidator {
         int second = bytes[1] & 0xff;
         return first == 10 || first == 127 || (first == 172 && second >= 16 && second <= 31) || (first == 192 && second == 168) || (first == 169 && second == 254);
     }
+
+    /** ADB reverse 隧道地址判定：本机回环（127.0.0.1 / ::1 / localhost）。 */
+    public static boolean isLoopbackHost(String host) {
+        if (host == null) return false;
+        String normalized = host.startsWith("[") && host.endsWith("]") ? host.substring(1, host.length() - 1) : host;
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        return lower.equals("127.0.0.1") || lower.equals("::1") || lower.equals("localhost");
+    }
 }

@@ -810,6 +810,26 @@ $('#remote-pairing-revoke').onclick = async event => {
   }
 }
 
+// ADB 反向隧道：电脑端一键执行 adb reverse，手机即可免配对码直连（无需在终端输命令）
+$('#adb-reverse-run').onclick = async event => {
+  event.preventDefault()
+  const statusEl = $('#adb-reverse-status')
+  if (!statusEl) return
+  statusEl.textContent = '正在执行 adb reverse…'
+  try {
+    const response = await fetch('/api/remote/adb-reverse', { method: 'POST', headers: { accept: 'application/json' } })
+    const body = await response.json()
+    if (response.ok && body && body.ok) {
+      statusEl.textContent = `已为 ${body.devices.length} 台设备建立反向隧道（端口 ${body.port}）：${body.detail.join('；')}。现在可在手机 APK 点「通过 ADB 直连（免配对码）」。`
+    } else {
+      const detail = body && Array.isArray(body.detail) ? body.detail.join('；') : (body && body.error) || '执行失败。'
+      statusEl.textContent = `ADB 反向隧道未建立：${detail}`
+    }
+  } catch (error) {
+    statusEl.textContent = `ADB 反向隧道未建立：${error instanceof Error ? error.message : '执行失败。'}`
+  }
+}
+
 // ── 手机 APK 与电脑双向同步（仅本地运行时；配对凭据与远端 HTTP 都在原生侧） ──
 function describeSyncResult(result) {
   const parts = []
@@ -849,6 +869,17 @@ $('#sync-remote-pair').onclick = async () => {
     if (result && result.ok) { await refreshSyncRemoteStatus(); alert('已绑定电脑，可以开始同步。') }
     else $('#sync-remote-error').textContent = (result && result.message) || '绑定失败，请检查地址与配对码。'
   } catch (error) { $('#sync-remote-error').textContent = error instanceof Error ? error.message : '绑定失败。' }
+}
+// ADB reverse 免码直连：手机 USB 连电脑 + adb reverse tcp:8787 tcp:8787 后，一键绑定，无需配对码
+$('#sync-remote-adb-pair').onclick = async () => {
+  if (!window.StageCraftSyncRemote) return
+  $('#sync-remote-error').textContent = ''
+  const address = 'http://127.0.0.1:8787'
+  try {
+    const result = await window.StageCraftSyncRemote.adbPair(address)
+    if (result && result.ok) { await refreshSyncRemoteStatus(); alert('已通过 ADB 绑定电脑，可以开始同步。') }
+    else $('#sync-remote-error').textContent = (result && result.message) || 'ADB 绑定失败：请确认电脑已启用远程访问并执行 adb reverse tcp:8787 tcp:8787。'
+  } catch (error) { $('#sync-remote-error').textContent = error instanceof Error ? error.message : 'ADB 绑定失败。' }
 }
 $('#sync-remote-pull').onclick = async () => {
   const sync = window.StageCraftSyncRemote

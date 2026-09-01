@@ -334,6 +334,46 @@ test('APK sync flow: confirm-driven pull/push over an authenticated native bridg
   assert.match(boot, /updatePromptPreset\(preset as any, promptsFilePath\)/)
 })
 
+test('ADB reverse direct bind: loopback device-token flow without a pairing code', () => {
+  const bridge = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'NativeBridge.java')
+  const activity = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'MainActivity.java')
+  const validator = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'ServerAddressValidator.java')
+  const html = read('app', 'src', 'main', 'assets', 'index.html')
+  const renderer = read('app', 'src', 'main', 'assets', 'renderer.js')
+  const registry = readFileSync(join(root, 'src', 'api-route-registry.ts'), 'utf8')
+  const runtime = readFileSync(join(root, 'android', 'app', 'src', 'main', 'assets', 'web', 'local-runtime-web-entry.js'), 'utf8')
+  const appJs = readFileSync(join(root, 'public', 'app.js'), 'utf8')
+  const indexHtml = readFileSync(join(root, 'public', 'index.html'), 'utf8')
+  // 桌面端点：仅本机回环（adb reverse 隧道在电脑侧呈现为 127.0.0.1）可免码发 token
+  assert.match(registry, /\/api\/remote\/device-token/)
+  assert.match(registry, /host\.remote\.device-token/)
+  // 桌面「开启 ADB 反向隧道」按钮端点：电脑侧执行 adb reverse，Android 稳定 unsupported
+  assert.match(registry, /\/api\/remote\/adb-reverse/)
+  assert.match(registry, /host\.remote\.adb-reverse/)
+  // Android 原生：adbPair / syncAdbPair 直连端点，凭据不进入页面
+  assert.match(bridge, /@JavascriptInterface public void adbPair\(/)
+  assert.match(bridge, /@JavascriptInterface public void syncAdbPair\(/)
+  assert.match(bridge, /\/api\/remote\/device-token/)
+  assert.match(bridge, /ServerAddressValidator\.isLoopbackHost/)
+  assert.match(validator, /isLoopbackHost/)
+  // Android 本地 HTTP 面：明确稳定 unsupported（token 由远程桌面签发）
+  assert.match(activity, /host\.remote\.device-token/)
+  assert.match(activity, /设备 token 由远程桌面签发/)
+  // 配对页：ADB 直连按钮 + 地址回环校验（非回环不进入原生通道）
+  assert.match(html, /id="adb-pair-button"/)
+  assert.match(renderer, /bridge\.adbPair\(address, true\)/)
+  assert.match(renderer, /adbPair: \(\) => \{\}/)
+  // 同步设置页：ADB 免码绑定按钮 + shim 桥
+  assert.match(indexHtml, /id="sync-remote-adb-pair"/)
+  assert.match(appJs, /sync-remote-adb-pair/)
+  assert.match(runtime, /syncAdbPair/)
+  // 桌面设置页：一键开启 ADB 反向隧道按钮 + 电脑侧执行（Android 侧稳定 unsupported）
+  assert.match(indexHtml, /id="adb-reverse-run"/)
+  assert.match(appJs, /\/api\/remote\/adb-reverse/)
+  assert.match(activity, /host\.remote\.adb-reverse/)
+  assert.match(activity, /adb reverse 由电脑端执行/)
+})
+
 test('Android local prompt IO: bundled gameplay data source plus SQLite preset persistence', () => {
   const operations = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'AndroidCompositionOperations.java')
   const buildScript = readFileSync(join(root, 'scripts', 'build-android-core.mjs'), 'utf8')

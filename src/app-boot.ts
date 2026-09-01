@@ -34,6 +34,7 @@ import { StoreCoreStateRepository } from './core/store-state-repository.ts'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { coreRuntimeCordisPlugin, createStageCraftService, humanCordisPlugin, llmCordisPlugin, solutionCordisPlugin, stageCraftServicePlugin, stateRepositoryCordisPlugin } from './core/cordis-plugins.ts'
 import { REMOTE_SESSION_COOKIE, RemoteAccessService, isLoopbackAddress, isLoopbackHost, type RemoteAccessOptions } from './remote-access.ts'
+import { setupAdbReverse } from './platform/adb-reverse.ts'
 import { DshStorySessionService } from './dsh-story-session.ts'
 
 /** 把 SillyTavern 预设 JSON 转成 StageCraft 预设（本地确定性转换，不调用模型）。 */
@@ -105,6 +106,8 @@ export interface TavernOptions {
   remoteAccess?: RemoteAccessOptions | boolean
   /** 可插拔记忆数据源；缺省用 SQLite（npc_memories 表）。注入自定义实现即可替换记忆引擎。 */
   memoryStore?: import('./memory-store.ts').MemoryStore
+  /** 可注入的 adb 命令执行器（测试用）；缺省调用系统 adb。 */
+  adbRunner?: import('./platform/adb-reverse.ts').AdbReverseRunner
 }
 
 export interface TavernApp {
@@ -385,6 +388,19 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     try {
       if (await remoteAccess.handlePairing(request, response, url)) return
+      // ADB 反向隧道（操作员本机按钮，引导端点）：在鉴权门之前处理——与配对码一样，
+      // 操作员在电脑设置页点按钮时浏览器尚未持会话，且仅限本机回环来源。
+      if (url.pathname === '/api/remote/adb-reverse' && request.method === 'POST') {
+        if (!isLoopbackAddress(request.socket.remoteAddress)) return json(response, 404, { error: 'Not found.' })
+        try {
+          const address = server.address()
+          const actualPort = typeof address === 'object' && address ? address.port : port
+          const result = await setupAdbReverse(actualPort, options.adbRunner)
+          return json(response, result.ok ? 200 : 500, result)
+        } catch (error) {
+          return json(response, 500, { ok: false, detail: [error instanceof Error ? error.message : 'adb reverse 执行失败。'] })
+        }
+      }
       const protectedPath = ['/api', '/assets', '/custom', '/story-assets'].some(prefix => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
       const requiresAuthorization = protectedPath && (remoteAccess.authenticateLoopback || !isLoopbackAddress(request.socket.remoteAddress))
       if (requiresAuthorization && !remoteAccess.authorizeRequest(request)) return json(response, 401, { error: 'Unauthorized' })

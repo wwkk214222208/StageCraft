@@ -155,6 +155,73 @@ test('non-loopback bearer cannot create an operator pairing code', async () => {
   assert.deepEqual(responseState.body, { error: 'Not found.' })
 })
 
+test('adb reverse device-token: loopback mints a session without a pairing code', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-adb-device-token-'))
+  const app = await startTavern({
+    root: repositoryRoot, dataDir: join(root, 'data'), saveRoot: join(root, 'save'), port: 0, host: '127.0.0.1',
+    remoteAccess: { enabled: true, authenticateLoopback: true },
+  })
+  const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`
+  try {
+    // 未配对时 /api 仍 401（loopback 鉴权开启，模拟 adb reverse 之外的本地请求）
+    assert.equal((await fetch(`${base}/api/room`)).status, 401)
+    // 本机回环（adb reverse 隧道在电脑侧呈现为 127.0.0.1）POST device-token → 免码发 token
+    const deviceToken = await fetch(`${base}/api/remote/device-token`, { method: 'POST' })
+    assert.equal(deviceToken.status, 200)
+    const session = await deviceToken.json() as { token: string }
+    assert.ok(session.token.length >= 40)
+    const authorization = { authorization: `Bearer ${session.token}` }
+    assert.equal((await fetch(`${base}/api/room`, { headers: authorization })).status, 200)
+    // token 进同一会话表：可被 revoke 吊销
+    assert.equal(app.remoteAccess.policy.authorize(session.token), true)
+    assert.equal(app.remoteAccess.revokeSession(session.token), true)
+    assert.equal((await fetch(`${base}/api/room`, { headers: authorization })).status, 401)
+    // 非 POST 拒绝
+    assert.equal((await fetch(`${base}/api/remote/device-token`)).status, 403)
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('adb device-token is loopback-only: non-loopback request cannot mint a session', async () => {
+  const service = new (await import('../src/remote-access.ts')).RemoteAccessService({ enabled: true, randomBytes: size => new Uint8Array(size).fill(3) })
+  const responseState: { status?: number; body?: unknown } = {}
+  const response = {
+    writeHead(status: number) { responseState.status = status },
+    end(body: string) { responseState.body = JSON.parse(body) },
+  }
+  const handled = await service.handlePairing({
+    method: 'POST', headers: {}, socket: { remoteAddress: '192.168.1.20' },
+  } as any, response as any, new URL('http://desktop.test/api/remote/device-token'))
+  assert.equal(handled, true)
+  assert.equal(responseState.status, 404)
+  assert.deepEqual(responseState.body, { error: 'Not found.' })
+})
+
 test('non-loopback binding fails closed unless remote access is explicitly enabled', async () => {
   await assert.rejects(startTavern({ root: repositoryRoot, host: '0.0.0.0', port: 0 }), /Non-loopback.*remote access/)
+})
+
+test('adb-reverse operator button is loopback-only and reports adb outcome', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stagecraft-adb-reverse-'))
+  // 注入确定性 runner：无已授权设备 → 500 带 detail（避免依赖真机 adb 环境）
+  const app = await startTavern({
+    root: repositoryRoot, dataDir: join(root, 'data'), saveRoot: join(root, 'save'), port: 0, host: '127.0.0.1',
+    remoteAccess: { enabled: true, authenticateLoopback: true },
+    adbRunner: { devices: async () => [], reverse: async () => '' },
+  })
+  const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`
+  try {
+    const response = await fetch(`${base}/api/remote/adb-reverse`, { method: 'POST' })
+    assert.equal(response.status, 500)
+    const body = await response.json() as { ok: boolean; port: number; devices: string[]; detail: string[] }
+    assert.equal(body.ok, false)
+    assert.deepEqual(body.devices, [])
+    assert.match(body.detail[0], /未检测到已授权的 adb 设备/)
+    assert.ok(body.port > 0, '应返回实际监听端口')
+  } finally {
+    await app.close()
+    rmSync(root, { recursive: true, force: true })
+  }
 })

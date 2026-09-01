@@ -203,6 +203,8 @@ public final class MainActivity extends Activity {
     private CoreGatewayServer.HostHandler hostHandlerFor(String handlerId) {
         switch (handlerId) {
             case "host.remote.pairing-code":
+            case "host.remote.device-token":
+            case "host.remote.adb-reverse":
             case "host.remote.revoke":
             case "host.remote.sync.get":
             case "host.remote.sync.put":
@@ -255,6 +257,30 @@ public final class MainActivity extends Activity {
                 body.put("error", new JSONObject()
                     .put("code", "unsupported_capability")
                     .put("message", "配对码由远程桌面生成；Android 本地请使用配对页原生通道"));
+                result.put("body", body.toString());
+                return result.toString();
+            }
+            case "host.remote.device-token": {
+                // W6-3 裁决：设备 token 由远程桌面经 adb reverse 免码签发（仅本机回环可达）；
+                // Android 自身不签发，本地 HTTP 面返回明确稳定 unsupported，ADB 直连走原生通道。
+                JSONObject result = new JSONObject();
+                result.put("status", 503);
+                JSONObject body = new JSONObject();
+                body.put("error", new JSONObject()
+                    .put("code", "unsupported_capability")
+                    .put("message", "设备 token 由远程桌面签发；Android 本地请使用配对页原生通道（adb reverse）"));
+                result.put("body", body.toString());
+                return result.toString();
+            }
+            case "host.remote.adb-reverse": {
+                // W6-3 裁决：adb reverse 是电脑侧操作（执行 adb 命令），Android 无法自建隧道；
+                // 本地 HTTP 面返回明确稳定 unsupported，电脑侧按钮在桌面设置页。
+                JSONObject result = new JSONObject();
+                result.put("status", 503);
+                JSONObject body = new JSONObject();
+                body.put("error", new JSONObject()
+                    .put("code", "unsupported_capability")
+                    .put("message", "adb reverse 由电脑端执行；请在电脑设置页点「开启 ADB 反向隧道」"));
                 result.put("body", body.toString());
                 return result.toString();
             }

@@ -2362,6 +2362,58 @@
     {
       "order": 90,
       "method": "POST",
+      "pattern": "/api/remote/device-token",
+      "owner": "main-host",
+      "capability": "remote.pairing",
+      "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "host-handler",
+          "auth": "local"
+        },
+        "androidRemote": {
+          "action": "host-handler",
+          "auth": "local"
+        }
+      },
+      "requestSchema": null,
+      "responseSchema": null,
+      "handlerId": "host.remote.device-token",
+      "stream": null,
+      "note": "ADB reverse 免码直连：仅本机回环（= 已授权 adb 设备的 reverse 隧道）可换取会话 token；Android 侧返回稳定 unsupported_capability（token 由远程桌面签发）。"
+    },
+    {
+      "order": 91,
+      "method": "POST",
+      "pattern": "/api/remote/adb-reverse",
+      "owner": "main-host",
+      "capability": "remote.pairing",
+      "auth": "none",
+      "authPolicy": {
+        "kind": "local-open"
+      },
+      "dispatchPolicy": {
+        "androidLocal": {
+          "action": "host-handler",
+          "auth": "local"
+        },
+        "androidRemote": {
+          "action": "host-handler",
+          "auth": "local"
+        }
+      },
+      "requestSchema": null,
+      "responseSchema": null,
+      "handlerId": "host.remote.adb-reverse",
+      "stream": null,
+      "note": "桌面设置页「开启 ADB 反向隧道」按钮：仅本机回环（操作员）调用，电脑端执行 adb reverse 使手机可免配对码直连；Android 侧返回稳定 unsupported_capability（adb 在电脑侧）。"
+    },
+    {
+      "order": 92,
+      "method": "POST",
       "pattern": "/api/remote/revoke",
       "owner": "main-host",
       "capability": "remote.pairing",
@@ -2386,7 +2438,7 @@
       "note": null
     },
     {
-      "order": 91,
+      "order": 93,
       "method": "GET",
       "pattern": "/api/remote/sync",
       "owner": "main-host",
@@ -2412,7 +2464,7 @@
       "note": null
     },
     {
-      "order": 92,
+      "order": 94,
       "method": "PUT",
       "pattern": "/api/remote/sync",
       "owner": "main-host",
@@ -2438,7 +2490,7 @@
       "note": null
     },
     {
-      "order": 93,
+      "order": 95,
       "method": "GET",
       "pattern": "/api/version",
       "owner": "main-host",
@@ -2464,7 +2516,7 @@
       "note": "含 coreBundleVersion 时由主进程经数据面聚合 Core health（Binder 只走摘要）。"
     },
     {
-      "order": 94,
+      "order": 96,
       "method": "GET",
       "pattern": "/api/update/check",
       "owner": "main-host",
@@ -2490,7 +2542,7 @@
       "note": null
     },
     {
-      "order": 95,
+      "order": 97,
       "method": "POST",
       "pattern": "/api/update/download",
       "owner": "main-host",
@@ -2516,7 +2568,7 @@
       "note": null
     },
     {
-      "order": 96,
+      "order": 98,
       "method": "POST",
       "pattern": "/api/restart",
       "owner": "core",
@@ -2542,7 +2594,7 @@
       "note": "业务语义：重开剧本（与桌面一致）——清除当前回合/草稿/已批准正文，按 storyId/mode 重开房间。"
     },
     {
-      "order": 97,
+      "order": 99,
       "method": "POST",
       "pattern": "/api/host/restart",
       "owner": "main-host",
@@ -2568,7 +2620,7 @@
       "note": "宿主重启（Core 进程/launch plan 变更生效）：生成新 launch plan 并重启 Core 进程（§4.3）。与业务重开剧本（/api/restart）分离。"
     },
     {
-      "order": 98,
+      "order": 100,
       "method": "GET",
       "pattern": "/api/agent/capability",
       "owner": "desktop-only",
@@ -2596,7 +2648,7 @@
       "note": "桌面实际形状 {available,native,modelSelection,reason?}（dsh-story-session.ts）；Android 端由 gateway 返回 unsupported_capability 时 UI 必须容错。"
     },
     {
-      "order": 99,
+      "order": 101,
       "method": "GET",
       "pattern": "/api/agent/session",
       "owner": "desktop-only",
@@ -2624,7 +2676,7 @@
       "note": "Android 本地返回 unsupported_capability；远程模式仅当桌面端声明 agent.dsh capability 时可代理。"
     },
     {
-      "order": 100,
+      "order": 102,
       "method": "POST",
       "pattern": "/api/agent/session",
       "owner": "desktop-only",
@@ -2652,7 +2704,7 @@
       "note": "Android 本地返回 unsupported_capability；远程模式仅当桌面端声明 agent.dsh capability 时可代理。"
     },
     {
-      "order": 101,
+      "order": 103,
       "method": "DELETE",
       "pattern": "/api/agent/session",
       "owner": "desktop-only",
@@ -2680,7 +2732,7 @@
       "note": "Android 本地返回 unsupported_capability；远程模式仅当桌面端声明 agent.dsh capability 时可代理。"
     },
     {
-      "order": 102,
+      "order": 104,
       "method": "POST",
       "pattern": "/api/agent/archive",
       "owner": "desktop-only",
@@ -2708,7 +2760,7 @@
       "note": "DSH 会话归档；Android 本地返回 unsupported_capability。"
     },
     {
-      "order": 103,
+      "order": 105,
       "method": "POST",
       "pattern": "/api/agent/history",
       "owner": "desktop-only",
@@ -2736,7 +2788,7 @@
       "note": "DSH 会话历史；Android 本地返回 unsupported_capability。"
     },
     {
-      "order": 104,
+      "order": 106,
       "method": "POST",
       "pattern": "/api/agent/message",
       "owner": "desktop-only",
@@ -2764,7 +2816,7 @@
       "note": "DSH 会话消息；Android 本地返回 unsupported_capability。"
     },
     {
-      "order": 105,
+      "order": 107,
       "method": "POST",
       "pattern": "/api/agent/model",
       "owner": "desktop-only",
@@ -2792,7 +2844,7 @@
       "note": "DSH 会话模型选择；Android 本地返回 unsupported_capability。"
     },
     {
-      "order": 106,
+      "order": 108,
       "method": "POST",
       "pattern": "/api/agent/models",
       "owner": "desktop-only",
@@ -2820,7 +2872,7 @@
       "note": "DSH 会话模型目录；Android 本地返回 unsupported_capability。"
     },
     {
-      "order": 107,
+      "order": 109,
       "method": "POST",
       "pattern": "/api/agent/context",
       "owner": "desktop-only",
@@ -2848,7 +2900,7 @@
       "note": "三端均未实现；登记后 Android 得到稳定错误而非 404。"
     },
     {
-      "order": 108,
+      "order": 110,
       "method": "GET",
       "pattern": "/api/stream",
       "owner": "deprecated",
@@ -2885,7 +2937,7 @@
       "note": "迁移期由显式 adapter 转发到 /api/core/events 并按 event 名分发；UI 切换后删除（阶段 4）。"
     },
     {
-      "order": 109,
+      "order": 111,
       "method": "GET",
       "pattern": "/api/events",
       "owner": "deprecated",
@@ -2922,7 +2974,7 @@
       "note": "旧单频道 room SSE。"
     },
     {
-      "order": 110,
+      "order": 112,
       "method": "GET",
       "pattern": "/api/thinking-events",
       "owner": "deprecated",
@@ -2959,7 +3011,7 @@
       "note": "旧单频道 thinking SSE。"
     },
     {
-      "order": 111,
+      "order": 113,
       "method": "GET",
       "pattern": "/api/debug-events",
       "owner": "deprecated",

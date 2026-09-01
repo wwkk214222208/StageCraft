@@ -639,6 +639,13 @@
         window.StageCraftNative.syncPair(String(address || ''), !/^https:\/\//i.test(String(address || '')), String(code || ''))
       })
     },
+    // ADB reverse 免码直连：address 固定为本机回环（adb reverse tcp:8787 tcp:8787 后手机 localhost 直达电脑）
+    adbPair(address) {
+      return new Promise(resolve => {
+        window.__syncPairPending = resolve
+        window.StageCraftNative.syncAdbPair(String(address || 'http://127.0.0.1:8787'), !/^https:\/\//i.test(String(address || 'http://127.0.0.1:8787')))
+      })
+    },
     async pull() {
       const payload = await syncRemoteFetch('GET')
       if (!payload || typeof payload !== 'object') throw new Error('电脑返回的同步数据无效。')

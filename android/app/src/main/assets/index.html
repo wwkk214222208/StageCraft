@@ -16,8 +16,10 @@
       <label class="risk-toggle"><input id="allow-http" type="checkbox">允许不安全的局域网 HTTP</label>
       <p id="http-warning" class="warning" hidden>HTTP 不加密。只应在你信任的局域网中临时使用，任何中间人都可能读取会话。</p>
       <label>一次性配对码<input id="pairing-code" autocomplete="one-time-code" maxlength="32"></label>
+      <p id="adb-hint" class="hint" hidden>已检测到本机回环地址（adb reverse 隧道）。点击「通过 ADB 直连」可免配对码直接绑定电脑。</p>
       <div class="buttons">
         <button id="pair-button">配对并连接</button>
+        <button id="adb-pair-button" class="secondary">通过 ADB 直连（免配对码）</button>
         <button id="reconnect-button" class="secondary">重连</button>
         <button id="disconnect-button" class="secondary">断开连接</button>
         <button id="forget-button" class="danger">清除本机会话</button>

@@ -41,6 +41,14 @@ The WebView loads only `https://appassets.androidplatform.net/` resources interc
 - 原生 `RemoteCoreConnection` 继续作为**授权看门狗**：SSE 收到 401 → `onUnauthorized` → 清会话并回到本地配对页。
 - 本地资产（配对页 / 嵌入核心模式）仍由同一客户端拦截服务。
 
+**ADB 免码直连（配对页「通过 ADB 直连」/ 设置页「绑定电脑（ADB 直连）」）**：
+
+手机 USB（或无线调试）连电脑后，在电脑上执行 `adb reverse tcp:8787 tcp:8787`（端口与电脑实际监听端口一致）。
+`adb reverse` 隧道在电脑侧呈现为 loopback（127.0.0.1），因此 APK 用地址 `http://127.0.0.1:8787` 请求
+`POST /api/remote/device-token` 即可免配对码直发会话 token（`NativeBridge.adbPair` / `syncAdbPair`，
+`ServerAddressValidator.isLoopbackHost` 强制回环地址；桌面端 `/api/remote/device-token` 仅接受回环来源）。
+配对码通道完整保留，二者互不影响。
+
 ## Local full-UI mode (方案 B：完全本地复用 Web UI)
 
 配对页「本地模式（不连电脑，完整界面）」经 `StageCraftWebViewClient.LocalNavigation` 把主框架重写到 **应用内环回服务器**（`LocalLoopbackServer`，127.0.0.1 随机端口）的 `/web/local.html`：**APK 内置 PC 端同一套完整 Web UI**（构建期由 Gradle 把根目录 `public/` 打包为 `assets/web/**` 并生成本地入口），游玩完全本地，模型调用经设备原生网络直连供应商。环回 origin（http://localhost）按常规 Web 语义工作（ES module / fetch / EventSource / 安全上下文），`appassets://` 自定义 scheme 下 WebView 对 module 脚本支持不可靠，故仅承载配对页与身份边界；资产契约由 `LocalAssetResolver` 在 appassets 拦截与环回服务器之间共用。

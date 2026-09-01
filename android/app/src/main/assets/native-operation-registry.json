@@ -4,6 +4,7 @@
     "localCoreAllowed",
     "ready",
     "pair",
+    "adbPair",
     "reconnect",
     "disconnect",
     "refresh",
@@ -14,6 +15,7 @@
     "exportDocument",
     "syncStatus",
     "syncPair",
+    "syncAdbPair",
     "syncRemoteFetch",
     "updateDownloadAndInstall",
     "clearSession",
@@ -97,6 +99,11 @@
       "legacyExposure": "main"
     },
     {
+      "name": "adbPair",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
       "name": "reconnect",
       "owner": "main-host",
       "legacyExposure": "main"
@@ -143,6 +150,11 @@
     },
     {
       "name": "syncPair",
+      "owner": "main-host",
+      "legacyExposure": "main"
+    },
+    {
+      "name": "syncAdbPair",
       "owner": "main-host",
       "legacyExposure": "main"
     },

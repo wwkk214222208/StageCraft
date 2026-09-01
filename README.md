@@ -166,6 +166,7 @@ HOST=0.0.0.0 RP_REMOTE=1 RP_REMOTE_PAIRING_TTL_MS=300000 RP_REMOTE_SESSION_TTL_M
 ```
 
 - 启用后在设置弹窗点「生成手机配对码」，安卓端输入 PC 局域网地址 + 配对码完成配对，配对后通过 `/api/remote/pair` 换取的 Bearer token 访问后端（实时通道 `/api/core/events`）。
+- **ADB 免码直连**：手机 USB（或无线调试）连电脑并执行 `adb reverse tcp:8787 tcp:8787`（端口与电脑实际监听端口一致）后，APK 配对页点「通过 ADB 直连（免配对码）」即可直接绑定，无需配对码——`adb reverse` 隧道在电脑侧呈现为 loopback，`/api/remote/device-token` 以回环身份直发会话 token。
 - 浏览器免安装测试：手机浏览器打开 `http://<电脑局域网IP>:<端口>/`，未配对时自动跳到配对页，输入配对码即完成配对；配对后下发 HttpOnly 会话 Cookie，同一源请求自动携带（设置弹窗可随时清除已配对会话）。
 - dsh 插件模式：配置 `remoteEnabled: true`（并确保监听地址可被手机访问）。
 - 非 loopback 请求访问 `/api`、`/assets`、`/custom` 均需授权；`HOST=0.0.0.0` 而远程访问未启用时启动会报错（安全护栏）。
