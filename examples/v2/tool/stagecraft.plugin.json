@@ -1,0 +1,16 @@
+{
+  "id": "example.stagecraft.tool",
+  "version": "1.0.0",
+  "title": "Example Tool",
+  "category": "tool",
+  "apiVersion": "0.1",
+  "source": "src/index.ts",
+  "output": "dist/index.js",
+  "entry": {
+    "desktop": "dist/index.js",
+    "android": "dist/index.js"
+  },
+  "integrity": {
+    "dist/index.js": "sha256-7b2fa5b51e8352d2849cd57e0f5b28db10a33b53c31ff18c0cff3c752c5f7895"
+  }
+}

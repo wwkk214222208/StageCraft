@@ -1,0 +1,16 @@
+{
+  "id": "example.stagecraft.llm",
+  "version": "1.0.0",
+  "title": "Example LLM System",
+  "category": "llm-system",
+  "apiVersion": "0.1",
+  "source": "src/index.ts",
+  "output": "dist/index.js",
+  "entry": {
+    "desktop": "dist/index.js",
+    "android": "dist/index.js"
+  },
+  "integrity": {
+    "dist/index.js": "sha256-e00880e0577aa5f3508a88c30ca28765fd0cc2715804b7e82f8ca5d01213123f"
+  }
+}

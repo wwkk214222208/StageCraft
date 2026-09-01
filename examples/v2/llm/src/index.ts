@@ -1,0 +1,2 @@
+import { defineLlmSystem } from '../../../../src/sdk/index.ts'
+export default defineLlmSystem({ id: 'example.stagecraft.llm', version: '1.0.0', title: 'Example LLM System', start(context) { context.upsertCredentialProfile({ id: 'demo-profile', providerId: 'demo', label: 'Demo (no secret)' }) }, route(input) { return { providerId: input.providerId ?? 'demo', model: input.model ?? 'demo-1', credentialProfileId: input.credentialProfileId ?? 'demo-profile' } } })

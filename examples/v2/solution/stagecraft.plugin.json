@@ -1,0 +1,16 @@
+{
+  "id": "example.stagecraft.solution",
+  "version": "1.0.0",
+  "title": "Example Solution",
+  "category": "solution",
+  "apiVersion": "0.1",
+  "source": "src/index.ts",
+  "output": "dist/index.js",
+  "entry": {
+    "desktop": "dist/index.js",
+    "android": "dist/index.js"
+  },
+  "integrity": {
+    "dist/index.js": "sha256-b17d6ace57c7ab72a5810ee539a233d271ca7b8033e3091855fee9487c01fd13"
+  }
+}

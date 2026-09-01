@@ -36,6 +36,28 @@ val coreSourceRoot = rootProject.projectDir.parentFile.resolve("src")
 val coreBuildScript = rootProject.projectDir.parentFile.resolve("scripts/build-android-core.mjs")
 val webUiSource = rootProject.projectDir.parentFile.resolve("public")
 val generatedWebUi = layout.buildDirectory.dir("generated/android-web")
+// Keep the Android v2 real-device fixture on the exact checked-in example
+// dist/index.js artifacts. These are copied only into the androidTest APK;
+// no examples, source files, or fixture JS are added to the release APK.
+val generatedV2AndroidTestAssets = layout.buildDirectory.dir("generated/android-test-v2-assets")
+val v2ExampleRoot = rootProject.projectDir.parentFile.resolve("examples/v2")
+val packageV2AndroidTestAssets by tasks.registering(Sync::class) {
+    val distFiles = listOf(
+        v2ExampleRoot.resolve("core/dist/index.js"),
+        v2ExampleRoot.resolve("driver/dist/index.js"),
+        v2ExampleRoot.resolve("llm/dist/index.js"),
+        v2ExampleRoot.resolve("solution/dist/index.js"),
+        v2ExampleRoot.resolve("tool/dist/index.js"),
+    )
+    inputs.files(distFiles)
+    from(v2ExampleRoot.resolve("core/dist/index.js")) { into("v2/core") }
+    from(v2ExampleRoot.resolve("driver/dist/index.js")) { into("v2/driver") }
+    from(v2ExampleRoot.resolve("llm/dist/index.js")) { into("v2/llm") }
+    from(v2ExampleRoot.resolve("solution/dist/index.js")) { into("v2/solution") }
+    from(v2ExampleRoot.resolve("tool/dist/index.js")) { into("v2/tool") }
+    into(generatedV2AndroidTestAssets)
+    doFirst { distFiles.forEach { check(it.isFile && it.length() > 0) { "Missing v2 example dist artifact: $it" } } }
+}
 val packageRemoteRenderer by tasks.registering(Copy::class) {
     from(rendererSource)
     // The APK ships only curated built-in stories. User/private stories remain on their owner device.
@@ -159,10 +181,12 @@ android {
     }
 
     sourceSets.getByName("main").assets.setSrcDirs(listOf(generatedRenderer.get().asFile))
+    sourceSets.getByName("androidTest").assets.srcDir(generatedV2AndroidTestAssets)
 }
 
 tasks.named("preBuild").configure { dependsOn(verifyEmbeddedCoreAssets) }
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach { dependsOn(verifyEmbeddedCoreAssets) }
+tasks.matching { it.name != "packageV2AndroidTestAssets" && it.name.contains("AndroidTest") && it.name.contains("Assets") }.configureEach { dependsOn(packageV2AndroidTestAssets) }
 
 dependencies {
     testImplementation("junit:junit:4.13.2")

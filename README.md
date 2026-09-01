@@ -11,6 +11,9 @@
 - [docs/CONTRIBUTING-API.zh.md](./docs/CONTRIBUTING-API.zh.md) —— **API 贡献指南：如何新增/修改路由（三层结构：运行时契约 / 治理层 / 行为测试）**
 - [docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md](./docs/INCREMENTAL-UPDATE-WORK-RULES.zh.md) —— 后续增量修改、并发施工、评审与证据规范
 - [docs/certification-matrix.md](./docs/certification-matrix.md) —— 平台认证矩阵（含安卓 skip-gated 说明，由 `test/certification-matrix.test.ts` 强制存在）
+- [docs/architecture-v2-proposal.md](./docs/architecture-v2-proposal.md) —— v2 可替换 Core / 组件参考路径（M0–M9，实验性，v1 仍在发布）
+- [docs/v2-migration-and-usage.md](./docs/v2-migration-and-usage.md) —— v1/v2 共存、组件打包、桌面 plan、Android SAF 与迁移说明
+- [examples/v2/README.md](./examples/v2/README.md) —— 可构建的 Core + LLM System + Provider Driver + Solution + Tool 端到端样例
 
 ## 项目定位
 
@@ -32,7 +35,7 @@ StageCraft 是一个自托管、插件化的多角色角色扮演（RP）运行�
 - **导演模式玩家发言记入正文**（气泡样式，始终记录；左侧栏可仅隐藏显示，不影响落盘）。
 - **思维链精细化控制**：玩法声明 `forceThinkingOff` 强制关闭（含导演选角），`thinking-params.ts` 按模型家族差异化设置（DeepSeek / GLM / 豆包 `thinking:disabled`、OpenAI `reasoning_effort:none`、Gemini `minimal`、Kimi `low`、Claude / 未知提示词引导）；正文输出完毕后思维链默认折叠。
 - **Debug 控制台**：网关 `onDetail` 下发模型完整返回与最终提交提示词，前端 Debug 开关过滤详情（`src/model-gateway.ts` / `src/thinking-params.ts`）。
-- **开放插件架构**：Core 为唯一状态权威，四层插件边界（人机交互 / 核心运行时 / 玩法方案 / LLM 路由）（`src/core/`；`docs/architecture.md`）。
+- **开放插件架构**：v1 仍使用 legacy LLM router；v2 参考路径将 LLM System（完整管理系统）、Provider Driver（供应商适配）、Solution（含 system prompt/prompt assembly）与可替换 Core 分开（`src/v2/`；详见 v2 文档）。
 - **插件管理器**：内置插件经引导层装载（manifest 校验 / 依赖拓扑 / provides 预检 / 单插件失败隔离，坏插件不再拖垮启动）；「插件」面板与 `/admin/plugins` 兜底页独立于 Core 可用（D2）；改动启用状态重启生效（D1 不热加载）；存档导出记录插件依赖快照、换环境加载前提示差异（D3，只提示不阻断）。Android 本地经 native 桥提供等价管理能力。
 - **DSH 辅助剧本编辑**：生成 / 润色 / 一致性检查 / 扩开场（`src/dsh-story-bridge.ts`；`creator-workbench-*.ts`）。
 - **崩溃安全**：状态变化一次 SQLite 事务提交（`src/core/state-transaction.ts`）。

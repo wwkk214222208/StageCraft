@@ -1,0 +1,16 @@
+{
+  "id": "example.stagecraft.core",
+  "version": "1.0.0",
+  "title": "Example replaceable Core",
+  "category": "core",
+  "apiVersion": "0.1",
+  "source": "src/index.ts",
+  "output": "dist/index.js",
+  "entry": {
+    "desktop": "dist/index.js",
+    "android": "dist/index.js"
+  },
+  "integrity": {
+    "dist/index.js": "sha256-0f1f15fd593bb42ecd4df1555604932a7285103771e69b48c5f383ee4d0f9603"
+  }
+}

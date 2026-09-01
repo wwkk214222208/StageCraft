@@ -50,6 +50,8 @@ public final class NativeBridge implements AutoCloseable {
     private volatile boolean installReceiverRegistered;
     private volatile String activeCredential;
     private final EmbeddedCoreArtifact.Verification embeddedCore;
+    private final V2ComponentStore v2ComponentStore;
+    private final V2PlanStore v2PlanStore;
     private final AndroidCompositionOperations compositionOperations;
     private volatile String pendingExportKind;
     private volatile JSONObject pendingExportPayload;
@@ -59,6 +61,8 @@ public final class NativeBridge implements AutoCloseable {
         this.webView = webView;
         this.sessionStore = sessionStore;
         this.embeddedCore = embeddedCore;
+        this.v2ComponentStore = new V2ComponentStore(activity.getFilesDir());
+        this.v2PlanStore = new V2PlanStore(activity.getFilesDir());
         this.compositionOperations = new AndroidCompositionOperations(activity, new AndroidSqliteRepository(activity), new AndroidSecretStore(activity), modelExecutor);
     }
 
@@ -70,6 +74,46 @@ public final class NativeBridge implements AutoCloseable {
     public void setPluginManager(PluginManager manager) {
         this.pluginManager = manager;
     }
+
+    /** v2 management surface: private component inventory, active plan and recovery state. */
+    @JavascriptInterface public synchronized String getV2ComponentState() {
+        try {
+            JSONObject result = new JSONObject(); JSONArray components = new JSONArray(); for (JSONObject item : v2ComponentStore.list()) components.put(item); result.put("components", components); JSONObject plan = v2PlanStore.readActive(); result.put("plan", plan == null ? JSONObject.NULL : plan); result.put("recovery", v2PlanStore.recoveryState()); result.put("restartRequired", false); return result.toString();
+        } catch (Exception error) { return errorJson(error.getMessage() == null ? "v2 component state unavailable" : error.getMessage()); }
+    }
+
+    /** Install a user-selected SAF archive into app-private storage atomically. */
+    @JavascriptInterface public synchronized String installV2Component(String uriString) {
+        if (uriString == null || uriString.isEmpty()) return errorJson("component archive URI is required");
+        try (InputStream input = activity.getContentResolver().openInputStream(Uri.parse(uriString))) { JSONObject manifest = v2ComponentStore.install(input); return new JSONObject().put("ok", true).put("manifest", manifest).put("restartRequired", true).toString(); }
+        catch (Exception error) { return errorJson(error.getMessage() == null ? "component install failed" : error.getMessage()); }
+    }
+
+    /** Select a Core by explicit risk acknowledgement; activation takes effect on cold restart. */
+    @JavascriptInterface public synchronized String selectV2Core(String id, String version, boolean acknowledgeRisk) {
+        if (!acknowledgeRisk) return errorJson("acknowledgeRisk=true is required for user-trusted Core code");
+        try { JSONObject manifest = v2ComponentStore.read(id, version); JSONObject plan = V2PlanStore.selectCore(v2PlanStore.readActive(), manifest); V2PlanStore.validatePlan(plan, v2ComponentStore); v2PlanStore.writeActive(plan); return new JSONObject().put("ok", true).put("restartRequired", true).put("plan", plan).toString(); }
+        catch (Exception error) { return errorJson(error.getMessage() == null ? "Core selection failed" : error.getMessage()); }
+    }
+
+    /** Enable/disable an installed ordinary v2 plugin without altering the v1 PluginManager plan. */
+    @JavascriptInterface public synchronized String setV2PluginEnabled(String id, String version, boolean enabled, boolean acknowledgeRisk) {
+        if (enabled && !acknowledgeRisk) return errorJson("acknowledgeRisk=true is required for user-trusted plugin code");
+        try {
+            JSONObject active = v2PlanStore.readActive();
+            if (active == null) throw new IllegalArgumentException("an active external Core plan is required before selecting v2 plugins");
+            JSONObject manifest = v2ComponentStore.read(id, version);
+            JSONObject plan = V2PlanStore.setPluginEnabled(active, manifest, enabled);
+            V2PlanStore.validatePlan(plan, v2ComponentStore);
+            v2PlanStore.writeActive(plan);
+            return new JSONObject().put("ok", true).put("restartRequired", true).put("plan", plan).toString();
+        } catch (Exception error) { return errorJson(error.getMessage() == null ? "v2 plugin selection failed" : error.getMessage()); }
+    }
+
+    /** Return to APK rescue/default behavior; an explicit v2 plan is removed. */
+    @JavascriptInterface public synchronized String selectV2Rescue() { try { v2PlanStore.clearActive(); v2PlanStore.setSafeMode(false); return new JSONObject().put("ok", true).put("restartRequired", true).put("effectiveCore", "bundled-rescue").toString(); } catch (Exception error) { return errorJson("rescue selection failed"); } }
+    @JavascriptInterface public synchronized String setV2SafeMode(boolean enabled) { try { v2PlanStore.setSafeMode(enabled); return new JSONObject().put("ok", true).put("restartRequired", true).toString(); } catch (Exception error) { return errorJson("safe mode update failed"); } }
+    @JavascriptInterface public synchronized String clearV2Quarantine(String id) { try { v2PlanStore.clearQuarantine(id == null ? "" : id); return new JSONObject().put("ok", true).put("restartRequired", true).toString(); } catch (Exception error) { return errorJson("quarantine clear failed"); } }
 
     /**
      * W6-2：插件管理状态读取（desired/effective/quarantined + catalog）。
@@ -455,6 +499,11 @@ public final class NativeBridge implements AutoCloseable {
     @JavascriptInterface public void chooseCharacterCard() {
         if (closed || !(activity instanceof MainActivity)) return;
         activity.runOnUiThread(() -> ((MainActivity) activity).openCharacterCardPicker());
+    }
+
+    @JavascriptInterface public void chooseV2Component() {
+        if (closed || !(activity instanceof MainActivity)) return;
+        activity.runOnUiThread(() -> ((MainActivity) activity).openV2ComponentDocument());
     }
 
     /** APK 自更新：下载最新 release APK（带进度回调）并经 PackageInstaller 触发系统安装（无需 FileProvider）。 */

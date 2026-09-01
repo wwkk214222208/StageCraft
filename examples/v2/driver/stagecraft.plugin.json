@@ -1,0 +1,16 @@
+{
+  "id": "example.stagecraft.driver",
+  "version": "1.0.0",
+  "title": "Example Provider Driver",
+  "category": "provider-driver",
+  "apiVersion": "0.1",
+  "source": "src/index.ts",
+  "output": "dist/index.js",
+  "entry": {
+    "desktop": "dist/index.js",
+    "android": "dist/index.js"
+  },
+  "integrity": {
+    "dist/index.js": "sha256-694c9edd36f6528c7c112d8886d2eb87cc38b3c52bd60d579166f69a1bde744c"
+  }
+}

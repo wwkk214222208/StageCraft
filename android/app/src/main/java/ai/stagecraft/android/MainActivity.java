@@ -22,6 +22,7 @@ public final class MainActivity extends Activity {
     private static final int PICK_CHARACTER_CARD = 7001;
     private static final int CREATE_EXPORT_DOCUMENT = 7002;
     private static final int OPEN_STORY_DOCUMENT = 7003;
+    private static final int OPEN_V2_COMPONENT = 7004;
     private WebView webView;
     private NativeBridge bridge;
     /** W6：主进程同源 UI gateway（页面 origin；静态资产 + /api/* registry 分派）。 */
@@ -463,6 +464,13 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, OPEN_STORY_DOCUMENT);
     }
 
+    void openV2ComponentDocument() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/zip");
+        startActivityForResult(intent, OPEN_V2_COMPONENT);
+    }
+
     void createExportDocument(String mimeType, String suggestedName) {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -477,6 +485,8 @@ public final class MainActivity extends Activity {
             bridge.importCharacterCard(data.getData());
         } else if (requestCode == OPEN_STORY_DOCUMENT && bridge != null) {
             bridge.importStoryDocument(resultCode == RESULT_OK && data != null ? data.getData() : null);
+        } else if (requestCode == OPEN_V2_COMPONENT && resultCode == RESULT_OK && data != null && bridge != null) {
+            bridge.installV2Component(data.getData() == null ? null : data.getData().toString());
         } else if (requestCode == CREATE_EXPORT_DOCUMENT && bridge != null) {
             bridge.completeExportDocument(resultCode == RESULT_OK && data != null ? data.getData() : null);
         }

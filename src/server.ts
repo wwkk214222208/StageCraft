@@ -9,10 +9,13 @@
  *   RP_REMOTE_SESSION_TTL_MS  会话 token 有效期（毫秒，缺省 12 小时）
  */
 import os from 'node:os'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { startTavern } from './app-boot.ts'
 import { startPluginFallbackServer } from './plugin-fallback-server.ts'
+import { startV2DesktopHost } from './v2/desktop-host.ts'
+import { startDesktopEntry } from './v2/desktop-entry.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const userDataRoot = process.env.STAGECRAFT_USER_DATA || (() => {
@@ -36,7 +39,14 @@ const remoteAccess = remoteEnabled
 const port = Number(process.env.PORT ?? '8787')
 
 try {
-  await startTavern({ userDataRoot, ...(host ? { host } : {}), ...(remoteAccess ? { remoteAccess } : {}) })
+  await startDesktopEntry({
+    planPath: join(userDataRoot, 'data', 'component-launch-plan.v2.json'),
+    legacyOptions: { userDataRoot, ...(host ? { host } : {}), ...(remoteAccess ? { remoteAccess } : {}) },
+    v2Options: { userDataRoot, ...(host ? { host } : {}), port },
+    hasPlan: existsSync,
+    startLegacy: startTavern,
+    startV2: startV2DesktopHost,
+  })
 } catch (error) {
   // D2 兜底（§3.5）：主运行时失败也必须能进插件管理（查看隔离原因 / 停用问题插件），
   // 否则"坏插件 → 起不来 → 进不去管理关掉它"死锁。兜底服务器只依赖 PluginConfigStore。

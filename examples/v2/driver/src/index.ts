@@ -1,0 +1,2 @@
+import { defineProviderDriver } from '../../../../src/sdk/index.ts'
+export default defineProviderDriver({ id: 'example.stagecraft.driver', version: '1.0.0', title: 'Example Provider Driver', providerId: 'demo', models: ['demo-1'], async *request(request) { yield { type: 'text', text: `echo:${request.messages.map(message => message.content).join('|')}` }; yield { type: 'usage', usage: { inputTokens: 4, outputTokens: 6 } }; yield { type: 'done' } } })

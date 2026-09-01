@@ -7,6 +7,8 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
@@ -33,18 +35,35 @@ public final class CoreHostAssetLoader extends WebViewClient {
     private final Context context;
     private final RenderGoneListener renderGoneListener;
     private final PageLoadListener pageLoadListener;
+    private final V2ComponentStore componentStore;
+    private final V2PlanStore planStore;
+    private final org.json.JSONObject effectivePlan;
 
     public CoreHostAssetLoader(Context context, RenderGoneListener renderGoneListener, PageLoadListener pageLoadListener) {
+        this(context, renderGoneListener, pageLoadListener, null, null, null);
+    }
+
+    public CoreHostAssetLoader(Context context, RenderGoneListener renderGoneListener, PageLoadListener pageLoadListener, V2ComponentStore componentStore, V2PlanStore planStore) {
+        this(context, renderGoneListener, pageLoadListener, componentStore, planStore, null);
+    }
+
+    public CoreHostAssetLoader(Context context, RenderGoneListener renderGoneListener, PageLoadListener pageLoadListener, V2ComponentStore componentStore, V2PlanStore planStore, org.json.JSONObject effectivePlan) {
         this.context = context.getApplicationContext();
         this.renderGoneListener = renderGoneListener;
         this.pageLoadListener = pageLoadListener;
+        this.componentStore = componentStore;
+        this.planStore = planStore;
+        this.effectivePlan = effectivePlan;
     }
 
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
         if (!CORE_HOST.equals(request.getUrl().getHost())) return null;
         String path = request.getUrl().getPath();
-        if (path == null || !path.startsWith(ASSET_PREFIX)) return null;
+        if (path == null) return null;
+        WebResourceResponse v2 = resolveV2(path);
+        if (v2 != null) return v2;
+        if (!path.startsWith(ASSET_PREFIX)) return null;
         String assetPath = path.substring(ASSET_PREFIX.length());
         try {
             InputStream input = context.getAssets().open(assetPath);
@@ -55,6 +74,28 @@ public final class CoreHostAssetLoader extends WebViewClient {
             return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", headers, new ByteArrayInputStream("asset not found".getBytes()));
         }
     }
+
+    /** Read-only private-store resolver for the v2 plan; APK /assets remains unchanged. */
+    private WebResourceResponse resolveV2(String path) {
+        if (componentStore == null || planStore == null || (!path.equals("/v2/launch-plan.json") && !path.startsWith("/components/"))) return null;
+        try {
+            org.json.JSONObject plan = effectivePlan != null ? effectivePlan : planStore.readActive(); if (plan == null) return notFound(); V2PlanStore.validatePlan(plan, componentStore);
+            if (path.equals("/v2/launch-plan.json")) return bytesResponse("application/json", plan.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            String[] parts = path.substring("/components/".length()).split("/", -1); if (parts.length < 3 || parts[0].isEmpty() || parts[1].isEmpty()) return forbidden();
+            String id = android.net.Uri.decode(parts[0]); String version = android.net.Uri.decode(parts[1]); StringBuilder entryText = new StringBuilder(); for (int i = 2; i < parts.length; i++) { if (i > 2) entryText.append('/'); entryText.append(parts[i]); } String entry = android.net.Uri.decode(entryText.toString());
+            boolean selected = selectionMatches(plan.optJSONObject("core"), id, version); org.json.JSONArray plugins = plan.optJSONArray("plugins"); if (!selected && plugins != null) for (int i = 0; i < plugins.length(); i++) if (selectionMatches(plugins.optJSONObject(i), id, version)) selected = true;
+            if (!selected) return forbidden();
+            org.json.JSONObject manifest = componentStore.read(id, version); org.json.JSONObject entries = manifest.getJSONObject("entrypoints"); if (!entry.equals(entries.optString("runtime")) && !entry.equals(entries.optString("ui"))) return forbidden();
+            File root = new File(componentStore.root(), id + File.separator + version); File file = new File(root, entry); String canonicalRoot = root.getCanonicalPath() + File.separator; String canonicalFile = file.getCanonicalPath(); if (!canonicalFile.startsWith(canonicalRoot) || !file.isFile()) return notFound();
+            return new WebResourceResponse(mimeFor(entry), "utf-8", 200, "OK", noStore(), new FileInputStream(file));
+        } catch (IllegalArgumentException error) { return forbidden(); } catch (Exception error) { return notFound(); }
+    }
+
+    private static boolean selectionMatches(org.json.JSONObject selection, String id, String version) { return selection != null && id.equals(selection.optString("id")) && version.equals(selection.optString("version")); }
+    private static Map<String, String> noStore() { Map<String, String> headers = new java.util.HashMap<>(); headers.put("Cache-Control", "no-store"); return headers; }
+    private static WebResourceResponse bytesResponse(String mime, byte[] bytes) { return new WebResourceResponse(mime, "utf-8", 200, "OK", noStore(), new ByteArrayInputStream(bytes)); }
+    private static WebResourceResponse notFound() { return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", noStore(), new ByteArrayInputStream("Not Found".getBytes())); }
+    private static WebResourceResponse forbidden() { return new WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", noStore(), new ByteArrayInputStream("Forbidden".getBytes())); }
 
     @Override
     public void onPageFinished(WebView view, String url) {

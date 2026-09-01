@@ -1,0 +1,124 @@
+package ai.stagecraft.android;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.junit.Test;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.security.MessageDigest;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
+import static org.junit.Assert.*;
+
+public class V2PlanStoreTest {
+    private static JSONObject plan(String id) throws Exception {
+        return new JSONObject().put("planVersion", "0.1").put("hostApiVersion", "0.1")
+            .put("core", new JSONObject().put("id", id).put("version", "1.0.0").put("manifestHash", "h"))
+            .put("plugins", new JSONArray());
+    }
+    private static JSONObject manifest(String id, String type, String coreApi) throws Exception {
+        JSONObject value = new JSONObject().put("schemaVersion", "0.1").put("id", id).put("version", "1.0.0")
+            .put("title", id).put("componentType", type).put("entrypoints", new JSONObject().put("runtime", "runtime.js"))
+            .put("integrity", new JSONObject().put("runtime", "sha256-0000000000000000000000000000000000000000000000000000000000000000"));
+        if ("core".equals(type)) value.put("hostApi", new JSONObject().put("version", "0.1")); else value.put("pluginCategory", "tool");
+        if (coreApi != null) value.put("coreApi", new JSONObject().put("version", coreApi));
+        return value;
+    }
+
+    private static String sha(String source) throws Exception {
+        StringBuilder out = new StringBuilder("sha256-"); for (byte b : MessageDigest.getInstance("SHA-256").digest(source.getBytes(StandardCharsets.UTF_8))) out.append(String.format("%02x", b)); return out.toString();
+    }
+
+    private static JSONObject installedManifest(String id, String type, String source, String capability) throws Exception {
+        JSONObject value = new JSONObject().put("schemaVersion", "0.1").put("id", id).put("version", "1.0.0").put("title", id)
+            .put("componentType", type).put("entrypoints", new JSONObject().put("runtime", "runtime.js"))
+            .put("integrity", new JSONObject().put("runtime", sha(source)));
+        if ("core".equals(type)) value.put("hostApi", new JSONObject().put("version", "0.1")); else value.put("pluginCategory", "tool");
+        if (capability != null) value.put("capabilities", new JSONObject().put("required", new JSONArray().put(capability)));
+        return value;
+    }
+
+    private static File install(V2ComponentStore store, File root, JSONObject manifest, String source) throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+            zip.putNextEntry(new ZipEntry("manifest.json")); zip.write(manifest.toString().getBytes(StandardCharsets.UTF_8)); zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("runtime.js")); zip.write(source.getBytes(StandardCharsets.UTF_8)); zip.closeEntry();
+        }
+        store.install(new ByteArrayInputStream(bytes.toByteArray())); return new File(root, manifest.getString("id") + File.separator + manifest.getString("version"));
+    }
+
+    private static JSONObject selection(JSONObject manifest) throws Exception {
+        return new JSONObject().put("id", manifest.getString("id")).put("version", manifest.getString("version")).put("manifestHash", V2PlanStore.manifestHash(manifest));
+    }
+
+    private static void delete(File file) { if (file == null || !file.exists()) return; File[] children = file.listFiles(); if (children != null) for (File child : children) delete(child); file.delete(); }
+
+    @Test public void quarantinedRequestedUsesLastGood() throws Exception {
+        JSONObject requested = plan("com.example.bad");
+        JSONObject good = plan("com.example.good");
+        JSONObject recovery = new JSONObject().put("quarantine", new JSONArray().put(new JSONObject().put("coreId", "com.example.bad")));
+        assertEquals("com.example.good", V2PlanStore.resolveEffectivePlan(requested, good, recovery).getJSONObject("core").getString("id"));
+    }
+
+    @Test public void safeModeUsesLastGoodAndOtherwiseRescue() throws Exception {
+        JSONObject recovery = new JSONObject().put("safeMode", true).put("quarantine", new JSONArray());
+        assertEquals("com.example.good", V2PlanStore.resolveEffectivePlan(plan("com.example.bad"), plan("com.example.good"), recovery).getJSONObject("core").getString("id"));
+        assertNull(V2PlanStore.resolveEffectivePlan(plan("com.example.bad"), null, recovery));
+    }
+
+    @Test public void pluginEnableDisableIsDeterministicAndDeduplicated() throws Exception {
+        JSONObject active = plan("com.example.core"); JSONObject plugin = manifest("com.example.tool", "plugin", null);
+        JSONObject once = V2PlanStore.setPluginEnabled(active, plugin, true);
+        JSONObject twice = V2PlanStore.setPluginEnabled(once, plugin, true);
+        assertEquals(1, twice.getJSONArray("plugins").length());
+        assertEquals("com.example.tool", twice.getJSONArray("plugins").getJSONObject(0).getString("id"));
+        assertEquals(0, V2PlanStore.setPluginEnabled(twice, plugin, false).getJSONArray("plugins").length());
+    }
+
+    @Test public void pluginMutationRejectsMissingPlanAndCoreComponent() throws Exception {
+        try { V2PlanStore.setPluginEnabled(null, manifest("com.example.tool", "plugin", null), true); fail(); } catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("active external Core")); }
+        try { V2PlanStore.setPluginEnabled(plan("com.example.core"), manifest("com.example.other", "core", null), true); fail(); } catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("not a plugin")); }
+    }
+
+    @Test public void switchingCorePreservesPluginsAndCompatibilityCanReject() throws Exception {
+        JSONObject active = V2PlanStore.setPluginEnabled(plan("com.example.old"), manifest("com.example.tool", "plugin", "1.0"), true);
+        JSONObject switched = V2PlanStore.selectCore(active, manifest("com.example.new", "core", "1.0"));
+        assertEquals("com.example.tool", switched.getJSONArray("plugins").getJSONObject(0).getString("id"));
+        V2PlanStore.validateCorePluginCompatibility(manifest("com.example.new", "core", "1.0"), new JSONArray().put(manifest("com.example.tool", "plugin", "1.0")));
+        try { V2PlanStore.validateCorePluginCompatibility(manifest("com.example.new", "core", "2.0"), new JSONArray().put(manifest("com.example.tool", "plugin", "1.0"))); fail(); } catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("requires Core API")); }
+    }
+
+    @Test public void coldStartPlanChecksInstalledStructureIntegrityAndCapabilities() throws Exception {
+        File root = Files.createTempDirectory("v2-plan-boundary").toFile();
+        try {
+            V2ComponentStore store = new V2ComponentStore(root, true); String source = "export default {}";
+            JSONObject core = installedManifest("com.example.core", "core", source, "host.log");
+            JSONObject plugin = installedManifest("com.example.plugin", "plugin", source, null);
+            install(store, root, core, source); File pluginDir = install(store, root, plugin, source);
+            JSONObject plan = new JSONObject().put("planVersion", "0.1").put("hostApiVersion", "0.1").put("core", selection(core)).put("plugins", new JSONArray().put(selection(plugin)));
+            V2PlanStore.validatePlan(plan, store);
+
+            Files.write(new File(pluginDir, "runtime.js").toPath(), "export default { tampered: true }".getBytes(StandardCharsets.UTF_8));
+            try { V2PlanStore.validatePlan(plan, store); fail("cold start must reject runtime tampering"); } catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("runtime integrity mismatch")); }
+            Files.write(new File(pluginDir, "runtime.js").toPath(), source.getBytes(StandardCharsets.UTF_8));
+            JSONObject pluginManifest = new JSONObject(plugin.toString()).put("pluginCategory", "not-supported");
+            Files.write(new File(pluginDir, "manifest.json").toPath(), pluginManifest.toString().getBytes(StandardCharsets.UTF_8));
+            try { V2PlanStore.validatePlan(plan, store); fail("cold start must reject manifest tampering"); } catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("pluginCategory")); }
+        } finally { delete(root); }
+    }
+
+    @Test public void planRejectsRequiredCapabilitiesOutsideAndroidHost() throws Exception {
+        File root = Files.createTempDirectory("v2-plan-capabilities").toFile();
+        try {
+            V2ComponentStore store = new V2ComponentStore(root, true); String source = "export default {}";
+            JSONObject core = installedManifest("com.example.core", "core", source, null); JSONObject plugin = installedManifest("com.example.plugin", "plugin", source, "network");
+            install(store, root, core, source); install(store, root, plugin, source);
+            JSONObject plan = new JSONObject().put("planVersion", "0.1").put("hostApiVersion", "0.1").put("core", selection(core)).put("plugins", new JSONArray().put(selection(plugin)));
+            try { V2PlanStore.validatePlan(plan, store); fail("unknown required capability must fail plan validation"); } catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("required capability")); }
+        } finally { delete(root); }
+    }
+}

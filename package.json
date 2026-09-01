@@ -8,6 +8,8 @@
     "dev": "node --experimental-strip-types src/server.ts",
     "start": "node --experimental-strip-types src/server.ts",
     "check:governance": "node --experimental-strip-types scripts/check-governance.mjs",
+    "create-stagecraft-plugin": "node scripts/create-stagecraft-plugin.mjs",
+    "stagecraft": "node scripts/stagecraft.mjs",
     "pretest": "npm run check:governance",
     "test": "node --experimental-strip-types --test --test-concurrency=8 test/*.test.ts",
     "build:android-core": "node scripts/build-android-core.mjs",

@@ -34,6 +34,7 @@ public final class CoreService extends Service {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final AtomicBoolean disposed = new AtomicBoolean(false);
+    private final AtomicBoolean stopCompleted = new AtomicBoolean(false);
     private WebView coreWebView;
     private CoreDataServer dataServer;
     private String startedAt;
@@ -48,6 +49,15 @@ public final class CoreService extends Service {
     private String nonce = "";
     private int corePid;
     private JSONObject launchPlan = new JSONObject();
+    /** M5/M6 v2 plan is independent from the v1 PluginManager launch plan. */
+    private V2ComponentStore v2ComponentStore;
+    private V2PlanStore v2PlanStore;
+    private boolean v2ExternalCore;
+    private JSONObject v2SelectedPlan;
+    private JSONObject v2RequestedPlan;
+    private Runnable v2BootTimeout;
+    /** Distinct from bridgeReady: the page bridge can exist before the Core handshake. */
+    private final AtomicBoolean coreReady = new AtomicBoolean(false);
     /** W6：组合根回报的插件隔离记录（plugin-report 桥消息）。 */
     private volatile org.json.JSONArray pluginQuarantine;
 
@@ -149,6 +159,31 @@ public final class CoreService extends Service {
 
     private void boot() {
         try {
+            // Select/validate the private v2 plan before touching the bundled Core.
+            // A present external plan is authoritative; failure is reported rather
+            // than silently falling back to the embedded identity.
+            v2ComponentStore = new V2ComponentStore(getFilesDir());
+            v2PlanStore = new V2PlanStore(getFilesDir());
+            JSONObject privatePlan = v2PlanStore.readActive();
+            v2RequestedPlan = privatePlan;
+            JSONObject effectivePlan = V2PlanStore.resolveEffectivePlan(privatePlan, v2PlanStore.readLastGood(), v2PlanStore.recoveryState());
+            if (effectivePlan != null) {
+                try { V2PlanStore.validatePlan(effectivePlan, v2ComponentStore); }
+                catch (Exception error) {
+                    String failedId = effectivePlan.optJSONObject("core") == null ? "unknown" : effectivePlan.getJSONObject("core").optString("id", "unknown");
+                    v2PlanStore.recordFailure(failedId, "plan_validation_failed");
+                    AppLog.w("v2 plan validation failed; using embedded rescue: " + error.getMessage());
+                    effectivePlan = null;
+                }
+            }
+            if (effectivePlan != null) {
+                v2SelectedPlan = effectivePlan;
+                v2ExternalCore = true;
+                launchPlan = new JSONObject(effectivePlan.toString());
+                coreBundleVersion = effectivePlan.optJSONObject("core").optString("version", "unknown");
+                bootV2(effectivePlan);
+                return;
+            }
             EmbeddedCoreArtifact.Verification artifact = EmbeddedCoreArtifact.verify(this);
             if (!artifact.valid()) {
                 fail("bundle_invalid", "embedded core verification failed: " + artifact.reason());
@@ -164,66 +199,7 @@ public final class CoreService extends Service {
             if (registry != null) dataServer.setRouteRegistry(registry);
             // W5-R1-1：命令门禁——只有 ready/degraded 才允许命令类请求（与状态机同一状态源）
             dataServer.setCommandGate(stateMachine::canSubmitCommands);
-            dataServer.setCommandForwarder(new CoreDataServer.CommandForwarder() {
-                @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
-                    forwardCommand(bodyJson, resultConsumer);
-                }
-
-                @Override public String view() {
-                    return currentView();
-                }
-
-                @Override public void cancel(String requestId) {
-                    // R3-5/R7：客户端断开 → 经桥取消 JS 侧对应请求（abort AbortSignal，长模型请求停止）；
-                    // R7：pendingApi 立即移除（防悬挂回调堆积；迟到 protocol-result 因表无条目被忽略）
-                    String safeId = requestId == null ? "" : requestId.replace("\"", "");
-                    if (!safeId.isEmpty()) {
-                        pendingApi.remove(safeId);
-                        main.post(() -> {
-                            if (coreWebView != null) {
-                                coreWebView.evaluateJavascript(
-                                    "window.CoreHostBridge && window.CoreHostBridge.cancelPortableRequest(" + JSONObject.quote(safeId) + ")",
-                                    null);
-                            }
-                        });
-                    }
-                }
-
-                @Override public void forwardApi(String method, String path, Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
-                    forwardApiRequest(method, path, headers, bodyJson, resultConsumer);
-                }
-
-                @Override public void forwardApiTracked(String method, String path, Map<String, String> headers, String bodyJson,
-                                                        java.util.function.Consumer<String> transportIdConsumer,
-                                                        java.util.function.Consumer<String> resultConsumer) {
-                    // R5-4：api-* transport id 既用于 pending 表（结果回传），也作为取消 key——
-                    // CoreDataServer 断开时经 cancel(transportId) → protocol-cancel → JS abort。
-                    final String transportId = "api-" + System.currentTimeMillis() + "-" + pendingApiSequence.incrementAndGet();
-                    pendingApi.put(transportId, resultConsumer);
-                    transportIdConsumer.accept(transportId);
-                    try {
-                        String headersJson = new JSONObject(headers).toString();
-                        main.post(() -> {
-                            if (coreWebView == null) {
-                                java.util.function.Consumer<String> consumer = pendingApi.remove(transportId);
-                                if (consumer != null) consumer.accept("{\"status\":503,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"core_not_ready\\\",\\\"message\\\":\\\"core webview is not available\\\"}}\"}");
-                                return;
-                            }
-                            coreWebView.evaluateJavascript(
-                                "window.CoreHostBridge && window.CoreHostBridge.dispatchRequest("
-                                    + JSONObject.quote(transportId) + ","
-                                    + JSONObject.quote(method) + ","
-                                    + JSONObject.quote(path) + ","
-                                    + JSONObject.quote(headersJson) + ","
-                                    + JSONObject.quote(bodyJson) + ")",
-                                null);
-                        });
-                    } catch (Exception error) {
-                        java.util.function.Consumer<String> consumer = pendingApi.remove(transportId);
-                        if (consumer != null) consumer.accept("{\"status\":500,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"bridge_failed\\\",\\\"message\\\":\\\"" + error.getMessage() + "\\\"}}\"}");
-                    }
-                }
-            });
+            dataServer.setCommandForwarder(createCommandForwarder());
             dataServer.start();
 
             coreWebView = new WebView(this);
@@ -255,6 +231,108 @@ public final class CoreService extends Service {
         }
     }
 
+    /** Configure the trusted appassets loader with a validated external plan. */
+    private CoreDataServer.CommandForwarder createCommandForwarder() {
+        return new CoreDataServer.CommandForwarder() {
+            @Override public void forward(String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                forwardCommand(bodyJson, resultConsumer);
+            }
+
+            @Override public String view() {
+                return currentView();
+            }
+
+            @Override public void cancel(String requestId) {
+                // R3-5/R7：客户端断开 → 经桥取消 JS 侧对应请求（abort AbortSignal，长模型请求停止）；
+                // R7：pendingApi 立即移除（防悬挂回调堆积；迟到 protocol-result 因表无条目被忽略）
+                String safeId = requestId == null ? "" : requestId.replace("\"", "");
+                if (!safeId.isEmpty()) {
+                    pendingApi.remove(safeId);
+                    main.post(() -> {
+                        if (coreWebView != null) {
+                            coreWebView.evaluateJavascript(
+                                "window.CoreHostBridge && window.CoreHostBridge.cancelPortableRequest(" + JSONObject.quote(safeId) + ")",
+                                null);
+                        }
+                    });
+                }
+            }
+
+            @Override public void forwardApi(String method, String path, Map<String, String> headers, String bodyJson, java.util.function.Consumer<String> resultConsumer) {
+                forwardApiRequest(method, path, headers, bodyJson, resultConsumer);
+            }
+
+            @Override public void forwardApiTracked(String method, String path, Map<String, String> headers, String bodyJson,
+                                                    java.util.function.Consumer<String> transportIdConsumer,
+                                                    java.util.function.Consumer<String> resultConsumer) {
+                // R5-4：api-* transport id 既用于 pending 表（结果回传），也作为取消 key——
+                // CoreDataServer 断开时经 cancel(transportId) → protocol-cancel → JS abort。
+                final String transportId = "api-" + System.currentTimeMillis() + "-" + pendingApiSequence.incrementAndGet();
+                pendingApi.put(transportId, resultConsumer);
+                transportIdConsumer.accept(transportId);
+                try {
+                    String headersJson = new JSONObject(headers).toString();
+                    main.post(() -> {
+                        if (coreWebView == null) {
+                            java.util.function.Consumer<String> consumer = pendingApi.remove(transportId);
+                            if (consumer != null) consumer.accept("{\"status\":503,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"core_not_ready\\\",\\\"message\\\":\\\"core webview is not available\\\"}}\"}");
+                            return;
+                        }
+                        coreWebView.evaluateJavascript(
+                            "window.CoreHostBridge && window.CoreHostBridge.dispatchRequest("
+                                + JSONObject.quote(transportId) + ","
+                                + JSONObject.quote(method) + ","
+                                + JSONObject.quote(path) + ","
+                                + JSONObject.quote(headersJson) + ","
+                                + JSONObject.quote(bodyJson) + ")",
+                            null);
+                    });
+                } catch (Exception error) {
+                    java.util.function.Consumer<String> consumer = pendingApi.remove(transportId);
+                    if (consumer != null) consumer.accept("{\"status\":500,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"bridge_failed\\\",\\\"message\\\":\\\"" + error.getMessage() + "\\\"}}\"}");
+                }
+            }
+        };
+    }
+
+    private void bootV2(JSONObject plan) throws Exception {
+        dataServer = new CoreDataServer(nonce = java.util.UUID.randomUUID().toString().replace("-", ""));
+        RouteRegistry registry = loadRouteRegistry();
+        if (registry != null) dataServer.setRouteRegistry(registry);
+        dataServer.setCommandGate(stateMachine::canSubmitCommands);
+        // v1 and v2 use the same data-plane bridge. Keep command/view/cancel and
+        // portable API forwarding enabled for an externally selected Core too.
+        dataServer.setCommandForwarder(createCommandForwarder());
+        dataServer.start();
+        coreWebView = new WebView(this);
+        coreWebView.getSettings().setJavaScriptEnabled(true);
+        coreWebView.getSettings().setAllowFileAccess(false);
+        coreWebView.getSettings().setAllowContentAccess(false);
+        coreWebView.setWebViewClient(new CoreHostAssetLoader(this, view -> fail("renderer_gone", "v2 core webview renderer crashed"), (view, url) -> {
+            if (bridgeReady.compareAndSet(false, true)) {
+                try {
+                    String config = buildV2WebConfig(plan);
+                    coreWebView.evaluateJavascript("window.StageCraftV2Config=" + config + ";", ignored -> setupWebMessageBridge());
+                } catch (Exception error) {
+                    bridgeReady.set(false);
+                    fail("v2_config_failed", error.getMessage() == null ? "v2 config failed" : error.getMessage());
+                }
+            }
+        }, v2ComponentStore, v2PlanStore, plan));
+        coreWebView.addJavascriptInterface(new CoreNative(), "CoreNative");
+        v2BootTimeout = () -> { if (!coreReady.get()) fail("v2_boot_timeout", "external Core did not complete ready handshake"); };
+        main.postDelayed(v2BootTimeout, 15_000L);
+        coreWebView.loadUrl(CoreHostAssetLoader.CORE_ORIGIN + "/assets/core-host.html");
+    }
+
+    private String buildV2WebConfig(JSONObject plan) throws Exception {
+        JSONObject config = new JSONObject(); JSONObject core = plan.getJSONObject("core");
+        config.put("request", new JSONObject().put("hostApiVersion", plan.optString("hostApiVersion")).put("selectedCore", core).put("pluginSelections", plan.optJSONArray("plugins") == null ? new org.json.JSONArray() : plan.getJSONArray("plugins")).put("planHash", plan.optString("planHash")));
+        config.put("core", new JSONObject().put("id", core.optString("id")).put("version", core.optString("version")).put("url", "/components/" + core.optString("id") + "/" + core.optString("version") + "/" + v2ComponentStore.read(core.optString("id"), core.optString("version")).getJSONObject("entrypoints").getString("runtime")));
+        org.json.JSONArray plugins = new org.json.JSONArray(); org.json.JSONArray selections = plan.optJSONArray("plugins"); if (selections != null) for (int i = 0; i < selections.length(); i++) { JSONObject selected = selections.getJSONObject(i); JSONObject manifest = v2ComponentStore.read(selected.getString("id"), selected.getString("version")); plugins.put(new JSONObject().put("id", selected.getString("id")).put("version", selected.getString("version")).put("manifest", manifest).put("url", "/components/" + selected.getString("id") + "/" + selected.getString("version") + "/" + manifest.getJSONObject("entrypoints").getString("runtime"))); }
+        config.put("plugins", plugins); return config.toString();
+    }
+
     private final AtomicBoolean bridgeReady = new AtomicBoolean(false);
 
     /** Q1 优先通道：WebMessagePort。Java 建立通道并把一个端口交给页面，页面事件经端口回流。 */
@@ -283,10 +361,14 @@ public final class CoreService extends Service {
                         AppLog.w("core-ready ignored in state " + stateMachine.state().wire);
                         return;
                     }
+                    coreReady.set(true);
                     JSONObject health = buildHealth(message.optJSONObject("measure"));
                     dataServer.setHealthJson(health.toString());
                     publishEndpointReady();
+                    if (v2BootTimeout != null) { main.removeCallbacks(v2BootTimeout); v2BootTimeout = null; }
+                    if (v2ExternalCore && v2PlanStore != null) try { v2PlanStore.markReady(v2SelectedPlan); } catch (Exception error) { AppLog.w("v2 last-good write failed: " + error); }
                 }
+                case "core-failed" -> fail(message.optString("code", "core_failed"), message.optString("message", "v2 Core failed"));
                 case "core-event" -> {
                     if (dataServer != null) dataServer.publishCoreEvent(message.getJSONObject("event"));
                 }
@@ -334,9 +416,22 @@ public final class CoreService extends Service {
             health.put("minSupportedProtocolVersion", "1.0");
             health.put("maxSupportedProtocolVersion", "1.1");
             health.put("bridgeVersion", "core-service");
-            // bundle 身份以服务端 EmbeddedCoreArtifact 校验结果为权威（评审：页面自报不可信）
-            health.put("coreBundleVersion", verifiedArtifact == null ? "unknown" : verifiedArtifact.version());
-            health.put("coreBundleHash", verifiedArtifact == null ? "" : verifiedArtifact.sha256());
+            // External v2 identity is taken from the validated private plan; it
+            // must never be reported as the embedded artifact identity.
+            JSONObject recovery = v2PlanStore == null ? null : v2PlanStore.recoveryState();
+            org.json.JSONArray quarantine = recovery == null ? null : recovery.optJSONArray("quarantine");
+            if (v2RequestedPlan != null || (quarantine != null && quarantine.length() > 0)) {
+                JSONObject identity = buildV2HealthIdentity(v2RequestedPlan, v2SelectedPlan, recovery);
+                health.put("requestedCore", identity.opt("requestedCore"));
+                health.put("effectiveCore", identity.opt("effectiveCore"));
+                health.put("coreBundleVersion", identity.opt("coreBundleVersion"));
+                health.put("coreBundleHash", identity.opt("coreBundleHash"));
+                health.put("recovery", recovery == null ? JSONObject.NULL : recovery);
+            } else {
+                health.put("effectiveCore", "bundled-default");
+                health.put("coreBundleVersion", verifiedArtifact == null ? "unknown" : verifiedArtifact.version());
+                health.put("coreBundleHash", verifiedArtifact == null ? "" : verifiedArtifact.sha256());
+            }
             health.put("pluginSetHash", pluginSetHash);
             health.put("stateSchemaVersion", stateSchemaVersion);
             health.put("status", stateMachine.state().wire);
@@ -348,6 +443,21 @@ public final class CoreService extends Service {
             if (pluginQuarantine != null) health.put("quarantine", pluginQuarantine);
             if (measure != null) health.put("measure", measure);
             return health;
+        } catch (Exception error) {
+            return new JSONObject();
+        }
+    }
+
+    /** Pure v2 health identity seam; a failed requested plan has no selected plan. */
+    static JSONObject buildV2HealthIdentity(JSONObject requestedPlan, JSONObject selectedPlan, JSONObject recovery) {
+        try {
+            JSONObject selected = selectedPlan == null ? null : selectedPlan.optJSONObject("core");
+            JSONObject requested = requestedPlan == null ? null : requestedPlan.optJSONObject("core");
+            return new JSONObject()
+                .put("requestedCore", requested == null ? JSONObject.NULL : requested)
+                .put("effectiveCore", selected == null ? "bundled-rescue" : selected)
+                .put("coreBundleVersion", selected == null ? "unknown" : selected.optString("version", "unknown"))
+                .put("coreBundleHash", selected == null ? "" : selected.optString("manifestHash", ""));
         } catch (Exception error) {
             return new JSONObject();
         }
@@ -429,7 +539,7 @@ public final class CoreService extends Service {
             AppLog.w("crash-renderer terminate path failed: " + error);
         }
         coreWebView.evaluateJavascript(
-            "window.CoreHostBridge && window.CoreHostBridge.dispatch(" + JSONObject.quote(bodyJson) + ")",
+            "(async function(){ return window.CoreHostBridge ? await window.CoreHostBridge.dispatch(" + JSONObject.quote(bodyJson) + ") : null })()",
             resultJson -> {
                 long elapsed = System.currentTimeMillis() - startedAtMillis;
                 String payload = unquote(resultJson);
@@ -514,7 +624,16 @@ public final class CoreService extends Service {
     }
 
     private void fail(String code, String message) {
+        if (v2BootTimeout != null) { main.removeCallbacks(v2BootTimeout); v2BootTimeout = null; }
         stateMachine.onFailure(code);
+        coreReady.set(false);
+        if (v2ExternalCore && v2PlanStore != null && v2SelectedPlan != null) {
+            try {
+                String coreId = v2SelectedPlan.optJSONObject("core") == null ? "unknown" : v2SelectedPlan.getJSONObject("core").optString("id", "unknown");
+                JSONObject recovery = v2PlanStore.recordFailure(coreId, code);
+            } catch (Exception error) { AppLog.w("v2 failure state write failed: " + error); }
+        }
+        if (dataServer != null) dataServer.setHealthJson(buildHealth(null).toString());
         AppLog.w("core failed code=" + code + " message=" + message);
         if ("renderer_gone".equals(code)) {
             // renderer 证据独立落盘（评审：oneway 广播竞态导致主进程侧漏帧）——
@@ -544,14 +663,40 @@ public final class CoreService extends Service {
         if (!disposed.compareAndSet(false, true)) return;
         stateMachine.onStopRequested();
         main.post(() -> {
-            if (dataServer != null) dataServer.stop();
-            if (coreWebView != null) {
-                coreWebView.destroy();
-                coreWebView = null;
+            final WebView view = coreWebView;
+            if (view == null) {
+                completeGracefulStop();
+                return;
             }
-            stateMachine.onStopped();
-            stopSelf();
+            // Give the selected third-party Core a chance to release its own
+            // resources before destroying the WebView. A bounded fallback
+            // keeps a broken shutdown hook from holding the service forever.
+            main.postDelayed(() -> completeGracefulStopIf(view), 2_000L);
+            try {
+                view.evaluateJavascript(
+                    "window.CoreHostBridge && window.CoreHostBridge.shutdown(function(){ window.CoreNative && window.CoreNative.shutdownComplete(); })",
+                    null);
+            } catch (Exception error) {
+                AppLog.w("core shutdown bridge failed: " + error.getMessage());
+                completeGracefulStopIf(view);
+            }
         });
+    }
+
+    private void completeGracefulStopIf(WebView expected) {
+        if (coreWebView != expected) return;
+        completeGracefulStop();
+    }
+
+    private void completeGracefulStop() {
+        if (!stopCompleted.compareAndSet(false, true)) return;
+        if (dataServer != null) dataServer.stop();
+        if (coreWebView != null) {
+            coreWebView.destroy();
+            coreWebView = null;
+        }
+        stateMachine.onStopped();
+        stopSelf();
     }
 
     /** W5-3 测试 seam：注入受控状态机（仅测试包使用；生产走 onCreate 默认 STARTING）。 */
@@ -588,6 +733,12 @@ public final class CoreService extends Service {
 
     /** 独立命名的 CoreNative interface：只暴露 core-native operation（Gate B：checkCoreNative）。 */
     public class CoreNative {
+        @JavascriptInterface public void shutdownComplete() {
+            // Javascript interfaces are called off the main thread on some
+            // WebView versions; lifecycle and WebView teardown stay on main.
+            main.post(CoreService.this::completeGracefulStop);
+        }
+
         @JavascriptInterface public String invokeSync(String operation, String inputJson) {
             return bridge.invokeSync(operation, inputJson);
         }
