@@ -683,8 +683,25 @@
         nativeInvokeSync('secret.set', { key: 'local.billing.prices', value: JSON.stringify(payload.billing.prices) })
       }
       if (payload.room && typeof payload.room === 'object' && payload.room.room && typeof payload.room.room === 'object') {
-        nativeInvokeSync('stagecraft.repository', { method: 'importRoom', args: [ROOM_ID, payload.room] })
-        requirePageCore().refresh()
+        if (gatewayMode) {
+          // gateway 模式：页面内 Core 未启动（requireComposition 会抛"本地核心未启动"），
+          // 房间导入必须经 core 业务路由 archive.load 在 :core 侧串行执行（importRoom + refresh +
+          // core.resync），UI 才会收到重投影后的视图。用临时存档承载房间，导入后立即清理。
+          const tempName = `__sync-room-${Date.now()}__`
+          nativeInvokeSync('archive.save', { name: tempName, archive: { version: 1, exportedAt: new Date().toISOString(), room: payload.room.room } })
+          try {
+            const loadResponse = await originalFetch('/api/archive/load', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name: tempName }) })
+            if (!loadResponse.ok) {
+              const detail = await loadResponse.json().catch(() => ({}))
+              throw new Error(typeof detail.error === 'string' ? detail.error : detail.error?.message || `房间导入失败（HTTP ${loadResponse.status}）。`)
+            }
+          } finally {
+            try { nativeInvokeSync('archive.delete', { name: tempName }) } catch { /* 清理失败不阻断 */ }
+          }
+        } else {
+          nativeInvokeSync('stagecraft.repository', { method: 'importRoom', args: [ROOM_ID, payload.room] })
+          requirePageCore().refresh()
+        }
         result.room = true
       }
       if (Array.isArray(payload.saves)) for (const item of payload.saves) if (item && typeof item === 'object' && String(item.name ?? '').trim() && item.archive && typeof item.archive === 'object') { try { nativeInvokeSync('archive.save', { name: String(item.name), archive: item.archive }); result.saves++ } catch { /* 跳过无效存档 */ } }
@@ -695,7 +712,19 @@
     },
     async push() {
       const result = { room: false, providers: false, saves: 0, stories: 0, presets: 0 }
-      const roomPayload = (() => { try { return { version: 1, exportedAt: new Date().toISOString(), room: guardRoom() } } catch { return null } })()
+      // gateway 模式：页面内 Core 未启动，房间快照经同源 gateway /api/room（:core 组合根实时读取）；
+      // 回退模式仍走页面内 Core 的 guardRoom()。两条路径失败都不阻断推送其余数据。
+      const roomPayload = await (async () => {
+        try {
+          if (gatewayMode) {
+            const response = await originalFetch('/api/room')
+            if (!response.ok) return null
+            const room = await response.json()
+            return room && typeof room === 'object' ? { version: 1, exportedAt: new Date().toISOString(), room } : null
+          }
+          return { version: 1, exportedAt: new Date().toISOString(), room: guardRoom() }
+        } catch { return null }
+      })()
       if (roomPayload) result.room = true
       const saves = []
       try { for (const name of (nativeInvokeSync('archive.list', {}).files ?? [])) { try { saves.push({ name, archive: nativeInvokeSync('archive.load', { name }) }) } catch { /* 跳过损坏存档 */ } } } catch { /* 无存档 */ }

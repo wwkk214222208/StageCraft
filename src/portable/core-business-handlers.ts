@@ -23,6 +23,8 @@ export interface CoreFacade {
   invokeSync: (operation: string, input?: Record<string, unknown>) => unknown
   getRoom: () => unknown
   getView: () => unknown
+  /** 重读仓库并重建 Core 投影，emit core.resync（组合根未启动时为 no-op；导入房间后必须调用）。 */
+  refresh?: () => void
   submitTurn: (input: { text: string; requiredRoleIds?: string[] }) => Promise<unknown>
   cancelTurn: () => void
   speak: (roleId: string, feedback?: string) => Promise<unknown>
@@ -574,6 +576,9 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     if (!archive || typeof archive !== 'object') return err('存档格式无效。')
     // 经组合根 repository 的 importRoom 写回房间（与桌面 dispatchManagement('import-archive') 同语义）
     facade.invokeSync('stagecraft.repository', { method: 'importRoom', args: [stringOf(body, 'name'), archive] })
+    // importRoom 只写仓库：必须重建 Core 投影并 emit core.resync，否则运行中房间的
+    // Core 状态/事件视图保持导入前内容，下一次状态提交还会用旧投影覆盖导入结果。
+    facade.refresh?.()
     return ok({ ok: true })
   } },
   // 桌面契约 archive.delete → {ok:true, files:[...]}
