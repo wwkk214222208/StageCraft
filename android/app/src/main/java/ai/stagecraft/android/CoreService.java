@@ -780,6 +780,7 @@ public final class CoreService extends Service {
 
     private CoreNativeBridge bridge;
     private AndroidCompositionOperations coreOperations;
+    private V2ComponentSecrets v2Secrets;
 
     /** 从 APK 资产加载 api-route-registry.json（构建期产物；加载失败返回 null，不阻断数据服务）。 */
     private RouteRegistry loadRouteRegistry() {
@@ -811,6 +812,11 @@ public final class CoreService extends Service {
         // caller 组件 manifest 已声明 host.storage 能力后，才读写其命名空间（fail closed）。
         built.registerSync("storage.read", input -> new V2ComponentStorage(getFilesDir(), v2ComponentStore).read(input));
         built.registerSync("storage.write", input -> new V2ComponentStorage(getFilesDir(), v2ComponentStore).write(input));
+        v2Secrets = new V2ComponentSecrets(new AndroidSecretStore(this), v2ComponentStore);
+        built.registerSync("v2-secret.get", input -> v2Secrets.get(input));
+        built.registerSync("v2-secret.set", input -> v2Secrets.set(input));
+        built.registerSync("v2-secret.delete", input -> v2Secrets.delete(input));
+        built.registerSync("v2-secret.has", input -> v2Secrets.has(input));
         return built;
     }
 

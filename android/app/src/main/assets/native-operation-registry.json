@@ -61,7 +61,11 @@
     "model.request",
     "model.cancel",
     "storage.read",
-    "storage.write"
+    "storage.write",
+    "v2-secret.get",
+    "v2-secret.set",
+    "v2-secret.delete",
+    "v2-secret.has"
   ],
   "legacyMainCoreException": [
     "asset.read",

@@ -395,7 +395,7 @@
         throw new Error('local core not available (StageCraftLocalCore missing)')
       }
       localCore = candidate
-      candidate.start(function (messageText) {
+      return Promise.resolve(candidate.start(function (messageText) {
         let message
         try { message = JSON.parse(messageText) } catch (error) { return }
         // W6：plugin-report（launch plan 隔离记录）原样转发给宿主，不包 core-event
@@ -407,8 +407,9 @@
         if (envelope && window.CoreHostBridgePort) {
           window.CoreHostBridgePort.send({ type: 'core-event', event: envelope })
         }
+      })).then(function () {
+        log('local core started (roomId=' + (candidate.roomId || '?') + ')')
       })
-      log('local core started (roomId=' + (candidate.roomId || '?') + ')')
     })
   }
 
@@ -432,10 +433,11 @@
 
   /** Provisional v2 browser loader: verify Java has already checked files and
    * integrity, then load ordinary modules before the selected Core. */
-  const HOST_AVAILABLE_CAPABILITIES = ['host.log', 'host.storage']
+  const HOST_AVAILABLE_CAPABILITIES = ['host.log', 'host.storage', 'host.secrets']
   function capabilityForHostOperation(operation) {
     if (operation === 'host.log') return 'host.log'
     if (operation === 'host.storage.read' || operation === 'host.storage.write') return 'host.storage'
+    if (operation === 'host.secrets.get' || operation === 'host.secrets.set' || operation === 'host.secrets.delete' || operation === 'host.secrets.has') return 'host.secrets'
     return null
   }
   function grantedCapabilities(manifest) {
@@ -479,6 +481,16 @@
           let result
           try { result = JSON.parse(raw) } catch (error) { return Promise.reject(new Error('storage result is not JSON')) }
           if (!result || result.ok !== true) return Promise.reject(new Error((result && result.error && result.error.message) || 'storage operation failed'))
+          return Promise.resolve(result)
+        }
+        if (operation === 'host.secrets.get' || operation === 'host.secrets.set' || operation === 'host.secrets.delete' || operation === 'host.secrets.has') {
+          if (!window.CoreNative || typeof window.CoreNative.invokeSync !== 'function') return Promise.reject(new Error('CoreNative secrets port unavailable'))
+          const suffix = operation.slice('host.secrets.'.length)
+          let raw
+          try { raw = window.CoreNative.invokeSync('v2-secret.' + suffix, JSON.stringify({ caller: caller, key: (input || {}).key, value: (input || {}).value })) } catch (error) { return Promise.reject(error instanceof Error ? error : new Error(String(error))) }
+          let result
+          try { result = JSON.parse(raw) } catch (error) { return Promise.reject(new Error('secrets result is not JSON')) }
+          if (!result || result.ok !== true) return Promise.reject(new Error((result && result.error && result.error.message) || 'secret operation failed'))
           return Promise.resolve(result)
         }
         return Promise.reject(new Error('Host operation denied: ' + operation))

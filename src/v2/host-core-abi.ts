@@ -7,6 +7,9 @@ export const HOST_CORE_ABI_VERSION = COMPONENT_HOST_API_VERSION
 export type { HostPortCaller }
 
 export interface HostPort {
+  /** Capabilities negotiated for this Host instance.  Ports remain optional so
+   * older Hosts can continue to expose only log/storage. */
+  readonly capabilities?: readonly string[]
   /**
    * `caller` identifies the calling component so the Host can enforce
    * per-capability authorization. Capability-gated operations are denied
@@ -114,7 +117,7 @@ export class HostCoreSession {
       components: this.#components,
       // The boot-context port is available while the Core boots (diagnostics,
       // persisted-state loads) and after ready; it is denied once failed/shutdown.
-      host: { call: (operation, input, caller) => this.#dispatchHost(operation, input, caller) },
+      host: { capabilities: this.#backingHost.capabilities, call: (operation, input, caller) => this.#dispatchHost(operation, input, caller) },
       ready: signal => this.accept({ type: 'ready', hostApiVersion: signal?.hostApiVersion ?? this.request.hostApiVersion, selectedCore: signal?.selectedCore ?? this.request.selectedCore, planHash: signal?.planHash ?? this.request.planHash }),
       failed: (code, message) => this.accept({ type: 'failed', code, message }),
     }

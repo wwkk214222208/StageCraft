@@ -15,6 +15,7 @@
 import type { ApiRequest, ApiResponse, PortableApiHandler } from './api-handler.ts'
 import { jsonResponse, readJsonBody } from './api-handler.ts'
 import { API_ROUTES } from '../api-route-registry.ts'
+import type { LlmSystemService } from '../sdk/authoring.ts'
 
 /** 组合根 facade 的可用方法签名（与 android-local-core.ts 的 localCore 对齐）。 */
 export interface CoreFacade {
@@ -61,7 +62,11 @@ export interface CoreFacade {
   reorderNpcMemories: (roleId: string, memoryIds: string[]) => void
   supersedeNpcMemory: (memoryId: string, entry: unknown) => void
   getProvider: () => { configured: boolean } & Record<string, unknown>
-  setProvider: (config: { baseUrl: string; apiKey: string; model: string; responseFormat?: string }) => void
+  setProvider: (config: { baseUrl: string; apiKey: string; model: string; responseFormat?: string }) => void | Promise<void>
+  /** Android's authoritative provider management surface. Desktop keeps this
+   * absent and uses its existing ProviderConfigStore compatibility path. */
+  readonly llmSystem?: LlmSystemService
+  readonly llmDisabled?: boolean
   stories: () => unknown[]
   story: (id: string) => Promise<unknown>
   restart: (story: unknown, options?: { mode?: string; autoPublish?: boolean }) => void
@@ -131,7 +136,17 @@ function readProviderMeta(facade: CoreFacade): { providers: unknown[]; defaults:
 }
 
 /** 组装桌面契约的 provider 状态（剥 apiKey → hasApiKey）。 */
-function providerState(facade: CoreFacade): Record<string, unknown> {
+function providerState(facade: CoreFacade): Record<string, unknown> | Promise<Record<string, unknown>> {
+  if (facade.llmSystem) {
+    const legacyMeta = readProviderMeta(facade)
+    return Promise.all(facade.llmSystem.listCredentialProfiles().map(async profile => {
+      const clean: Record<string, unknown> = { ...profile }
+      delete clean.apiKey
+      delete clean.secret
+      clean.hasApiKey = await facade.llmSystem!.hasCredentialSecret(profile.id)
+      return clean
+    })).then(profiles => ({ providers: profiles, defaults: { ...flattenRouteDefaults(facade.llmSystem!.getRouteDefaults()), ...(legacyMeta.defaults.directorThinkingStrength ? { directorThinkingStrength: legacyMeta.defaults.directorThinkingStrength } : {}) } }))
+  }
   const meta = readProviderMeta(facade)
   const providers = (meta.providers as Array<Record<string, unknown>>).map(p => {
     const clean: Record<string, unknown> = { ...p }
@@ -150,6 +165,17 @@ function providerState(facade: CoreFacade): Record<string, unknown> {
       assistantModel: meta.defaults.assistantModel ?? '',
       ...(meta.defaults.directorThinkingStrength ? { directorThinkingStrength: meta.defaults.directorThinkingStrength } : {}),
     },
+  }
+}
+
+function flattenRouteDefaults(defaults: Record<string, any>): Record<string, unknown> {
+  const role = defaults.role ?? {}
+  const director = defaults.director ?? {}
+  const assistant = defaults.assistant ?? {}
+  return {
+    defaultRoleProviderId: role.profileId ?? '', defaultRoleModel: role.model ?? '',
+    directorProviderId: director.profileId ?? '', directorModel: director.model ?? '',
+    assistantProviderId: assistant.profileId ?? '', assistantModel: assistant.model ?? '',
   }
 }
 const stringArray = (body: Record<string, unknown>, key: string): string[] => Array.isArray(body[key]) ? (body[key] as unknown[]).filter((item): item is string => typeof item === 'string') : []
@@ -407,10 +433,19 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   // ── 供应商 ──
   // 桌面契约 {providers: [{id,name,baseUrl,models,selectedModel,hasApiKey,responseFormat}], defaults: {...}}
   // 从 secret local.provider.meta 组装（与旧 shim providerMetaView 同语义，形状对齐桌面 provider-config.ts）
-  { handlerId: 'provider.list', impl: facade => ok(providerState(facade)) },
-  { handlerId: 'provider.save', impl: (facade, body) => {
+  { handlerId: 'provider.list', impl: async facade => facade.llmDisabled ? unsupported('Android LLM 插件已禁用或被隔离，请在插件配置页重新启用。') : ok(await providerState(facade)) },
+  { handlerId: 'provider.save', impl: async (facade, body) => {
+    if (facade.llmDisabled) return unsupported('Android LLM 插件已禁用或被隔离，请在插件配置页重新启用。')
     const config = body.config && typeof body.config === 'object' ? body.config as Record<string, unknown> : body
-    // 读取现有 meta，追加/更新供应商
+    if (facade.llmSystem) {
+      const id = stringOf(config, 'id') || stringOf(config, 'name') || `provider-${facade.llmSystem.listCredentialProfiles().length}`
+      const model = stringOf(config, 'selectedModel') || stringOf(config, 'model')
+      await facade.llmSystem.upsertCredentialProfile({ id, profileId: id, providerId: stringOf(config, 'providerId') || 'android-openai-compatible', driverId: stringOf(config, 'driverId') || 'android-openai-compatible', name: stringOf(config, 'name') || id, label: stringOf(config, 'label') || stringOf(config, 'name') || id, baseUrl: stringOf(config, 'baseUrl'), models: Array.isArray(config.models) ? config.models.filter((item): item is string => typeof item === 'string') : (model ? [model] : []), selectedModel: model, responseFormat: stringOf(config, 'responseFormat') === 'none' ? 'none' : stringOf(config, 'responseFormat') === 'json_schema' ? 'json_schema' : 'json_object', toolCalling: config.toolCalling !== false })
+      if (typeof config.apiKey === 'string' && config.apiKey) await facade.llmSystem.setCredentialSecret(id, config.apiKey)
+      else if (config.apiKey === '') await facade.llmSystem.setCredentialSecret(id, undefined)
+      return ok(await providerState(facade))
+    }
+    // Legacy desktop/compatibility path: read the existing metadata and append/update.
     const meta = readProviderMeta(facade)
     const providers = Array.isArray(meta.providers) ? meta.providers as Array<Record<string, unknown>> : []
     const id = stringOf(config, 'id') || stringOf(config, 'name') || 'provider-' + providers.length
@@ -429,17 +464,23 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     else providers.push(entry)
     facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers, defaults: meta.defaults ?? {} }) })
     // 激活当前供应商（组合根 setProvider 用 baseUrl/apiKey/model）
-    facade.setProvider({ baseUrl: entry.baseUrl as string, apiKey: stringOf(config, 'apiKey'), model: entry.selectedModel as string, responseFormat: entry.responseFormat as 'json_object' | 'none' | undefined })
-    return ok(providerState(facade))
+    await facade.setProvider({ baseUrl: entry.baseUrl as string, apiKey: stringOf(config, 'apiKey'), model: entry.selectedModel as string, responseFormat: entry.responseFormat as 'json_object' | 'none' | undefined })
+    return ok(await providerState(facade))
   } },
-  { handlerId: 'provider.delete', impl: (facade, body) => {
+  { handlerId: 'provider.delete', impl: async (facade, body) => {
+    if (facade.llmDisabled) return unsupported('Android LLM 插件已禁用或被隔离，请在插件配置页重新启用。')
+    const id = stringOf(body, 'id') || stringOf(body, 'providerId')
+    if (facade.llmSystem) {
+      if (!facade.llmSystem.getCredentialProfile(id)) return err('供应商不存在')
+      await facade.llmSystem.deleteCredentialProfile(id)
+      return ok(await providerState(facade))
+    }
     const meta = readProviderMeta(facade)
     const providers = Array.isArray(meta.providers) ? meta.providers as Array<Record<string, unknown>> : []
-    const id = stringOf(body, 'id') || stringOf(body, 'providerId')
     const next = providers.filter(p => p.id !== id)
     if (next.length === providers.length) return err('供应商不存在')
     facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: next, defaults: meta.defaults ?? {} }) })
-    return ok(providerState(facade))
+    return ok(await providerState(facade))
   } },
 
   // ── 故事 ──
@@ -546,7 +587,14 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
   } },
 
   // ── 补挂：供应商扩展（经原生端口 secret）──
-  { handlerId: 'provider.default-role', impl: (facade, body) => {
+  { handlerId: 'provider.default-role', impl: async (facade, body) => {
+    if (facade.llmDisabled) return unsupported('Android LLM 插件已禁用或被隔离，请在插件配置页重新启用。')
+    const serviceId = stringOf(body, 'id') || stringOf(body, 'providerId')
+    if (facade.llmSystem) {
+      if (!facade.llmSystem.getCredentialProfile(serviceId)) return err('Provider 配置不存在。')
+      await facade.llmSystem.setRouteDefault('role', { profileId: serviceId, model: stringOf(body, 'model') || undefined })
+      return ok(await providerState(facade))
+    }
     const meta = readProviderMeta(facade)
     const id = stringOf(body, 'id') || stringOf(body, 'providerId')
     // 桌面契约：id 必须存在（provider-config.setDefaultRole 对不存在 id 抛 400）
@@ -554,9 +602,16 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     if (!(meta.providers as Array<Record<string, unknown>>).some(p => p.id === id)) return err('Provider 配置不存在。')
     const defaults = { ...(meta.defaults ?? {}), defaultRoleProviderId: id, defaultRoleModel: stringOf(body, 'model') || meta.defaults.defaultRoleModel || '' }
     facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: meta.providers, defaults }) })
-    return ok(providerState(facade))
+    return ok(await providerState(facade))
   } },
-  { handlerId: 'provider.director', impl: (facade, body) => {
+  { handlerId: 'provider.director', impl: async (facade, body) => {
+    if (facade.llmDisabled) return unsupported('Android LLM 插件已禁用或被隔离，请在插件配置页重新启用。')
+    const serviceId = stringOf(body, 'id') || stringOf(body, 'providerId')
+    if (facade.llmSystem) {
+      if (!facade.llmSystem.getCredentialProfile(serviceId)) return err('Provider 配置不存在。')
+      await facade.llmSystem.setRouteDefault('director', { profileId: serviceId, model: stringOf(body, 'model') || undefined })
+      return ok(await providerState(facade))
+    }
     const meta = readProviderMeta(facade)
     const id = stringOf(body, 'id') || stringOf(body, 'providerId')
     // 桌面契约：id 必须存在（provider-config.setDirector 对不存在 id 抛 400）
@@ -564,9 +619,10 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     if (!(meta.providers as Array<Record<string, unknown>>).some(p => p.id === id)) return err('Provider 配置不存在。')
     const defaults = { ...(meta.defaults ?? {}), directorProviderId: id, directorModel: stringOf(body, 'model') || meta.defaults.directorModel || '' }
     facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: meta.providers, defaults }) })
-    return ok(providerState(facade))
+    return ok(await providerState(facade))
   } },
-  { handlerId: 'provider.director-thinking', impl: (facade, body) => {
+  { handlerId: 'provider.director-thinking', impl: async (facade, body) => {
+    if (facade.llmDisabled) return unsupported('Android LLM 插件已禁用或被隔离，请在插件配置页重新启用。')
     const meta = readProviderMeta(facade)
     // 桌面契约：thinking 四值白名单（provider-config.setDirectorThinking 对非法值抛 400）
     const thinking = stringOf(body, 'thinking') || stringOf(body, 'strength')
@@ -575,7 +631,8 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     const defaults = { ...(meta.defaults ?? {}), directorThinkingStrength: value }
     facade.invokeSync('secret.set', { key: 'local.provider.meta', value: JSON.stringify({ providers: meta.providers, defaults }) })
     // 响应 defaults 用扁平形状（providerState 同构），避免透传旧 shim 嵌套 role/director 格式
-    return ok({ ok: true, defaults: providerState(facade).defaults })
+    const state = await providerState(facade)
+    return ok({ ok: true, defaults: state.defaults })
   } },
 
   // ── 补挂：计费/用量（经原生端口 secret 持久化；billing 为本地模拟）──
@@ -604,9 +661,13 @@ export const CORE_BUSINESS_HANDLERS: readonly CoreBusinessHandlerEntry[] = [
     facade.invokeSync('secret.set', { key: 'local.billing.state', value: JSON.stringify(emptyStats) })
     return ok(emptyStats)
   } },
-  { handlerId: 'billing.usage', impl: facade => {
+  { handlerId: 'billing.usage', impl: async facade => {
     const raw = facade.invokeSync('secret.get', { key: 'local.billing.state' }) as { found?: boolean; value?: string } | null
     const state = raw?.found && raw.value ? JSON.parse(raw.value) as Record<string, unknown> : {}
+    if (facade.llmSystem) {
+      const aggregate = await facade.llmSystem.aggregateUsage()
+      return ok({ route: 'LLM System', model: 'aggregate', requests: aggregate.requests, promptTokens: aggregate.inputTokens, completionTokens: aggregate.outputTokens, cachedTokens: aggregate.cachedTokens ?? 0, totalDurationMs: aggregate.durationMs ?? 0, avgDurationMs: aggregate.requests ? (aggregate.durationMs ?? 0) / aggregate.requests : 0, mode: 'llm-system', billing: { ...state, totalCost: aggregate.cost ?? state.totalCost ?? 0, currency: aggregate.currency ?? state.currency } })
+    }
     return ok({ route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake', billing: state })
   } },
 

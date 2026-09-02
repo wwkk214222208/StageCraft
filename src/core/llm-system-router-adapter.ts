@@ -94,7 +94,7 @@ export class LlmSystemRouterAdapter implements CoreLlmRouterPlugin {
   }
 
   async cancel(requestId: string): Promise<void> {
-    if (!requestId || !this.active.has(requestId)) return
+    if (!requestId) return
     await this.service.cancel(requestId)
   }
 

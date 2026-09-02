@@ -25,6 +25,8 @@ export interface OfficialLlmState {
   profiles: readonly LlmProviderProfile[]
   defaults: LlmRouteDefaults
   usage: readonly LlmUsageRecord[]
+  /** Set only after a legacy provider import has been persisted. */
+  readonly migrationComplete?: boolean
 }
 
 export interface OfficialLlmSystemOptions {
@@ -138,7 +140,9 @@ export async function createOfficialLlmSystemService(context: LlmSystemStartCont
   let stopped = false
   const stateKey = options.stateKey ?? 'official-llm'
   const state = context.state
-  if (options.providerStore) {
+  const restoredState = state ? await state.read<OfficialLlmState>(stateKey).catch(() => undefined) : undefined
+  const shouldImportLegacy = Boolean(options.providerStore && (!restoredState || (!restoredState.migrationComplete && !(restoredState.profiles?.length))))
+  if (shouldImportLegacy && options.providerStore) {
     const stored = options.providerStore.exportPrivate()
     for (const profile of stored.providers) {
       const legacyProviderId = profile.providerId ? String(profile.providerId) : profile.driverId ? String(profile.driverId) : String(profile.id)
@@ -152,7 +156,7 @@ export async function createOfficialLlmSystemService(context: LlmSystemStartCont
     routeDefaults = defaults(stored.defaults)
   }
   if (state) {
-    const restored = await state.read<OfficialLlmState>(stateKey).catch(() => undefined)
+    const restored = restoredState
     for (const profile of restored?.profiles ?? []) profiles.set(profile.id, copyProfile(profile))
     routeDefaults = restored?.defaults ? defaults(restored.defaults) : routeDefaults
     for (const record of restored?.usage ?? []) usage.push(Object.freeze({ ...record }))
@@ -164,7 +168,7 @@ export async function createOfficialLlmSystemService(context: LlmSystemStartCont
   for (const profile of options.profiles ?? []) profiles.set(profile.id, copyProfile(profile))
   const persist = async (): Promise<void> => {
     if (!state) return
-    await state.write(stateKey, { profiles: [...profiles.values()].map(profile => ({ ...profile, models: [...profile.models] })), defaults: routeDefaults, usage: [...usage] })
+    await state.write(stateKey, { profiles: [...profiles.values()].map(profile => ({ ...profile, models: [...profile.models] })), defaults: routeDefaults, usage: [...usage], ...(options.providerStore ? { migrationComplete: true } : {}) })
   }
   if (!context.secrets && state && memorySecrets.size) await state.write(`${stateKey}:secrets`, Object.fromEntries(memorySecrets))
   if (options.providerStore && state) await persist()

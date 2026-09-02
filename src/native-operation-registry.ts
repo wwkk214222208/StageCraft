@@ -59,6 +59,10 @@ const coreNativeOperations: NativeOperation[] = [
   // v2 host.storage（逐能力授权）：仅 Core WebView 可达，不是 legacy 迁移期例外。
   { name: 'storage.read', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'core', note: 'v2 每组件命名空间 KV（host.storage 能力）；caller 必须携带组件身份并已声明 host.storage 能力。' },
   { name: 'storage.write', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'core', note: '同 storage.read；原子替换写。' },
+  { name: 'v2-secret.get', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'core', note: 'v2 host.secrets；Keystore-backed, namespaced by caller component.' },
+  { name: 'v2-secret.set', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'core', note: 'v2 host.secrets；secret never enters ordinary component storage.' },
+  { name: 'v2-secret.delete', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'core' },
+  { name: 'v2-secret.has', owner: 'core-native', surface: 'generic-dispatch', legacyExposure: 'core' },
 ]
 
 const mainHostOperations: NativeOperation[] = [

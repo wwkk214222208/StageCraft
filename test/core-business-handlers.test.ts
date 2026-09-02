@@ -127,6 +127,31 @@ test('W6：挂载覆盖——已实现 handlerId 有实现，未挂载返回稳�
   assert.equal(coverage.length, API_ROUTES.filter(r => r.owner === 'core' && !r.pattern.startsWith('/api/core/')).length)
 })
 
+test('Android LLM service-backed provider CRUD and route defaults are authoritative', async () => {
+  const facade = makeFacade() as CoreFacade & { calls: string[]; llmSystem: any }
+  const profiles = new Map<string, any>(); const defaults: any = {}; const secrets = new Set<string>()
+  facade.llmSystem = {
+    listCredentialProfiles: () => [...profiles.values()], getCredentialProfile: (id: string) => profiles.get(id),
+    upsertCredentialProfile: async (profile: any) => profiles.set(profile.id, profile), deleteCredentialProfile: async (id: string) => { profiles.delete(id); secrets.delete(id) },
+    setCredentialSecret: async (id: string, value?: string) => value ? secrets.add(id) : secrets.delete(id), hasCredentialSecret: (id: string) => secrets.has(id),
+    getRouteDefaults: () => ({ ...defaults }), setRouteDefault: async (purpose: string, value: unknown) => { defaults[purpose] = value },
+    route: async (input: any) => ({ providerId: 'android-openai-compatible', driverId: 'android-openai-compatible', profileId: input.profileId ?? defaults[input.purpose]?.profileId, model: input.model ?? defaults[input.purpose]?.model }),
+  }
+  const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)
+  await handler.handle(apiRequest('POST', '/api/providers/save', { config: { id: 'p1', name: 'One', baseUrl: 'https://one', model: 'm1', apiKey: 'secret' } }))
+  await handler.handle(apiRequest('POST', '/api/providers/save', { config: { id: 'p2', name: 'Two', baseUrl: 'https://two', model: 'm2', apiKey: 'secret2' } }))
+  assert.deepEqual((await handler.handle(apiRequest('GET', '/api/providers'))).status, 200)
+  await handler.handle(apiRequest('POST', '/api/providers/default-role', { id: 'p1', model: 'm1' }))
+  await handler.handle(apiRequest('POST', '/api/providers/director', { id: 'p2', model: 'm2' }))
+  assert.equal(defaults.role.profileId, 'p1'); assert.equal(defaults.director.profileId, 'p2')
+  assert.equal((await facade.llmSystem.route({ purpose: 'director' })).profileId, 'p2')
+  await handler.handle(apiRequest('POST', '/api/providers/delete', { id: 'p1' }))
+  assert.equal(profiles.has('p1'), false); assert.equal(secrets.has('p1'), false)
+  facade.llmDisabled = true
+  const disabled = await handler.handle(apiRequest('POST', '/api/providers/save', { config: { id: 'p3', name: 'Three', baseUrl: 'https://three', model: 'm3', apiKey: 'secret3' } }))
+  assert.equal(disabled.status, 503); assert.equal(profiles.has('p3'), false)
+})
+
 test('W6：room.snapshot 经分发返回组合根快照', async () => {
   const facade = makeFacade()
   const handler = new CoreBusinessPortableHandler(facade, CORE_BUSINESS_ROUTES)

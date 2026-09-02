@@ -130,6 +130,7 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
   const session = new HostCoreSession(effectivePlan, createHostPort({
     diagnostics,
     grants: grantedCapabilities,
+    capabilities: availableCapabilities,
     storage: options.storage ?? createNodeFileComponentStorage(join(options.userDataRoot, 'data', 'v2-storage')),
   }), loadedComponents)
   try {
@@ -247,13 +248,14 @@ interface HostPortOptions {
   diagnostics: string[]
   grants: ReadonlyMap<string, ReadonlySet<string>>
   storage: ComponentStoragePort
+  capabilities: readonly string[]
 }
 
 /** Per-capability authorization: every operation maps to a capability that the
  * identified caller must have been granted during negotiation; unknown
  * operations, unidentified callers and ungranted capabilities all fail closed. */
-function createHostPort(options: HostPortOptions): { call(operation: string, input: unknown, caller?: HostPortCaller): Promise<unknown> } {
-  return { async call(operation, input, caller) {
+function createHostPort(options: HostPortOptions): { capabilities: readonly string[]; call(operation: string, input: unknown, caller?: HostPortCaller): Promise<unknown> } {
+  return { capabilities: Object.freeze([...options.capabilities]), async call(operation, input, caller) {
     const capability = capabilityForHostOperation(operation)
     if (!capability) throw new Error(`Host operation denied: ${operation}`)
     if (!caller || typeof caller.pluginId !== 'string' || !caller.pluginId) throw new Error(`Host operation ${operation} requires a caller identity`)

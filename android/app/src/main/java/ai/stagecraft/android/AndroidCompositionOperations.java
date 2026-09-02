@@ -262,6 +262,19 @@ public final class AndroidCompositionOperations implements AndroidNativeOperatio
         org.json.JSONArray args = JsonSafety.requiredArray(input, "args");
         if (args.toString().length() > 4 * 1024 * 1024) throw new IllegalArgumentException("Repository arguments are too large.");
         if (args.length() == 0) throw new IllegalArgumentException("Repository operation requires arguments.");
+        // LLM System state is a separate repository collection, not part of
+        // the Core event snapshot. Provider secrets never use this path.
+        if ("llmStateRead".equals(method) || "llmStateWrite".equals(method) || "llmStateDelete".equals(method)) {
+            String key = JsonSafety.stringArg(args, 0, 256);
+            if (!key.matches("[A-Za-z][A-Za-z0-9._:-]{0,255}")) throw new IllegalArgumentException("Invalid LLM state key.");
+            String collection = "llm-system-state";
+            if ("llmStateRead".equals(method)) {
+                JSONObject value = repository.getRecord(collection, key);
+                return value == null ? new JSONObject().put("value", JSONObject.NULL) : new JSONObject().put("value", value);
+            }
+            if ("llmStateWrite".equals(method)) { repository.putRecord(collection, key, JsonSafety.objectArg(args, 1)); return new JSONObject().put("ok", true); }
+            repository.deleteRecord(collection, key); return new JSONObject().put("ok", true);
+        }
         if ("saveDecision".equals(method)) {
             String turnId = JsonSafety.stringArg(args, 0, 256);
             JSONObject decision = JsonSafety.objectArg(args, 1);

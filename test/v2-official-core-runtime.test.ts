@@ -36,6 +36,24 @@ test('official runtime boots through HostCoreSession and exposes generic operati
   await runtime.shutdown!(); assert.equal(runtime.status, 'stopped'); assert.deepEqual(events, ['llm:start', 'request:assembled:hi', 'ui:dispose', 'llm:stop', 'core:stop'])
 })
 
+test('official runtime only injects host.secrets when the LLM manifest declares the granted capability', async () => {
+  const core = defineCore({ id: 'example.secret-core', version: '1.0.0', title: 'Core', start(ctx) { ctx.ready() } })
+  const seen: boolean[] = []
+  const llm = defineLlmSystem({ id: 'example.secret-llm', version: '1.0.0', title: 'LLM', start(context) { seen.push(Boolean(context.secrets)); return createDefaultLlmSystemService(context) } })
+  const componentWithCapability = component(llm, 'llm-system'); componentWithCapability.manifest.capabilities = { required: ['host.secrets'] }
+  const hostValues = new Map<string, string>()
+  const host = { capabilities: ['host.log', 'host.storage', 'host.secrets'], call: async (operation: string, input: any) => { if (operation === 'host.secrets.set') hostValues.set(input.key, input.value); if (operation === 'host.secrets.get') return { value: hostValues.get(input.key) }; if (operation === 'host.secrets.has') return { found: hostValues.has(input.key) }; return { value: undefined } } }
+  const runtime = createOfficialCoreRuntime(component(core, 'core'))
+  await new HostCoreSession({ ...plan(), core: sel('example.secret-core'), plugins: [sel('example.secret-llm')] } as any, host as any, [componentWithCapability]).boot(runtime)
+  assert.deepEqual(seen, [true]); await runtime.shutdown!()
+
+  const noCapabilitySeen: boolean[] = []
+  const noCapabilityLlm = defineLlmSystem({ id: 'example.no-secret-llm', version: '1.0.0', title: 'LLM', start(context) { noCapabilitySeen.push(Boolean(context.secrets)); return createDefaultLlmSystemService(context) } })
+  const noCapability = component(noCapabilityLlm, 'llm-system'); const noSecretRuntime = createOfficialCoreRuntime(component(core, 'core'))
+  await new HostCoreSession({ ...plan(), core: sel('example.secret-core'), plugins: [sel('example.no-secret-llm')] } as any, host as any, [noCapability]).boot(noSecretRuntime)
+  assert.deepEqual(noCapabilitySeen, [false]); await noSecretRuntime.shutdown!()
+})
+
 test('official runtime quarantines missing, cyclic and identity-invalid plugins instead of failing boot', async () => {
   const core = defineCore({ id: 'example.core2', version: '1.0.0', title: 'Core', start(ctx) { ctx.ready() } })
   const base = component(core, 'core')

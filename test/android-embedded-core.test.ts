@@ -25,7 +25,12 @@ test('embedded Core refresh projects native repository writes into the current v
     const input = JSON.parse(inputJson)
     if (operation === 'core-state.restore') return JSON.stringify({ revision: 0, state: {}, events: [], workflows: [] })
     if (operation === 'stagecraft.room.get') return JSON.stringify(room)
-    if (operation === 'stagecraft.repository') { room = { ...room, title: 'After native write', revision: 1 }; return JSON.stringify(null) }
+    if (operation === 'stagecraft.repository') {
+      if (input.method === 'llmStateRead') return JSON.stringify({ value: null })
+      if (input.method === 'llmStateWrite' || input.method === 'llmStateDelete') return JSON.stringify({ ok: true })
+      if (input.method === 'setContribution') { room = { ...room, title: 'After native write', revision: 1 }; return JSON.stringify(null) }
+      return JSON.stringify({})
+    }
     return JSON.stringify({})
   } } }
   installAndroidCore(globalObject)

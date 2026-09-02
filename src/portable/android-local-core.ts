@@ -118,7 +118,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   const invokeAsync = (operation: string, input: Json, hooks?: { onStreamPayload?: (payload: string) => void; signal?: AbortSignal }): Promise<unknown> => {
     return new Promise((resolve, reject) => {
       const callbackId = `local-${Date.now().toString(36)}-${++asyncSequence}`
-      const abort = () => { if (pendingAsync.delete(callbackId)) { cleanup(); reject(new Error('Aborted')) } }
+      const abort = () => { if (pendingAsync.delete(callbackId)) { cleanup(); try { if (operation === 'model.request' && typeof input.requestId === 'string') invokeSync('model.cancel', { requestId: input.requestId }) } catch {} ; reject(new Error('Aborted')) } }
       const cleanup = () => hooks?.signal?.removeEventListener('abort', abort)
       pendingAsync.set(callbackId, { resolve, reject, onStreamPayload: hooks?.onStreamPayload, cleanup })
       if (hooks?.signal) { if (hooks.signal.aborted) { abort(); return }; hooks.signal.addEventListener('abort', abort, { once: true }) }
@@ -191,9 +191,21 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     }
     return undefined
   }
-  const writeProvider = (config: LocalProviderConfig): void => {
+  const writeProvider = async (config: LocalProviderConfig): Promise<void> => {
+    // Preserve the legacy encrypted snapshot for one release so older UI
+    // clients can still inspect it; the migration marker prevents it from
+    // becoming authoritative again after the LLM state is established.
     invokeSync('secret.set', { key: PROVIDER_SECRET_KEY, value: JSON.stringify(config) })
+    pendingProvider = config
+    if (!composition) return
+    // Legacy API compatibility is service-backed; the old secret snapshot is
+    // read only for one-time migration and is never the runtime authority.
+    const current = requireComposition().llmSystem
+    const profile = { id: 'default', profileId: 'default', providerId: 'android-openai-compatible', driverId: 'android-openai-compatible', name: 'Default', label: 'Default', baseUrl: config.baseUrl, models: [config.model], selectedModel: config.model, responseFormat: config.responseFormat, toolCalling: config.toolCalling }
+    await Promise.resolve(current.upsertCredentialProfile(profile))
+    await Promise.resolve(current.setCredentialSecret('default', config.apiKey))
   }
+  let pendingProvider: LocalProviderConfig | undefined
 
   const endpointFor = (base: string): string => {
     const normalized = base.trim().replace(/\/+$/, '')
@@ -301,9 +313,12 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   }
 
   const operations = {
-    invoke<T = unknown>(operation: string, input: Json = {}, callbacks?: { onThinking?: (text: string) => void }): T | Promise<T> {
+    invoke<T = unknown>(operation: string, input: Json = {}, callbacks?: { onThinking?: (text: string) => void; onStreamPayload?: (payload: string) => void; signal?: AbortSignal }): T | Promise<T> {
       // 思维链增量必须透传给 modelRequest：否则累加器的 onThinking 为空，
       // 流式 reasoning 无处可去，只能等最终结果一次性出现（安卓端"无法即时显示"的根因）。
+      // Official Android LLM drivers use the native transport envelope. Keep
+      // the legacy ModelRequest shape only for compatibility callers.
+      if (operation === 'model.request' && typeof input.endpoint === 'string' && input.body && typeof input.body === 'object') return invokeAsync(operation, input, callbacks) as Promise<T>
       if (operation === 'model.request') return modelRequest(input as unknown as ModelRequest, callbacks) as Promise<T>
       if (operation === 'model.cancel') { activeModelAborts.cancel(typeof input.requestId === 'string' ? input.requestId : ''); return Promise.resolve(invokeSync(operation, input) as T) }
       if (SYNC_OPERATIONS.has(operation)) return Promise.resolve(invokeSync(operation, input) as T)
@@ -317,7 +332,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   // 双端同一套生成内核：与桌面 createRealWorkers 完全同源（gameplay 提示词渲染 + 预设管线），
   // 仅模型 IO 不同——requestModel 走 Android 原生传输（Java 持有凭据与网络）。
   const workers: WorkerSet = createRealWorkers(undefined as unknown as ModelGateway, () => undefined as unknown as ModelGateway, {
-    // 与桌面端同构：模型请求经 Core LLM 路由（NativeCoreLlmRouter）下发，由它发布
+    directorThinkingStrength: (() => { const value = readProviderMeta().defaults.directorThinkingStrength; return ['off', 'brief', 'standard', 'deep'].includes(String(value)) ? value as ThinkingStrength : undefined })(),
+    // 与桌面端同构：模型请求经 Core LLM 路由适配器下发，由它发布
     // model.started / model.thinking.delta，服务层据此把思维链逐段推给 UI。
     // 此前这里直接调 modelRequest，等于绕过 Core 事件总线——思维链只能随最终结果
     // 一次性出现，正是"安卓端无法即时显示流式思维链"的根因。
@@ -331,14 +347,15 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   let composition: AndroidComposition | undefined
   let coreListenerInstalled = false
   const emit = (message: unknown): void => sink?.(JSON.stringify(message))
-  const start = (nextSink: (message: string) => void): void => {
+  const start = (nextSink: (message: string) => void): Promise<void> => {
     sink = nextSink
-    composition ??= createAndroidComposition(operations, { roomId: LOCAL_ROOM_ID, workers, onMessage: message => emit(message) })
+    composition ??= createAndroidComposition(operations, { roomId: LOCAL_ROOM_ID, workers, onMessage: message => emit(message), llmEnabled, providerStore: { exportPrivate: readProviderMeta } })
     if (!coreListenerInstalled) {
       coreListenerInstalled = true
       composition.core.subscribe((event: CoreEvent) => emit({ type: 'core.event', event }))
     }
-    composition.start()
+    if (pendingProvider) void writeProvider(pendingProvider).catch(error => emit({ type: 'provider.error', message: error instanceof Error ? error.message : String(error) }))
+    return composition.start()
   }
   const requireComposition = (): AndroidComposition => {
     if (!composition) throw new Error('本地核心未启动。')
@@ -353,15 +370,16 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     cancel: (requestId?: string): Promise<void> => requireComposition().cancel(requestId),
     refresh: (): void => requireComposition().refresh(),
     getProvider: (): { configured: boolean } & Partial<LocalProviderConfig> => {
-      // 无请求上下文时按角色默认语义解析（与既有 UI 展示一致）
+      // Compatibility response is deliberately redacted and backed by the
+      // in-memory migration view; request routing uses the official service.
       const config = readProvider({ route: { role: 'default' } })
       return config ? { configured: true, baseUrl: config.baseUrl, model: config.model } : { configured: false }
     },
-    setProvider: (config: LocalProviderConfig): void => {
+    setProvider: async (config: LocalProviderConfig): Promise<void> => {
       if (!config || typeof config.baseUrl !== 'string' || typeof config.apiKey !== 'string' || typeof config.model !== 'string' || !config.baseUrl.trim() || !config.apiKey.trim() || !config.model.trim()) {
         throw new Error('供应商配置必须是 { baseUrl, apiKey, model } 且不能为空。')
       }
-      writeProvider({ baseUrl: config.baseUrl.trim(), apiKey: config.apiKey.trim(), model: config.model.trim(), responseFormat: config.responseFormat === 'none' ? 'none' : 'json_object' })
+      await writeProvider({ baseUrl: config.baseUrl.trim(), apiKey: config.apiKey.trim(), model: config.model.trim(), responseFormat: config.responseFormat === 'none' ? 'none' : 'json_object' })
       emit({ type: 'provider.changed' })
     },
     story: (id: string): Promise<StoryPackage> => Promise.resolve(invokeSync('story.read', { id })).then(value => JSON.parse(String((value as { value?: string }).value ?? '')) as StoryPackage),
@@ -565,6 +583,10 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     }
     pendingPortableCancels.delete(requestId)
     controller.abort()
+    // The abort listener also asks the composition root to cancel, but that
+    // path is asynchronous.  Forward the transport id immediately as well so
+    // a native driver can stop an in-flight request before the next chunk.
+    try { invokeSync('model.cancel', { requestId }) } catch { /* best effort */ }
     // 组合根模型请求同步取消（abort 监听内已按路由做 service cancel；此处兜底 transportId）
     try {
       void requireComposition().core.cancel(requestId).catch(() => {})
@@ -576,6 +598,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
   // 身份（manifestHash），隔离失败记录；隔离结果经消息流（connection 消息）回报主进程，
   // 由 PluginManager 持久化。运行期不热替换（改配置 → 主进程重启 Core）。
   let appliedPlanHash = ''
+  let llmEnabled = true
   const applyLaunchPlan = (planJson: string): void => {
     try {
       const plan = JSON.parse(planJson) as { protocolVersion?: string; pluginSetHash?: string; plugins?: Array<{ id: string; version: string; manifestHash: string; enabled: boolean }> }
@@ -584,6 +607,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
         return
       }
       const quarantine: QuarantineRecord[] = []
+      const llmSelection = (plan.plugins ?? []).find(plugin => plugin.id === 'stagecraft.llm.android')
+      llmEnabled = Boolean(llmSelection?.enabled)
       for (const plugin of plan.plugins ?? []) {
         if (!plugin.enabled) continue
         // 内置插件候选集的 manifest 校验（深度校验唯一实现；此处只核对身份与清单形状）
@@ -603,6 +628,12 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
         }
       }
       appliedPlanHash = plan.pluginSetHash ?? ''
+      if (!llmEnabled || quarantine.some(record => record.pluginId === 'stagecraft.llm.android')) {
+        llmEnabled = false
+        // Do not leave an already-created router/service reachable after a
+        // plan disables or quarantines the Android LLM plugin.
+        void composition?.disableLlm().catch(error => emit({ type: 'plugin-report', ok: false, error: error instanceof Error ? error.message : String(error) }))
+      }
       emit({ type: 'plugin-report', ok: true, pluginSetHash: appliedPlanHash, quarantine })
     } catch (error) {
       emit({ type: 'plugin-report', ok: false, error: error instanceof Error ? error.message : String(error) })
@@ -614,6 +645,8 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     bridgeVersion: ANDROID_CORE_BRIDGE_VERSION,
     protocolVersion: CORE_PROTOCOL_VERSION,
     roomId: LOCAL_ROOM_ID,
+    get llmSystem() { return requireComposition().llmSystem },
+    get llmDisabled() { return !llmEnabled },
     /** 原生端口同步调用（story/archive/preset/secret/billing；CoreBusinessHandler 用）。 */
     invokeSync: (operation: string, input: Json = {}): unknown => invokeSync(operation, input),
     start,

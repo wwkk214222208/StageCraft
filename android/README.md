@@ -11,8 +11,9 @@ The embedded path is deliberately limited to the shared, platform-neutral Core s
 ## Android ports
 
 - `AndroidSqliteRepository` provides transactional records, Core snapshots, assets, and recovery metadata in `stagecraft.sqlite`.
-- `AndroidSecretStore` encrypts model provider secrets with an Android Keystore AES-GCM key. Secrets never enter WebView storage, CoreView, URLs, or logs.
+- `AndroidSecretStore` encrypts model provider secrets with an Android Keystore AES-GCM key. Secrets never enter WebView storage, CoreView, URLs, ordinary Core snapshots, or logs. v2 `host.secrets` adds per-component namespacing over this store.
 - `AndroidModelTransport` sends model requests and emits bounded SSE deltas; cancellation closes active connections.
+- The embedded Core routes through the replaceable official LLM System and a native OpenAI-compatible driver. v2 `host.secrets` uses Keystore-backed, per-component namespaces; secrets do not enter ordinary Core state.
 - `StageCraftArchive` imports/exports only bounded `stagecraft.json` ZIP archives and rejects unsafe archive content by requiring the canonical entry.
 - PNG card bytes are bounded and signature-checked before any import. JSON card parsing remains a Core/compatibility concern; Android only transports selected data.
 - Foreground/background state is forwarded to the local or remote human plugin. Core snapshots are persisted by the repository, so force-close recovery is based on durable state rather than WebView memory. Client disconnects cancel request-scoped model work; long generation in a backgrounded app remains subject to Android process scheduling and is not promised as a foreground-service workload.
@@ -57,6 +58,7 @@ The WebView loads only `https://appassets.androidplatform.net/` resources interc
 
 - `local.html` = `public/index.html`（`__MODE_FLAG__=true` 关闭 DSH 依赖组件）+ 注入 `embedded-core.js`（本地组合根）与 `local-runtime-web-entry.js`（本地运行时 Web 入口），均早于 `app.js` 执行。
 - `src/portable/android-local-core.ts`（esbuild 打包为 `embedded-core.js`）：在页面内运行共享 `CoreRuntimeSkeleton` + chat/director/management 服务（`android-composition.ts`），并以**与桌面同一个 `createRealWorkers`**（gameplay 提示词渲染 + 预设管线；提示词 IO 由 `PromptStorage` 注入：构建期内联 gameplay + SQLite 预设）驱动生成；凭据只存 `AndroidSecretStore`，网络由 `AndroidModelTransport`（OpenAI 兼容 SSE 解析，含 `reasoning_content` 思考增量）在 Java 侧发起。
+- `local-runtime-web-entry.js`：本地运行时的人机入口。它桥接 `fetch`/`EventSource` 与本地 Core，并复用 PC 端 HTTP 契约及 **Core 命令协议**（`{roomId, scope, action}`）；它不拥有剧本、存档、设置、角色或回合业务规则。房间快照经 `/api/events` 推送，思考增量经 `/api/thinking-events` 推送。仅 DSH 助手与远程配对等真正依赖外部服务的能力允许不在本地运行时提供。
 - `local-runtime-web-entry.js`：本地运行时的人机入口。它桥接 `fetch`/`EventSource` 与本地 Core，并复用 PC 端 HTTP 契约及 **Core 命令协议**（`{roomId, scope, action}`）；它不拥有剧本、存档、设置、角色或回合业务规则。房间快照经 `/api/events` 推送，思考增量经 `/api/thinking-events` 推送。仅 DSH 助手与远程配对等真正依赖外部服务的能力允许不在本地运行时提供。
 - 原生异步桥：`NativeBridge.invokeAsync`（operation + callbackId）承载 `model.request` / `story.read`。
 - 模型供应商：应用内「连接 → 管理供应商」新建（接口地址、API Key、模型名），写入 `local.provider.default`（Keystore 加密 secret）；模型名单本地不可自动发现，需手动填写（如 `deepseek-chat`）。

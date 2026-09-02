@@ -7,10 +7,10 @@
  * risk of sharing this host with untrusted content. The
  * reference implementation is intentionally simple (one JSON file per area,
  * atomic replace). It is NOT a secret store: material persisted here is
- * plaintext on desktop, matching the v1 `providers.json` trust level. The
- * `secret.*` native capability is available, but the official v2 LLM reference
- * currently persists its secrets here through `host.storage`; users own the
- * risk of exposing this shared WebView to third-party content.
+ * plaintext on desktop, matching the v1 `providers.json` trust level. Desktop
+ * intentionally does not advertise or implement `host.secrets`; Android
+ * supplies that optional port with Keystore backing. The official LLM must
+ * only use `host.storage` here for non-secret configuration.
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -102,11 +102,15 @@ export function createNodeFileComponentStorage(root: string, options: NodeFileCo
 }
 
 /** Capability names govern which host operations a component may call. */
+/** Capabilities supplied by the reference desktop host. Secret storage is a
+ * platform-specific optional port (Android Keystore currently); it is not
+ * advertised by this plaintext desktop storage implementation. */
 export const HOST_CAPABILITIES = ['host.log', 'host.storage'] as const
 
 /** Operation namespace → capability. Unknown operations have no capability and are denied. */
 export function capabilityForHostOperation(operation: string): string | undefined {
   if (operation === 'host.log') return 'host.log'
   if (operation.startsWith('host.storage.')) return 'host.storage'
+  if (operation.startsWith('host.secrets.')) return 'host.secrets'
   return undefined
 }

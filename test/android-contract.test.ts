@@ -115,6 +115,21 @@ test('Android credentials stay native, encrypted, and out of URLs or Javascript'
   assert.match(bridge, /if \(!closed\) deliverAsync\(callbackId, result\.toString\(\)\)/)
 })
 
+test('Android v2 host.secrets is capability-gated, namespaced, and Keystore-backed', () => {
+  const bridge = read('app', 'src', 'main', 'assets', 'web', 'core-host-bridge.js')
+  const service = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'CoreService.java')
+  const secrets = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'V2ComponentSecrets.java')
+  const planStore = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'V2PlanStore.java')
+  assert.match(bridge, /host\.secrets/)
+  assert.match(bridge, /v2-secret\./)
+  assert.match(service, /v2Secrets = new V2ComponentSecrets/)
+  assert.match(service, /registerSync\("v2-secret\.(get|set|delete|has)"/)
+  assert.match(secrets, /AndroidSecretStore/)
+  assert.match(secrets, /v2\/.*pluginId/)
+  assert.match(secrets, /manifestHasCapability/)
+  assert.match(planStore, /HOST_SECRETS_CAPABILITY = "host\.secrets"/)
+})
+
 test('Android APK defaults to the packaged full Web UI while retaining remote entry points', () => {
   const activity = read('app', 'src', 'main', 'java', 'ai', 'stagecraft', 'android', 'MainActivity.java')
   assert.match(activity, /showLocalUi\(\);/)

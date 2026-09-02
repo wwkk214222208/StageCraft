@@ -9,9 +9,11 @@ import type { ConsultationMessage, LoreEntry, PlayerCharacter, RoomSnapshot, Tok
 import { type Decision, type Draft } from '../types.ts'
 import { createPortableComposition, type NativeOperations } from '../platform/composition.ts'
 import type { StageCraftRepository } from '../stagecraft-repository.ts'
-import type { CoreLlmRouterPlugin, Disposable } from '../core/plugins.ts'
+import type { Disposable } from '../core/plugins.ts'
 import type { CoreStateRepository } from '../core/state-repository.ts'
-import type { ModelTransport } from '../core/platform.ts'
+import { LlmSystemRouterAdapter } from '../core/llm-system-router-adapter.ts'
+import { createOfficialLlmSystemService } from '../llm/official.ts'
+import { AndroidLlmStatePort, createAndroidOpenAiDriver } from './android-llm.ts'
 
 /** Native repository adapter: Android owns bytes/transactions; domain behavior remains here. */
 export function createAndroidRepository(operations: NativeOperations): StageCraftRepository {
@@ -23,49 +25,12 @@ export function createAndroidRepository(operations: NativeOperations): StageCraf
   return new Proxy({}, { get: (_target, property: string) => (...args: unknown[]) => call(property, args) }) as StageCraftRepository
 }
 
-class NativeCoreLlmRouter implements CoreLlmRouterPlugin {
-  readonly id = 'stagecraft.llm.android-native'
-  private host?: import('../core/plugins.ts').CoreLlmRouterHost
-  private readonly transport: ModelTransport
-  constructor(transport: ModelTransport) { this.transport = transport }
-  install(host: import('../core/plugins.ts').CoreLlmRouterHost): Disposable {
-    this.host = host
-    return { dispose: () => { this.host = undefined } }
-  }
-  /**
-   * 对齐桌面端 ModelGatewayRouterAdapter 的事件契约：
-   * - `model.started`：服务层靠它建立 requestId → {roomId, turnId, actor, roleId} 上下文；
-   * - `model.thinking.delta`：逐段上报思维链。
-   * 两者缺一不可——没有 started，delta 会因查不到上下文而不被转发给 UI，
-   * 表现正是安卓端"无法即时显示流式思维链"。
-   */
-  async request(request: import('../core/protocol.ts').ModelRequest): Promise<void> {
-    if (!this.host) throw new Error('Android model router is disposed.')
-    const publish = (event: import('../core/protocol.ts').CoreEvent): void => this.host?.publishModelEvent(event)
-    publish({ type: 'model.started', revision: 0, request })
-    const correlation = request.metadata?.correlation && typeof request.metadata.correlation === 'object'
-      ? request.metadata.correlation as import('../core/protocol.ts').ModelEventCorrelation
-      : undefined
-    let thinking = ''
-    let sequence = 0
-    const result = await this.transport.request(request, {
-      onThinking: (text: string) => {
-        thinking += text
-        publish({ type: 'model.thinking.delta', revision: 0, requestId: request.requestId, text, sequence: ++sequence, ...(correlation ? { correlation } : {}) })
-      },
-    })
-    // 传输层通常已在最终结果里带上 reasoning；仅在缺失时用累计值兜底，语义与桌面端一致。
-    const includeTelemetry = request.metadata?.includeTelemetry === true
-    await this.host.submitModelResult(includeTelemetry && thinking && !result.thinking ? { ...result, thinking } : result)
-  }
-  async cancel(requestId: string): Promise<void> { await this.transport.cancel?.(requestId) }
-}
-
 export type AndroidComposition = {
   readonly core: CoreRuntimeSkeleton
   readonly roomId: string
-  readonly start: () => void
+  readonly start: () => Promise<void>
   readonly stop: () => void
+  readonly disableLlm: () => Promise<void>
   readonly refresh: () => void
   readonly dispatch: (command: import('../core/protocol.ts').HumanCommand) => Promise<void>
   readonly cancel: (requestId?: string) => Promise<void>
@@ -76,10 +41,11 @@ export type AndroidComposition = {
   readonly director: StageCraftDirectorService
   readonly management: StageCraftManagementService
   readonly setWorkers: (workers: WorkerSet) => void
+  readonly llmSystem: import('../sdk/authoring.ts').LlmSystemService
 }
 
 /** Boots the real shared StageCraft solution in the WebView, never a Java domain replica. */
-export function createAndroidComposition(operations: NativeOperations, options: { roomId?: string; workers?: WorkerSet; onMessage?: (message: unknown) => void } = {}): AndroidComposition {
+export function createAndroidComposition(operations: NativeOperations, options: { roomId?: string; workers?: WorkerSet; onMessage?: (message: unknown) => void; llmEnabled?: boolean; providerStore?: { exportPrivate(): { providers: readonly Record<string, any>[]; defaults: Record<string, unknown> } } } = {}): AndroidComposition {
   const composition = createPortableComposition(operations)
   const roomId = options.roomId ?? 'android-local-room'
   const core = new CoreRuntimeSkeleton()
@@ -96,15 +62,27 @@ export function createAndroidComposition(operations: NativeOperations, options: 
   const chat = new StageCraftChatService(repository, options.workers ?? fakeWorkers, core, { get: currentRoom, notify, thinking: (id, event) => options.onMessage?.({ type: 'thinking', roomId: id, event }) })
   const director = new StageCraftDirectorService(repository, options.workers ?? fakeWorkers, core, { get: currentRoom, notify, thinking: (id, event) => options.onMessage?.({ type: 'thinking', roomId: id, event }) })
   const management = new StageCraftManagementService(repository, { get: currentRoom, notify })
-  const bindings: Disposable[] = [container.addSolution(new StageCraftSolutionPlugin({ chat, director, management, defaultRoomId: roomId })), container.addLlm(new NativeCoreLlmRouter(composition.model))]
+  const driver = createAndroidOpenAiDriver(operations)
+  const legacyProviderStore = options.providerStore ? { exportPrivate: () => {
+    const snapshot = options.providerStore!.exportPrivate()
+    return { providers: snapshot.providers.map(profile => ({ ...profile, providerId: driver.driverId, driverId: driver.driverId })), defaults: snapshot.defaults }
+  } } : undefined
+  const servicePromise = createOfficialLlmSystemService({ apiVersion: '0.1', pluginId: 'stagecraft.llm.android', config: {}, log() {}, drivers: [driver], state: new AndroidLlmStatePort(operations), secrets: { get: key => composition.secrets.get(key), set: (key, value) => composition.secrets.set(key, value), delete: key => composition.secrets.remove(key), has: async key => (await composition.secrets.get(key)) !== undefined } }, { providerStore: legacyProviderStore })
+  // Android keeps its synchronous composition factory for compatibility; the
+  // facade is populated from the one service promise while start() awaits it.
+  const lazyService = createLazyLlmService(servicePromise)
+  const llmBinding = options.llmEnabled === false ? undefined : container.addLlm(new LlmSystemRouterAdapter(lazyService, { stopOnDispose: false }))
+  const bindings: Disposable[] = [container.addSolution(new StageCraftSolutionPlugin({ chat, director, management, defaultRoomId: roomId })), ...(llmBinding ? [llmBinding] : [])]
   const state: CoreStateRepository = composition.state
   bindings.push(core.attachStateRepository(state))
   const emit = (message: unknown): void => options.onMessage?.(message)
   let running = false
+  let llmDisabled = false
   return {
-    core, roomId,
-    start() { if (running) return; running = true; room = readRoom(); core.restoreState(roomId); core.projectRoom(room, 'android:start'); emit({ type: 'connection.state', state: 'connected' }); emit({ type: 'core.resync', reason: 'initial', revision: core.getView().revision, view: core.getView() }) },
-    stop() { if (!running) return; running = false; chat.cancel(roomId); director.cancel(roomId); emit({ type: 'connection.state', state: 'disconnected' }) },
+    core, roomId, llmSystem: lazyService,
+    async start() { if (running) return; running = true; room = readRoom(); core.restoreState(roomId); core.projectRoom(room, 'android:start'); emit({ type: 'connection.state', state: 'connected' }); emit({ type: 'core.resync', reason: 'initial', revision: core.getView().revision, view: core.getView() }); try { await servicePromise } catch (error) { running = false; throw error } },
+    async disableLlm() { if (llmDisabled) return; llmDisabled = true; try { await llmBinding?.dispose() } catch {} chat.setWorkers(fakeWorkers); director.setWorkers(fakeWorkers); try { await servicePromise.then(value => value.stop()) } catch {} },
+    stop() { if (!running) return; running = false; chat.cancel(roomId); director.cancel(roomId); void servicePromise.then(value => value.stop()).catch(() => {}); emit({ type: 'connection.state', state: 'disconnected' }) },
     refresh() {
       if (!running) return
       room = readRoom()
@@ -119,6 +97,16 @@ export function createAndroidComposition(operations: NativeOperations, options: 
       chat.setWorkers(next)
       director.setWorkers(next)
     },
-    dispose() { if (!running) return; chat.dispose(); director.dispose(); void container.dispose(); running = false },
+    dispose() { if (!running) return; chat.dispose(); director.dispose(); void container.dispose(); void servicePromise.then(value => value.stop()).catch(() => {}); running = false },
+  }
+}
+
+function createLazyLlmService(promise: Promise<import('../sdk/authoring.ts').LlmSystemService>): import('../sdk/authoring.ts').LlmSystemService {
+  let resolved: import('../sdk/authoring.ts').LlmSystemService | undefined
+  void promise.then(value => { resolved = value }).catch(() => undefined)
+  const awaitService = async () => promise
+  return {
+    get status() { return resolved?.status ?? 'ready' }, listDrivers: () => resolved?.listDrivers() ?? [], listModels: providerId => resolved?.listModels(providerId) ?? [], listCredentialProfiles: () => resolved?.listCredentialProfiles() ?? [], getCredentialProfile: profileId => resolved?.getCredentialProfile(profileId),
+    discoverModels: profileId => awaitService().then(value => value.discoverModels(profileId)), upsertCredentialProfile: profile => awaitService().then(value => value.upsertCredentialProfile(profile)), deleteCredentialProfile: profileId => awaitService().then(value => value.deleteCredentialProfile(profileId)), setCredentialSecret: (profileId, secret) => awaitService().then(value => value.setCredentialSecret(profileId, secret)), hasCredentialSecret: profileId => awaitService().then(value => value.hasCredentialSecret(profileId)), getRouteDefaults: () => resolved?.getRouteDefaults() ?? {}, setRouteDefault: (purpose, value) => awaitService().then(service => service.setRouteDefault(purpose, value)), route: input => awaitService().then(value => value.route(input)), complete: input => (async function* () { yield* (await awaitService()).complete(input) })(), cancel: requestId => awaitService().then(value => value.cancel(requestId)), recordUsage: record => awaitService().then(value => value.recordUsage(record)), queryUsage: filter => awaitService().then(value => value.queryUsage(filter)), aggregateUsage: filter => awaitService().then(value => value.aggregateUsage(filter)), stop: () => awaitService().then(value => value.stop()),
   }
 }

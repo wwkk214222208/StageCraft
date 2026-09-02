@@ -23,7 +23,8 @@ public final class V2PlanStore {
     public static final String SUPPORTED_HOST_API_VERSION = "0.1";
     public static final String HOST_LOG_CAPABILITY = "host.log";
     public static final String HOST_STORAGE_CAPABILITY = "host.storage";
-    private static final Set<String> SUPPORTED_HOST_CAPABILITIES = new HashSet<>(java.util.Arrays.asList(HOST_LOG_CAPABILITY, HOST_STORAGE_CAPABILITY));
+    public static final String HOST_SECRETS_CAPABILITY = "host.secrets";
+    private static final Set<String> SUPPORTED_HOST_CAPABILITIES = new HashSet<>(java.util.Arrays.asList(HOST_LOG_CAPABILITY, HOST_STORAGE_CAPABILITY, HOST_SECRETS_CAPABILITY));
     private static final Pattern ID = Pattern.compile("^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$");
     private static final Pattern VERSION = Pattern.compile("^\\d+\\.\\d+\\.\\d+(?:[-+][\\w.-]+)?$");
 
