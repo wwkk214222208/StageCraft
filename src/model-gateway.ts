@@ -639,13 +639,15 @@ function formatMemoryTimeline(role: Role): string {
     .join('\n')
 }
 
-export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole: (role: Role) => ModelGateway = () => directorGateway, options: { directorThinkingStrength?: import('./types.ts').ThinkingStrength; roleThinkingStrength?: import('./types.ts').ThinkingStrength; directorProviderId?: string; directorModel?: string; requestModel?: (request: ModelRequest) => Promise<ModelResult>; cancelModel?: (requestId?: string) => Promise<void> } = {}) {
+export function createRealWorkers(directorGateway?: ModelGateway, gatewayForRole?: (role: Role) => ModelGateway | undefined, options: { directorThinkingStrength?: import('./types.ts').ThinkingStrength; roleThinkingStrength?: import('./types.ts').ThinkingStrength; directorProviderId?: string; directorModel?: string; requestModel?: (request: ModelRequest) => Promise<ModelResult>; cancelModel?: (requestId?: string) => Promise<void> } = {}) {
   const roleGateways = new Set<ModelGateway>()
   const directorThinking = options.directorThinkingStrength
   let coreRequestSequence = 0
   const rawRequestModel = options.requestModel
   if (rawRequestModel) options.requestModel = request => rawRequestModel({ ...request, workflowId: request.workflowId ?? workflowIdForCoreRequest(request) })
-  const getRoleGateway = (role: Role) => { const gateway = gatewayForRole(role); roleGateways.add(gateway); return gateway }
+  const requireGateway = (gateway: ModelGateway | undefined): ModelGateway => { if (!gateway) throw new Error('Core LLM request path returned no result and no legacy ModelGateway fallback is configured.') ; return gateway }
+  const getRoleGateway = (role: Role) => { const gateway = gatewayForRole?.(role) ?? directorGateway; if (gateway) roleGateways.add(gateway); return requireGateway(gateway) }
+  const getDirectorGateway = () => requireGateway(directorGateway)
   const requestModel = (request: ModelRequest): Promise<ModelResult> => {
     const scope: PromptPresetScope = request.capability === 'prompt-preset.transform' ? 'prompt-preset.transform' : request.capability === 'role.decision' || request.capability === 'role.decision.retry' ? 'director.role-decision' : request.capability === 'director.draft' || request.capability === 'director.draft.retry' ? 'director.draft' : request.capability === 'director.consult' ? 'director.consult' : request.capability === 'role.speech' ? 'chat.role-speech' : request.capability === 'director.chat' ? 'chat.world-director' : request.capability === 'director.role-selection' ? 'chat.role-selection' : 'director.draft'
     const componentContents = request.prompt.messages ? Object.fromEntries(request.prompt.messages.filter(message => message.binding).map(message => [message.binding, message.content])) : undefined
@@ -713,7 +715,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       const directorRoute = { ...(options.directorProviderId ? { providerId: options.directorProviderId } : {}), ...(options.directorModel ? { model: options.directorModel } : {}), purpose: 'director.draft' }
       const coreResult = options.requestModel ? await requestCore<unknown>({ requestId: `director-draft:${turnId}:${++coreRequestSequence}`, capability: 'director.draft', prompt: { system, user: request, messages: rendered.messages, metadata: { capability: 'director.draft', strategyId: 'stagecraft.director.draft' } }, contract: { id: 'story_draft', version: '1.0.0', schema: directorDraftSchema }, tool: nativeTool('submit_story_draft', '提交可供玩家审批的场景草稿和结构化状态变化。', directorDraftSchema), thinkingStrength: directorThinking, route: directorRoute, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId, actor: 'director' } }, stream: true }, collectUsage) : undefined
       if (coreResult?.thinking) thinking = coreResult.thinking
-      const result = coreResult?.output ?? await directorGateway.completeStreaming<unknown>(system, request, 'story_draft', directorDraftSchema, { name: 'submit_story_draft', description: '提交可供玩家审批的场景草稿和结构化状态变化。', parameters: directorDraftSchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: directorThinking })
+      const result = coreResult?.output ?? await getDirectorGateway().completeStreaming<unknown>(system, request, 'story_draft', directorDraftSchema, { name: 'submit_story_draft', description: '提交可供玩家审批的场景草稿和结构化状态变化。', parameters: directorDraftSchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: directorThinking })
       const normalized = normalizeDirectorDraft(result)
       if (normalized) {
         normalized.stateUpdates = normalizeStateUpdateKeys(normalized.stateUpdates, { roleNames: new Map(roles.map(role => [role.name, role.id])), playerName: playerCharacter?.name })
@@ -724,7 +726,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       const retryUser = rendered.user
       const retryCoreResult = options.requestModel ? await requestCore<unknown>({ requestId: `director-draft-retry:${turnId}:${++coreRequestSequence}`, capability: 'director.draft.retry', prompt: { system: retrySystem, user: retryUser, messages: rendered.messages, metadata: { capability: 'director.draft.retry', strategyId: 'stagecraft.director.draft-retry' } }, contract: { id: 'minimal_story_draft', version: '1.0.0', schema: retrySchema }, tool: nativeTool('submit_story_draft', '提交最小可审批场景草稿。', retrySchema), thinkingStrength: directorThinking, route: directorRoute, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: scene?.roomId, turnId, actor: 'director' } }, stream: true }, collectUsage) : undefined
       if (retryCoreResult?.thinking) thinking += retryCoreResult.thinking
-      const retry = retryCoreResult?.output ?? await directorGateway.completeStreaming<unknown>(retrySystem, retryUser, 'minimal_story_draft', retrySchema, { name: 'submit_story_draft', description: '提交最小可审批场景草稿。', parameters: retrySchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: directorThinking })
+      const retry = retryCoreResult?.output ?? await getDirectorGateway().completeStreaming<unknown>(retrySystem, retryUser, 'minimal_story_draft', retrySchema, { name: 'submit_story_draft', description: '提交最小可审批场景草稿。', parameters: retrySchema }, { onThinking: collectThinking, onUsage: collectUsage }, {}, { thinkingStrength: directorThinking })
       const recovered = normalizeDirectorDraft(retry)
       if (!recovered) throw new Error(`Director output is missing non-empty text. Received fields: ${receivedFields(retry)}`)
       recovered.stateUpdates = normalizeStateUpdateKeys(recovered.stateUpdates, { roleNames: new Map(roles.map(role => [role.name, role.id])), playerName: playerCharacter?.name })
@@ -735,7 +737,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
         if (options.cancelModel) void options.cancelModel(requestId).catch(() => {})
         return
       }
-      directorGateway.cancelActiveRequests?.()
+      directorGateway?.cancelActiveRequests?.()
       for (const role of roleGateways) role.cancelActiveRequests?.()
     },
     async consult(draft: Draft, messages: ConsultationMessage[], playerText: string, requestContext?: { roomId?: string; turnId?: string }): Promise<{ text: string; usage?: import('./types.ts').TokenUsage }> {
@@ -751,7 +753,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
       const user = rendered.user
       const schema = { type: 'object', additionalProperties: false, properties: { text: { type: 'string' } }, required: ['text'] }
       const coreResult = options.requestModel ? await requestCore<{ text: string }>({ requestId: `director-consult:${requestContext?.roomId ?? 'room'}:${requestContext?.turnId ?? `turn-${Date.now()}`}:${++coreRequestSequence}`, capability: 'director.consult', prompt: { system, user, messages: rendered.messages, metadata: { capability: 'director.consult', strategyId: 'stagecraft.director.consult' } }, contract: { id: 'director_consultation', version: '1.0.0', schema }, tool: nativeTool('submit_director_consultation', '提交导演对玩家咨询的简短回答。', schema), thinkingStrength: directorThinking, route: { ...(options.directorProviderId ? { providerId: options.directorProviderId } : {}), ...(options.directorModel ? { model: options.directorModel } : {}), purpose: 'director.consult' }, metadata: { includeTelemetry: true, correlation: { mode: 'director', roomId: requestContext?.roomId, turnId: requestContext?.turnId ?? `turn-${Date.now()}`, actor: 'director' } }, stream: false }, collectUsage) : undefined
-      const result = coreResult?.output ?? await directorGateway.complete<{ text: string }>(system, user, 'director_consultation', schema, { name: 'submit_director_consultation', description: '提交导演对玩家咨询的简短回答。', parameters: schema }, { onUsage: collectUsage }, { thinkingStrength: directorThinking })
+      const result = coreResult?.output ?? await getDirectorGateway().complete<{ text: string }>(system, user, 'director_consultation', schema, { name: 'submit_director_consultation', description: '提交导演对玩家咨询的简短回答。', parameters: schema }, { onUsage: collectUsage }, { thinkingStrength: directorThinking })
       if (!result || typeof result.text !== 'string' || !result.text.trim()) throw new Error('Director consultation output is missing text.')
       return { text: result.text, ...(usage ? { usage } : {}) }
     },
@@ -867,7 +869,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
           if (modelResult.error) throw new Error(modelResult.error)
           return modelResult.output as { reply?: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string }
         })()
-        : await directorGateway.completeStreaming<{ reply?: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string }>(
+        : await getDirectorGateway().completeStreaming<{ reply?: string; worldChange?: import('./types.ts').WorldChangeRequest; narration?: string }>(
           system,
           user,
           'chat_director_chat',
@@ -908,7 +910,7 @@ export function createRealWorkers(directorGateway: ModelGateway, gatewayForRole:
           if (modelResult.error) throw new Error(modelResult.error)
           return modelResult.output as { roleIds?: string[]; reason?: string }
         })()
-        : await directorGateway.completeStreaming<{ roleIds?: string[]; reason?: string }>(
+        : await getDirectorGateway().completeStreaming<{ roleIds?: string[]; reason?: string }>(
           system,
           user,
           'chat_role_selection',

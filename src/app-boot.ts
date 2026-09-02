@@ -1,5 +1,5 @@
 /**
- * StageCraft 应用启动器：把 Store + RoomRuntime + ModelGateway + node:http
+ * StageCraft 应用启动器：把 Store + RoomRuntime + LLM System + node:http
  * 服务器组装成一个自包含应用，供两种宿主复用：
  *   - 独立入口 src/server.ts（npm run dev）
  *   - dsh-rp 插件壳（Cordis/dsh profile 里跑同一套应用，核心零改动）
@@ -14,7 +14,8 @@ import { fileURLToPath } from 'node:url'
 import { Store } from './store.ts'
 import { NodeSqliteRepository } from './platform/node-sqlite-repository.ts'
 import { RoomRuntime } from './room-runtime.ts'
-import { ModelGateway, createRealWorkers, routeFromEnvironment } from './model-gateway.ts'
+import { createRealWorkers, routeFromEnvironment } from './model-gateway.ts'
+import { fakeWorkers } from './workers.ts'
 import { createStoryPackage, listStoryPackages, loadStoryPackage, resolveStoryAssetFile, saveStoryAsPackage, saveStoryPackage, storyAssetsDir, storyPortraitUrl, type StoryPackage } from './story-packages.ts'
 import { collectStoryArchiveEntries, createStoredZip } from './story-package-archive.ts'
 import { getVersionInfo } from './version.ts'
@@ -25,7 +26,7 @@ import { deletePromptPreset, getPromptPresetState, loadGameplayScenario, setProm
 import { importStCard } from './st-card-import.ts'
 import { CreatorWorkbenchService } from './creator-workbench-service.ts'
 import { CoreRuntimeSkeleton } from './core/runtime.ts'
-import { ModelGatewayRouterAdapter } from './core/model-router-adapter.ts'
+import { LlmSystemRouterAdapter } from './core/llm-system-router-adapter.ts'
 import { DefaultCorePluginContainer } from './core/container.ts'
 import { HttpHumanCorePlugin } from './core/http-human-plugin.ts'
 import { BillingStore } from './billing.ts'
@@ -42,6 +43,10 @@ import { createNodeFilePluginConfigStore } from './plugin-config-store.ts'
 import { PluginAdminService, desktopPluginConfigFilePath, handlePluginAdminApi } from './plugin-admin.ts'
 import type { PluginDependencySnapshot } from './plugin-contract.ts'
 import { CORE_PROTOCOL_VERSION } from './core/protocol.ts'
+import { createOfficialLlmSystemService, createOpenAiCompatibleDriver } from './llm/index.ts'
+import type { LlmSystemService } from './sdk/authoring.ts'
+import { NodeLlmStateStore } from './platform/node-llm.ts'
+import { NodeSecretStore } from './platform/node.ts'
 
 /** 把 SillyTavern 预设 JSON 转成 StageCraft 预设（本地确定性转换，不调用模型）。 */
 function convertSillyTavernPreset(source: string, message: string): { reply: string; preset: Record<string, unknown>; warnings: string[]; mapping: Array<Record<string, string>> } {
@@ -126,9 +131,12 @@ export interface TavernApp {
   core: CoreRuntimeSkeleton
   container: DefaultCorePluginContainer
   roomId: string
-  gateway: ModelGateway | undefined
+  /** Compatibility usage facade; model requests are owned by llmSystem. */
+  gateway: { usage(includeMetrics?: boolean): Record<string, unknown> } | undefined
+  llmSystem: LlmSystemService | undefined
   billing: BillingStore
-  providerStore: ProviderConfigStore
+  /** Redacted compatibility view; runtime writes go through llmSystem. */
+  providerStore: { list(): readonly Record<string, unknown>[]; get(id: string): Record<string, unknown> | undefined; defaults(): Record<string, unknown> }
   server: Server
   /** Local operator API for pairing-code creation and session revocation. */
   remoteAccess: RemoteAccessService
@@ -150,10 +158,6 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   const isStandalone = options.ctx === undefined
   const appFibers: Fiber[] = []
   const trackFiber = (fiber: Fiber): Fiber => { appFibers.push(fiber); return fiber }
-  const untrackFiber = (fiber: Fiber): void => {
-    const index = appFibers.lastIndexOf(fiber)
-    if (index >= 0) appFibers.splice(index, 1)
-  }
   const root = options.root ?? fileURLToPath(new URL('..', import.meta.url))
   const publicRoot = options.publicRoot ?? join(root, 'public')
   const userDataRoot = options.userDataRoot
@@ -223,7 +227,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     console.log('检测到旧数据库，已迁移到 stagecraft.sqlite。')
   }
   const store = new NodeSqliteRepository(dbPath, options.memoryStore ? { memoryStore: options.memoryStore } : {})
-  // 提示词文件路径（AppData 等）注入模块级单例，ModelGateway 装配前必须设置。
+  // 提示词文件路径（AppData 等）注入模块级单例，模型服务装配前必须设置。
   setPromptsFilePath(promptsFilePath)
 
   const debugListeners = new Set<(text: string) => void>()
@@ -261,69 +265,11 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     throw error
   }
 
-  let gateway: ModelGateway | undefined
-  let llmFiber: Fiber | undefined
-  let providerActivation = Promise.resolve()
-  function gatewayFromProvider(config: ProviderConfig, model: string): ModelGateway {
-    return new ModelGateway({ name: config.name, baseUrl: config.baseUrl, apiKey: config.apiKey, model, timeoutMs: envRoute.timeoutMs, responseFormat: config.responseFormat, toolCalling: config.toolCalling !== false }, { onSummary: emitDebug, onDetail: emitDebug, logRawFinalContent: process.env.RP_LOG_MODEL_FINAL_CONTENT === '1', onUsage: (usage, route) => { const cost = billing.record(route.name ?? 'default', route.model, usage); return cost ? { ...usage, cost } : usage } })
-  }
-  async function installProvider(config: ProviderConfig | undefined): Promise<void> {
-    // 占位符 apiKey（示例模板）视为未配置，避免用假密钥发起真实模型请求。
-    if (!config?.apiKey || /在这里填写|你的_API_Key|你的_Key/i.test(config.apiKey)) { gateway = undefined; return }
-    const defaults = providerStore.defaults()
-    const directorModel = defaults.directorModel ?? config.selectedModel ?? config.models[0] ?? envRoute.model
-    const nextGateway = gatewayFromProvider(config, directorModel)
-    const adapter = new ModelGatewayRouterAdapter(nextGateway, request => {
-      const roleId = request.route?.role
-      if (!roleId) return nextGateway
-      const role = runtime.get(roomId).roles.find(item => item.id === roleId)
-      const selectedProviderId = resolveRouteProviderId(request, role?.providerId, providerStore.getDefaultRole()?.id)
-      const selectedProvider = selectedProviderId ? providerStore.get(selectedProviderId) : providerStore.getDefaultRole()
-      if (!selectedProvider?.apiKey) return nextGateway
-      const defaultsForRole = providerStore.defaults()
-      const fallbackModel = selectedProvider.id === providerStore.getDefaultRole()?.id ? defaultsForRole.defaultRoleModel : undefined
-      return gatewayFromProvider(selectedProvider, resolveRouteModel(request, role?.modelOverride, fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)!)
-    })
-    const fiber = ctx.plugin(llmCordisPlugin(adapter))
-    await fiber
-    llmFiber = fiber
-    try {
-      runtime.setWorkers(createRealWorkers(nextGateway, role => {
-        const defaults = providerStore.defaults()
-        const fallbackProvider = providerStore.getDefaultRole()
-        const selectedProvider = role.providerId ? providerStore.get(role.providerId) : fallbackProvider
-        if (!selectedProvider?.apiKey) return nextGateway
-        const fallbackModel = selectedProvider.id === fallbackProvider?.id ? defaults.defaultRoleModel : undefined
-        return gatewayFromProvider(selectedProvider, role.modelOverride ?? fallbackModel ?? selectedProvider.selectedModel ?? selectedProvider.models[0] ?? envRoute.model)
-      }, { directorThinkingStrength: providerStore.directorThinking(), directorProviderId: config.id, directorModel, requestModel: request => core.requestModel(request), cancelModel: requestId => core.cancel(requestId) }))
-    } catch (error) {
-      untrackFiber(fiber)
-      llmFiber = undefined
-      await fiber.dispose()
-      throw error
-    }
-    gateway = nextGateway
-    trackFiber(fiber)
-  }
-  function activateProvider(config = providerStore.getDirector()): Promise<void> {
-    if (closed) return Promise.reject(new Error('Tavern app is closed.'))
-    const activation = providerActivation.then(async () => {
-      await switchProviderSafely(
-        () => runtime.assertWorkersSwitchAllowed(),
-        async () => {
-          const previous = llmFiber
-          llmFiber = undefined
-          if (previous) {
-            untrackFiber(previous)
-            await previous.dispose()
-          }
-        },
-        async () => { await installProvider(config) },
-      )
-    })
-    providerActivation = activation.catch(() => undefined)
-    return activation
-  }
+  let llmSystem: LlmSystemService | undefined
+  const llmState = new NodeLlmStateStore(join(dataDir, 'llm-system-state.json'))
+  const llmSecretsStore = new NodeSecretStore(join(dataDir, 'llm-secrets.json'))
+  const llmSecrets = { get: (key: string) => llmSecretsStore.get(key), set: (key: string, value: string) => llmSecretsStore.set(key, value), delete: (key: string) => llmSecretsStore.remove(key), has: async (key: string) => (await llmSecretsStore.get(key)) !== undefined }
+  let directorThinkingStrength = (await llmState.read<{ directorThinkingStrength?: import('./types.ts').ThinkingStrength }>('settings').catch(() => undefined))?.directorThinkingStrength ?? providerStore.directorThinking()
   const core = new CoreRuntimeSkeleton()
   const container = new DefaultCorePluginContainer(core)
   const humanCore = new HttpHumanCorePlugin()
@@ -347,6 +293,21 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     } catch { /* 系统提示服务不可用时，剧本上下文回退为用户消息内联 */ }
   }
   const solution = new StageCraftSolutionPlugin({ chat: runtime.getChatService(), director: runtime.getDirectorService(), management: runtime.getManagementService(), defaultRoomId: roomId })
+  let llmRouter: LlmSystemRouterAdapter | undefined
+  // The service may be constructed before Cordis has accepted the plugin. It
+  // must not become authoritative until the bootstrap report says so.
+  let llmActive = false
+  const llmMigration = await llmState.read<{ completed?: boolean }>('migration').catch(() => undefined)
+  const migrateLegacyProviders = llmMigration?.completed !== true
+  const legacyProviders = providerStore.exportPrivate()
+  const legacyModels = [...new Set([envRoute.model, ...legacyProviders.providers.flatMap(provider => provider.models ?? [])])]
+  const llmMigrationReader = migrateLegacyProviders ? {
+    exportPrivate: () => ({
+      providers: legacyProviders.providers.map(provider => ({ ...provider, providerId: provider.id, driverId: 'openai-compatible' })),
+      defaults: legacyProviders.defaults,
+    }),
+  } : undefined
+  const openAiDriver = createOpenAiCompatibleDriver({ id: 'stagecraft.openai-compatible', version: '1.0.0', title: 'StageCraft OpenAI-compatible provider', driverId: 'openai-compatible', models: legacyModels })
   async function compensateStartFailure(): Promise<void> {
     for (const fiber of [...appFibers].reverse()) {
       try { await fiber.dispose() } catch { /* preserve the startup error */ }
@@ -355,12 +316,18 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     try { creatorWorkbench.dispose() } catch { /* preserve the startup error */ }
     try { runtime.dispose() } catch { /* preserve the startup error */ }
     try { await container.dispose() } catch { /* preserve the startup error */ }
+    try { await llmSystem?.stop() } catch { /* preserve the startup error */ }
     try { store.close() } catch { /* preserve the startup error */ }
   }
   try {
     const serviceFiber = ctx.plugin(stageCraftServicePlugin(stagecraft))
     await serviceFiber
     trackFiber(serviceFiber)
+    if (pluginConfigStore.readEnabled()['stagecraft.llm.official'] !== false) {
+      llmSystem = await createOfficialLlmSystemService({ apiVersion: '0.1', pluginId: 'stagecraft.official.llm', config: {}, log: emitDebug, drivers: [openAiDriver], state: llmState, secrets: llmSecrets }, { providerStore: llmMigrationReader, billing: record => { const profile = record.profileId ? llmSystem?.getCredentialProfile(record.profileId) : undefined; const providerName = profile?.name ?? profile?.label ?? record.providerId; const cost = billing.record(providerName, record.model, { promptTokens: record.inputTokens ?? 0, completionTokens: record.outputTokens ?? 0, cachedTokens: record.cachedTokens }, record.timestamp ? new Date(record.timestamp) : new Date()); return cost ? { cost: cost.total, currency: cost.currency } : undefined } })
+      if (migrateLegacyProviders) await llmState.write('migration', { completed: true })
+      llmRouter = new LlmSystemRouterAdapter(llmSystem, { stopOnDispose: false, timeoutMs: envRoute.timeoutMs })
+    }
   } catch (error) {
     await compensateStartFailure()
     throw error
@@ -373,6 +340,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     'stagecraft.core': () => coreRuntimeCordisPlugin(),
     'stagecraft.state': () => stateRepositoryCordisPlugin(new StoreCoreStateRepository(store)),
     'stagecraft.human.http': () => humanCordisPlugin(humanCore),
+    'stagecraft.llm.official': () => { if (!llmRouter) throw new Error('官方 LLM System 未启动。'); return llmCordisPlugin(llmRouter) },
     'stagecraft.solution': () => solutionCordisPlugin(solution),
   }
   const pluginLoadReport = (await bootstrapPlugins({
@@ -393,14 +361,20 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   pluginAdmin.regenerateLaunchPlan()
   for (const record of pluginLoadReport.quarantined) console.warn(`[StageCraft] 插件被隔离：${record.pluginId}（阶段 ${record.stage}）—— ${record.reason}`)
   if (pluginLoadReport.degraded) console.warn('[StageCraft] 插件装载降级：详情见「插件」面板或 /admin/plugins。')
+  llmActive = pluginLoadReport.enabled.includes('stagecraft.llm.official')
+  if (!llmActive && llmSystem) {
+    // A quarantined/disabled plugin must not leave a live service or allow a
+    // later provider API call to reinstall its router behind the report.
+    try { await llmSystem.stop() } catch (error) { console.warn(`[StageCraft] 官方 LLM System 停止失败：${error instanceof Error ? error.message : String(error)}`) }
+    llmSystem = undefined
+    llmRouter = undefined
+  }
   try {
     const restoredCoreState = core.restoreState(roomId)
     const initialRoom = runtime.get(roomId)
     // 即使是恢复后的相同 revision 也提交一次：事件 INSERT OR IGNORE 保证幂等，
     // 同时让内存投影与 Repository 的 snapshot/event 保持一致。
     core.projectRoom(initialRoom, restoredCoreState ? 'app-boot:restore' : 'app-boot:init')
-    // 首次启动没有旧路由可等待，保持旧行为：startTavern 返回前同步装配 gateway/workers。
-    if (providerStore.getDirector()?.apiKey) await installProvider(providerStore.getDirector())
   } catch (error) {
     await compensateStartFailure()
     throw error
@@ -413,6 +387,46 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
   async function dispatchRestart(story: StoryPackage, options: { mode?: import('./types.ts').RoomMode; autoPublish?: boolean } = {}): Promise<void> {
     await core.dispatch({ id: `management-restart-${++managementCommandSequence}`, actor: 'operator', type: 'restart', payload: { roomId, story, ...options } })
   }
+  const publicLlmProviders = async (): Promise<unknown[]> => {
+    if (!llmSystem) return []
+    return Promise.all(llmSystem.listCredentialProfiles().map(async profile => ({ id: profile.id, name: profile.name ?? profile.label ?? profile.id, baseUrl: profile.baseUrl ?? '', models: [...(profile.models ?? [])], selectedModel: profile.selectedModel, hasApiKey: await llmSystem!.hasCredentialSecret(profile.id), responseFormat: profile.responseFormat ?? 'json_object', driverId: profile.driverId, providerId: profile.providerId })))
+  }
+  const publicLlmDefaults = (): Record<string, unknown> => {
+    const defaults = llmSystem?.getRouteDefaults() ?? {}
+    return { defaultRoleProviderId: defaults.role?.profileId, defaultRoleModel: defaults.role?.model, directorProviderId: defaults.director?.profileId, directorModel: defaults.director?.model, assistantProviderId: defaults.assistant?.profileId, assistantModel: defaults.assistant?.model, ...(directorThinkingStrength ? { directorThinkingStrength } : {}) }
+  }
+  const providerStoreFacade = {
+    list: (): readonly Record<string, unknown>[] => (llmSystem?.listCredentialProfiles() ?? []).map(profile => ({ id: profile.id, name: profile.name ?? profile.label ?? profile.id, baseUrl: profile.baseUrl ?? '', models: [...(profile.models ?? [])], selectedModel: profile.selectedModel, responseFormat: profile.responseFormat ?? 'json_object', providerId: profile.providerId, driverId: profile.driverId })),
+    get: (id: string): Record<string, unknown> | undefined => providerStoreFacade.list().find(profile => profile.id === id),
+    defaults: (): Record<string, unknown> => publicLlmDefaults(),
+  }
+  const usageAggregateFallback = { inputTokens: 0, outputTokens: 0, requests: 0, cachedTokens: 0, durationMs: 0, cost: 0 }
+  const usageSnapshot = (aggregate: typeof usageAggregateFallback, model = '多个'): Record<string, unknown> => ({ route: 'llm-system', model, requests: aggregate.requests, promptTokens: aggregate.inputTokens, completionTokens: aggregate.outputTokens, cachedTokens: aggregate.cachedTokens ?? 0, totalDurationMs: aggregate.durationMs ?? 0, avgDurationMs: aggregate.requests ? Math.round((aggregate.durationMs ?? 0) / aggregate.requests) : 0 })
+  // HTTP consumers use the asynchronous contract even when the current
+  // implementation can answer synchronously. This keeps alternate services
+  // and future persistent implementations from being observed as promises.
+  const usageFacade = { usage: async (_includeMetrics = false): Promise<Record<string, unknown>> => usageSnapshot(await (llmSystem?.aggregateUsage() ?? usageAggregateFallback)) }
+  // Legacy callers historically expected a synchronous gateway. Keep only a
+  // truthful compatibility view; request routing and persistence remain owned
+  // by the official service. Alternate async services must use llmSystem/API.
+  const gatewayCompat = { usage: (_includeMetrics = false): Record<string, unknown> => {
+    const aggregate = llmSystem?.aggregateUsage() ?? usageAggregateFallback
+    if (aggregate && typeof (aggregate as any).then === 'function') throw new Error('兼容 gateway 仅支持同步 aggregateUsage；请使用 app.llmSystem。')
+    const profiles = llmSystem?.listCredentialProfiles() ?? []
+    const model = profiles.length === 1 ? profiles[0]?.selectedModel ?? profiles[0]?.models?.[0] ?? '多个' : '多个'
+    return usageSnapshot(aggregate as typeof usageAggregateFallback, model)
+  } }
+  const refreshLlmWorkers = async (): Promise<void> => {
+    if (!llmActive || !llmSystem) return
+    runtime.assertWorkersSwitchAllowed()
+    const usableLlm = (await Promise.all(llmSystem.listCredentialProfiles().map(profile => llmSystem!.hasCredentialSecret(profile.id)))).some(Boolean)
+    runtime.setWorkers(usableLlm
+      ? createRealWorkers(undefined, undefined, { directorThinkingStrength, requestModel: request => core.requestModel(request), cancelModel: requestId => core.cancel(requestId) })
+      : fakeWorkers)
+  }
+  // Bootstrap has now established the authoritative plugin state. Restore
+  // real workers for a persisted provider only after that confirmation.
+  await refreshLlmWorkers()
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
@@ -543,7 +557,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
           room: runtime.exportArchive(roomId),
           saves,
           stories,
-          providers: providerStore.exportPrivate(),
+          providers: { providers: await Promise.all((llmSystem?.listCredentialProfiles() ?? []).map(async profile => ({ id: profile.id, name: profile.name ?? profile.label ?? profile.id, baseUrl: profile.baseUrl ?? '', apiKey: await llmSecretsStore.get(profile.id) ?? '', models: [...(profile.models ?? [])], selectedModel: profile.selectedModel, responseFormat: profile.responseFormat, toolCalling: profile.toolCalling }))), defaults: publicLlmDefaults() },
           billing: { prices: billing.getPrices() },
           prompts: { presets: getPromptPresetState(promptsFilePath), privateToggles: loadPrivateToggles(promptsFilePath) },
         })
@@ -552,8 +566,25 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         const body = await readJson(request)
         if (body.version !== 1) throw new Error('不支持的同步数据版本。')
         if (body.providers && typeof body.providers === 'object') {
-          providerStore.importPrivate(body.providers as any)
-          await activateProvider(providerStore.getDirector())
+          if (!llmSystem) throw new Error('LLM System 未启用，无法导入 Provider 配置。')
+          runtime.assertWorkersSwitchAllowed()
+          const incoming = body.providers as { providers?: unknown[]; defaults?: Record<string, unknown> }
+          const rows = Array.isArray(incoming.providers) ? incoming.providers : []
+          const incomingIds = new Set(rows.map(item => String((item as any)?.id ?? '')).filter(Boolean))
+          for (const profile of llmSystem.listCredentialProfiles()) if (!incomingIds.has(profile.id)) await llmSystem.deleteCredentialProfile(profile.id)
+          for (const item of rows) {
+            const value = item as any
+            const id = String(value?.id ?? '')
+            if (!id) continue
+            await llmSystem.upsertCredentialProfile({ id, profileId: id, providerId: 'openai-compatible', driverId: 'openai-compatible', name: String(value.name ?? id), baseUrl: String(value.baseUrl ?? '').replace(/\/$/, ''), models: Array.isArray(value.models) ? value.models.map(String) : [], selectedModel: value.selectedModel ? String(value.selectedModel) : undefined, responseFormat: value.responseFormat === 'json_schema' ? 'json_schema' : value.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: value.toolCalling !== false })
+            // An empty key is an explicit removal during sync; omitting the
+            // field remains the compatibility behavior of leaving it intact.
+            if (typeof value.apiKey === 'string') await llmSystem.setCredentialSecret(id, value.apiKey.trim() || undefined)
+          }
+          const defaults = incoming.defaults ?? {}
+          if (defaults.defaultRoleProviderId) await llmSystem.setRouteDefault('role', { profileId: String(defaults.defaultRoleProviderId), model: defaults.defaultRoleModel ? String(defaults.defaultRoleModel) : undefined })
+          if (defaults.directorProviderId) await llmSystem.setRouteDefault('director', { profileId: String(defaults.directorProviderId), model: defaults.directorModel ? String(defaults.directorModel) : undefined })
+          await refreshLlmWorkers()
         }
         if (body.billing && typeof body.billing === 'object' && body.billing.prices && typeof body.billing.prices === 'object') {
           billing.savePrices(body.billing.prices as Record<string, unknown>)
@@ -754,46 +785,62 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         if (existsSync(assetsDir)) rmSync(assetsDir, { recursive: true, force: true })
         return json(response, 200, { ok: true, id })
       }
-      if (url.pathname === '/api/providers' && request.method === 'GET') return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults() })
+      if (url.pathname === '/api/providers' && request.method === 'GET') return json(response, 200, { providers: await publicLlmProviders(), defaults: publicLlmDefaults() })
       if (url.pathname === '/api/providers/save' && request.method === 'POST') {
         const body = await readJson(request)
-        const existing = providerStore.get(String(body.id ?? ''))
-        const config: ProviderConfig = { id: String(body.id), name: String(body.name), baseUrl: String(body.baseUrl).replace(/\/$/, ''), apiKey: String(body.apiKey ?? '') || existing?.apiKey || '', models: Array.isArray(body.models) ? body.models.map(String) : existing?.models ?? [], selectedModel: body.selectedModel ? String(body.selectedModel) : existing?.selectedModel, responseFormat: body.responseFormat === 'json_schema' ? 'json_schema' : body.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: body.toolCalling !== false }
-        providerStore.save(config)
-        await activateProvider(config)
-        return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults(), active: gateway?.usage() ?? { route: '模拟', model: '模拟' } })
+        if (!llmSystem) throw new Error('LLM System 未启用，无法保存 Provider 配置。')
+        runtime.assertWorkersSwitchAllowed()
+        const id = String(body.id ?? '').trim(); if (!id) throw new Error('Provider 配置缺少 id。')
+        const existing = llmSystem.getCredentialProfile(id)
+        await llmSystem.upsertCredentialProfile({ id, profileId: id, providerId: 'openai-compatible', driverId: 'openai-compatible', name: String(body.name ?? existing?.name ?? id), baseUrl: String(body.baseUrl ?? existing?.baseUrl ?? '').replace(/\/$/, ''), models: Array.isArray(body.models) ? body.models.map(String) : [...(existing?.models ?? [])], selectedModel: body.selectedModel ? String(body.selectedModel) : existing?.selectedModel, responseFormat: body.responseFormat === 'json_schema' ? 'json_schema' : body.responseFormat === 'none' ? 'none' : 'json_object', toolCalling: body.toolCalling !== false })
+        if (typeof body.apiKey === 'string' && body.apiKey.trim()) await llmSystem.setCredentialSecret(id, body.apiKey)
+        await refreshLlmWorkers()
+        return json(response, 200, { providers: await publicLlmProviders(), defaults: publicLlmDefaults(), active: await usageFacade.usage() })
       }
       if (url.pathname === '/api/providers/delete' && request.method === 'POST') {
         const body = await readJson(request)
-        const removed = providerStore.remove(String(body.id ?? ''))
-        if (!removed) throw new Error('Provider 配置不存在。')
-        await activateProvider()
-        return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults(), active: gateway?.usage() ?? { route: '模拟', model: '模拟' } })
+        if (!llmSystem) throw new Error('LLM System 未启用，无法删除 Provider 配置。')
+        runtime.assertWorkersSwitchAllowed()
+        const id = String(body.id ?? ''); if (!llmSystem.getCredentialProfile(id)) throw new Error('Provider 配置不存在。')
+        await llmSystem.deleteCredentialProfile(id)
+        await refreshLlmWorkers()
+        return json(response, 200, { providers: await publicLlmProviders(), defaults: publicLlmDefaults(), active: await usageFacade.usage() })
       }
       if (url.pathname === '/api/providers/discover' && request.method === 'POST') {
         const body = await readJson(request)
-        return json(response, 200, await providerStore.discoverModels(String(body.id)))
+        if (!llmSystem) throw new Error('LLM System 未启用，无法发现模型。')
+        runtime.assertWorkersSwitchAllowed()
+        const id = String(body.id ?? ''); await llmSystem.discoverModels(id)
+        await refreshLlmWorkers()
+        return json(response, 200, (await publicLlmProviders()).find((item: any) => item.id === id) ?? {})
       }
       if (url.pathname === '/api/providers/default-role' && request.method === 'POST') {
         const body = await readJson(request)
-        providerStore.setDefaultRole(String(body.id), body.model ? String(body.model) : undefined)
-        await activateProvider()
-        return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults() })
+        if (!llmSystem) throw new Error('LLM System 未启用，无法设置角色默认 Provider。')
+        runtime.assertWorkersSwitchAllowed()
+        await llmSystem.setRouteDefault('role', { profileId: String(body.id), model: body.model ? String(body.model) : undefined })
+        await refreshLlmWorkers()
+        return json(response, 200, { providers: await publicLlmProviders(), defaults: publicLlmDefaults() })
       }
       if (url.pathname === '/api/providers/director' && request.method === 'POST') {
         const body = await readJson(request)
-        providerStore.setDirector(String(body.id), body.model ? String(body.model) : undefined)
-        await activateProvider()
-        return json(response, 200, { providers: providerStore.list(), defaults: providerStore.defaults() })
+        if (!llmSystem) throw new Error('LLM System 未启用，无法设置导演默认 Provider。')
+        runtime.assertWorkersSwitchAllowed()
+        await llmSystem.setRouteDefault('director', { profileId: String(body.id), model: body.model ? String(body.model) : undefined })
+        await refreshLlmWorkers()
+        return json(response, 200, { providers: await publicLlmProviders(), defaults: publicLlmDefaults() })
       }
       if (url.pathname === '/api/providers/director-thinking' && request.method === 'POST') {
         const body = await readJson(request)
         const thinking = String(body.thinking ?? '') as import('./types.ts').ThinkingStrength
-        providerStore.setDirectorThinking(thinking)
-        await activateProvider()
-        return json(response, 200, { ok: true, defaults: providerStore.defaults() })
+        if (!['off', 'brief', 'standard', 'deep'].includes(thinking)) throw new Error('无效的思维链强度。')
+        runtime.assertWorkersSwitchAllowed()
+        directorThinkingStrength = thinking
+        await llmState.write('settings', { directorThinkingStrength })
+        await refreshLlmWorkers()
+        return json(response, 200, { ok: true, defaults: publicLlmDefaults() })
       }
-      if (url.pathname === '/api/usage') { const usage = gateway?.usage(true) ?? { route: '模拟', model: '模拟', requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalDurationMs: 0, avgDurationMs: 0, mode: 'fake' }; return json(response, 200, { ...usage, billing: billing.getStats() }) }
+      if (url.pathname === '/api/usage') { return json(response, 200, { ...(await usageFacade.usage(true)), billing: billing.getStats() }) }
       if (url.pathname === '/api/billing' && request.method === 'GET') return json(response, 200, { prices: billing.getPrices(), stats: billing.getStats() })
       if (url.pathname === '/api/billing/prices' && request.method === 'GET') return json(response, 200, billing.getPrices())
       if (url.pathname === '/api/billing/prices' && request.method === 'PUT') { const body = await readJson(request); return json(response, 200, { prices: billing.savePrices(body), stats: billing.getStats() }) }
@@ -1362,9 +1409,10 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
     runtime,
     core,
     roomId,
-    get gateway() { return gateway },
+    get gateway() { return llmSystem ? gatewayCompat : undefined },
+    llmSystem,
     billing,
-    providerStore,
+    providerStore: providerStoreFacade,
     container,
     server,
     remoteAccess,
@@ -1382,21 +1430,6 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
         firstError = error
       }
       try {
-        await providerActivation
-      } catch (error) {
-        firstError ??= error
-      }
-      try {
-        const current = llmFiber
-        llmFiber = undefined
-        if (current) {
-          untrackFiber(current)
-          await current.dispose()
-        }
-      } catch (error) {
-        firstError ??= error
-      }
-      try {
         for (const fiber of [...appFibers].reverse()) {
           try { await fiber.dispose() } catch (error) { firstError ??= error }
         }
@@ -1404,6 +1437,7 @@ export async function startTavern(options: TavernOptions = {}): Promise<TavernAp
       } catch (error) {
         firstError ??= error
       }
+      try { await llmSystem?.stop() } catch (error) { firstError ??= error }
       try {
         creatorWorkbench.dispose()
       } catch (error) {

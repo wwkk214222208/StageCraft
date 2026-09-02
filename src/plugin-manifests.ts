@@ -34,6 +34,13 @@ export const DESKTOP_BUILTIN_PLUGIN_MANIFESTS: readonly PluginManifest[] = Objec
     capabilities: ['http.entry'],
   },
   {
+    id: 'stagecraft.llm.official', version: '1.0.0', kind: 'llm',
+    title: 'StageCraft Official LLM System',
+    description: '官方 LLM System：供应商 profile、路由、凭据、模型流和用量边界',
+    requires: { plugins: ['stagecraft.core', 'stagecraft.state'] },
+    capabilities: ['llm.system', 'llm.routing', 'llm.usage'],
+  },
+  {
     id: 'stagecraft.solution', version: '1.0.0', kind: 'solution',
     title: 'StageCraft Solution（Chat/Director/Management）',
     description: '内置聊天/导演/管理解决方案插件：三条 Workflow、默认状态类别与命令处理器',

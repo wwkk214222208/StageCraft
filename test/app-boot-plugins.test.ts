@@ -9,7 +9,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -17,8 +17,12 @@ import { startTavern, type TavernApp } from '../src/app-boot.ts'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 
-async function boot(options: { pluginInstallFault?: string } = {}): Promise<{ app: TavernApp; base: string; root: string }> {
+async function boot(options: { pluginInstallFault?: string; disableOfficial?: boolean } = {}): Promise<{ app: TavernApp; base: string; root: string }> {
   const root = mkdtempSync(join(tmpdir(), 'stagecraft-app-plugins-'))
+  if (options.disableOfficial) {
+    mkdirSync(join(root, 'data'), { recursive: true })
+    writeFileSync(join(root, 'data', 'plugins.json'), JSON.stringify({ formatVersion: 1, updatedAt: new Date().toISOString(), config: {}, enabled: { 'stagecraft.llm.official': false }, quarantine: [], launchPlan: null }))
+  }
   const app = await startTavern({
     root: repositoryRoot, dataDir: join(root, 'data'), saveRoot: join(root, 'save'), port: 0, host: '127.0.0.1',
     ...(options.pluginInstallFault ? { pluginInstallFault: options.pluginInstallFault } : {}),
@@ -70,13 +74,13 @@ test('正常启动：launch plan 覆盖全部候选插件；存档导出/保存�
     const state = await (await fetch(`${base}/api/plugins`)).json() as { plugins: Array<{ id: string; state: string }>; report: { degraded: boolean; quarantined: unknown[] } }
     assert.equal(state.report.degraded, false)
     assert.equal(state.report.quarantined.length, 0)
-    assert.equal(state.plugins.length, 4)
+    assert.equal(state.plugins.length, 5)
 
     // 存档导出：plugins 快照 = 导出时启用的插件集（§7.4）
     const exported = await (await fetch(`${base}/api/archive/export`)).json() as {
       version: number; room: unknown; plugins?: Array<{ id: string; version: string; manifestHash: string }>
     }
-    assert.ok(Array.isArray(exported.plugins) && exported.plugins.length === 4, '启用插件集必须写入存档')
+    assert.ok(Array.isArray(exported.plugins) && exported.plugins.length === 5, '启用插件集必须写入存档')
     assert.ok(exported.plugins.every(plugin => plugin.manifestHash && plugin.manifestHash !== 'unknown'))
     assert.ok(exported.plugins.some(plugin => plugin.id === 'stagecraft.solution'))
 
@@ -97,7 +101,7 @@ test('正常启动：launch plan 覆盖全部候选插件；存档导出/保存�
     const savePath = join(root, 'save', `${save.name}.json`)
     assert.ok(existsSync(savePath))
     const savedArchive = JSON.parse(readFileSync(savePath, 'utf8')) as { plugins?: unknown[] }
-    assert.equal(savedArchive.plugins?.length, 4)
+    assert.equal(savedArchive.plugins?.length, 5)
     const load = await (await fetch(`${base}/api/archive/load`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'plugin-snapshot' }),
@@ -111,5 +115,24 @@ test('正常启动：launch plan 覆盖全部候选插件；存档导出/保存�
   } finally {
     await app.close()
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('官方 LLM 被禁用或隔离时不创建 Core router，也不会被 Provider API 重新安装', async () => {
+  for (const options of [{ disableOfficial: true }, { pluginInstallFault: 'stagecraft.llm.official' }]) {
+    const { app, base, root } = await boot(options)
+    try {
+      const state = await (await fetch(`${base}/api/plugins`)).json() as { report: { enabled: string[]; quarantined: Array<{ pluginId: string }> } }
+      assert.equal(state.report.enabled.includes('stagecraft.llm.official'), false)
+      if (options.pluginInstallFault) assert.deepEqual(state.report.quarantined.map(item => item.pluginId), ['stagecraft.llm.official'])
+      assert.equal(app.llmSystem, undefined)
+      assert.equal(app.container.llm.length, 0)
+      const save = await fetch(`${base}/api/providers/save`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'should-not-install', name: 'Nope', baseUrl: 'https://example.test', apiKey: 'secret', models: ['m'] }) })
+      assert.equal(save.status, 400)
+      assert.equal(app.container.llm.length, 0)
+    } finally {
+      await app.close()
+      rmSync(root, { recursive: true, force: true })
+    }
   }
 })

@@ -163,7 +163,10 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       }
   await ctx.effect(async () => {
     ctx.provide('stagecraftDebug', debug)
-    const cleanups: Array<() => void> = []
+    // Cordis accepts async disposers. Keeping the promise here is essential:
+    // TavernApp.close() must finish SQLite/LLM state writes before the bundle
+    // installation root is removed by a package/reload operation.
+    const cleanups: Array<() => void | Promise<void>> = []
     let embeddedApp: TavernApp | undefined
     let embeddedGeneration = 0
     let restarting = Promise.resolve()
@@ -175,7 +178,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       return { status: 'embedded', mode: 'embedded' as const, generation: embeddedGeneration, reason }
     }
     if (manager) await manager.start()
-    else { await startEmbedded(); cleanups.push(() => void embeddedApp?.close()) }
+    else { await startEmbedded(); cleanups.push(async () => { await embeddedApp?.close() }) }
     if (developmentMode) {
       const repositoryRoot = resolve(syncRepository)
       const watchedPaths = [join(repositoryRoot, 'src'), join(repositoryRoot, 'public'), join(repositoryRoot, 'dsh-rp', 'src'), join(repositoryRoot, 'dsh-rp', 'scripts')].filter(path => existsSync(path))
@@ -273,7 +276,14 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       })
       cleanups.push(disposer)
     }
-    return () => { for (const cleanup of cleanups.reverse()) cleanup() }
+    return async () => {
+      const errors: unknown[] = []
+      for (const cleanup of cleanups.reverse()) {
+        try { await cleanup() } catch (error) { errors.push(error) }
+      }
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1) throw new AggregateError(errors, 'one or more dsh-rp cleanup operations failed')
+    }
   })
 }
 

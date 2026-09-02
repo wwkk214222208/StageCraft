@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { MemoryAssetRepository, MemorySecretStore, type Clock } from '../src/core/platform.ts'
 import { CoreRuntimeSkeleton } from '../src/core/runtime.ts'
 import { NodeFileRepository, NodeSecretStore } from '../src/platform/node.ts'
+import { NodeLlmStateStore } from '../src/platform/node-llm.ts'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -47,6 +48,21 @@ test('node secret adapter persists values behind the SecretStore port', async ()
     assert.equal(await restored.get('provider'), 'secret')
     await restored.remove('provider')
     assert.equal(await restored.get('provider'), undefined)
+    await Promise.all(Array.from({ length: 12 }, (_, index) => restored.set(`parallel-${index}`, String(index))))
+    const parallel = await Promise.all(Array.from({ length: 12 }, (_, index) => restored.get(`parallel-${index}`)))
+    assert.deepEqual(parallel, Array.from({ length: 12 }, (_, index) => String(index)))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('node LLM state adapter serializes concurrent read-modify-write operations', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stagecraft-llm-state-'))
+  try {
+    const state = new NodeLlmStateStore(join(root, 'state.json'))
+    await Promise.all(Array.from({ length: 12 }, (_, index) => state.write(`key-${index}`, { index })))
+    const values = await Promise.all(Array.from({ length: 12 }, (_, index) => state.read<{ index: number }>(`key-${index}`)))
+    assert.deepEqual(values.map(value => value?.index), Array.from({ length: 12 }, (_, index) => index))
   } finally {
     await rm(root, { recursive: true, force: true })
   }

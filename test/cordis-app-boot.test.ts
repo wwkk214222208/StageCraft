@@ -122,7 +122,7 @@ test('Cordis bridge plugins register generic state and leave committed data afte
   await container.dispose()
 })
 
-test('provider replacement installs and unloads Cordis LLM fibers', async () => {
+test('provider mutations keep the single Cordis LLM fiber and refresh workers', async () => {
   const dataDir = isolatedData('stagecraft-cordis-provider-')
   const app = await startTavern({ root: repositoryRoot, dataDir, port: 0 })
   try {
@@ -138,7 +138,7 @@ test('provider replacement installs and unloads Cordis LLM fibers', async () => 
     const first = app.container.llm[0]
     assert.ok(first)
     assert.equal((await save('second')).status, 200)
-    assert.notEqual(app.container.llm[0], first)
+    assert.equal(app.container.llm[0], first)
     assert.equal(app.container.llm.length, 1)
     assert.equal([...app.ctx.registry.values()].filter(value => value.name === 'stagecraft.llm.model-gateway').length, 1)
   } finally {

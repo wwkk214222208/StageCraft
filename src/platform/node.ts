@@ -45,19 +45,30 @@ export class NodeFileRepository extends FileAssetRepository {}
  */
 export class NodeSecretStore implements SecretStore {
   private readonly filePath: string
+  private mutation: Promise<void> = Promise.resolve()
 
   constructor(filePath: string) { this.filePath = resolve(filePath) }
 
   async get(key: string): Promise<string | undefined> { return (await this.load())[key] }
   async set(key: string, value: string): Promise<void> {
-    const values = await this.load()
-    values[key] = value
-    await this.save(values)
+    await this.enqueue(async () => {
+      const values = await this.load()
+      values[key] = value
+      await this.save(values)
+    })
   }
   async remove(key: string): Promise<void> {
-    const values = await this.load()
-    delete values[key]
-    await this.save(values)
+    await this.enqueue(async () => {
+      const values = await this.load()
+      delete values[key]
+      await this.save(values)
+    })
+  }
+
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    const operation = this.mutation.then(task)
+    this.mutation = operation.then(() => undefined, () => undefined)
+    return operation
   }
 
   private async load(): Promise<Record<string, string>> {
@@ -75,7 +86,7 @@ export class NodeSecretStore implements SecretStore {
 
   private async save(values: Record<string, string>): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true })
-    const temporary = `${this.filePath}.${process.pid}.tmp`
+    const temporary = `${this.filePath}.${process.pid}.${Date.now()}.tmp`
     await writeFile(temporary, `${JSON.stringify(values, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
     await rename(temporary, this.filePath)
   }

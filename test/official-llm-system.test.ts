@@ -73,3 +73,39 @@ test('official OpenAI driver reuses production SSE and JSON parsing', async () =
   const jsonChunks: any[] = []; for await (const chunk of json.request({ requestId: 'j', model: 'm', messages: [] }, context())) jsonChunks.push(chunk)
   assert.deepEqual(jsonChunks, [{ type: 'thinking', text: 'reason' }, { type: 'text', text: '{"ok":true}' }, { type: 'usage', usage: { inputTokens: 1, outputTokens: 1, cachedTokens: undefined } }, { type: 'done' }])
 })
+
+test('official OpenAI driver gives tools precedence and retries without tools after compatibility rejection', async () => {
+  const bodies: Record<string, unknown>[] = []
+  const driver = createOpenAiCompatibleDriver({
+    id: 'fallback.openai', version: '1.0.0', title: 'Fallback OpenAI', driverId: 'fallback', models: ['m'],
+    fetchImpl: async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)))
+      if (bodies.length === 1) return new Response('tool_choice is unsupported', { status: 422 })
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }), { headers: { 'content-type': 'application/json' } })
+    },
+  })
+  const chunks: any[] = []
+  for await (const chunk of driver.request({ requestId: 'fallback', model: 'm', messages: [], metadata: { llmRoute: { baseUrl: 'https://example.test', responseFormat: 'json_schema', jsonSchema: { name: 'result', strict: true, schema: { type: 'object' } }, toolCalling: true, tools: [{ type: 'function', function: { name: 'submit', parameters: { type: 'object' } } }] } } }, context())) chunks.push(chunk)
+  assert.equal(bodies[0]?.response_format, undefined)
+  assert.ok(Array.isArray(bodies[0]?.tools))
+  assert.deepEqual(bodies[1]?.response_format, { type: 'json_schema', json_schema: { name: 'result', strict: true, schema: { type: 'object' } } })
+  assert.equal(bodies[1]?.tools, undefined)
+  assert.deepEqual(chunks[0], { type: 'text', text: '{"ok":true}' })
+})
+
+test('official OpenAI driver uses thinking body and aborts a stalled response at route timeout', async () => {
+  let thinkingBody: Record<string, unknown> | undefined
+  const thinking = createOpenAiCompatibleDriver({
+    id: 'thinking.openai', version: '1.0.0', title: 'Thinking OpenAI', driverId: 'thinking', models: ['deepseek-chat'],
+    fetchImpl: async (_url, init) => { thinkingBody = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] }), { headers: { 'content-type': 'application/json' } }) },
+  })
+  for await (const _chunk of thinking.request({ requestId: 'thinking', model: 'deepseek-chat', messages: [], metadata: { llmRoute: { baseUrl: 'https://example.test', thinkingStrength: 'deep' } } }, context())) {}
+  assert.deepEqual(thinkingBody?.thinking, { type: 'enabled' })
+  assert.equal(thinkingBody?.reasoning_effort, 'max')
+
+  const stalled = createOpenAiCompatibleDriver({
+    id: 'timeout.openai', version: '1.0.0', title: 'Timeout OpenAI', driverId: 'timeout', models: ['m'],
+    fetchImpl: async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n')) } }), { headers: { 'content-type': 'text/event-stream' } }),
+  })
+  await assert.rejects(async () => { for await (const _chunk of stalled.request({ requestId: 'timeout', model: 'm', messages: [], metadata: { llmRoute: { baseUrl: 'https://example.test', timeoutMs: 20 } } }, context())) {} }, /abort|cancel|timeout/i)
+})

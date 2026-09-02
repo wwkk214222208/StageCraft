@@ -1,6 +1,7 @@
 import { normalizeProviderDefaults, type ProviderRoutingDefaults } from '../provider-routing.ts'
 import { defineLlmSystem, type CredentialMaterial, type CredentialProfileMetadata, type LlmCompletionRequest, type LlmRouteSelection, type LlmSystemService, type LlmSystemStartContext, type LlmUsageAggregate, type LlmUsageFilter, type LlmUsageRecord, type ProviderChunk, type ProviderDriver } from '../sdk/authoring.ts'
 import { createModelStreamAccumulator, parseModelCompleteResponse } from '../model-gateway.ts'
+import { buildThinkingParams } from '../thinking-params.ts'
 
 export interface LlmProviderProfile extends CredentialProfileMetadata {
   readonly profileId?: string
@@ -8,6 +9,7 @@ export interface LlmProviderProfile extends CredentialProfileMetadata {
   readonly name: string
   readonly baseUrl: string
   readonly models: readonly string[]
+  readonly timeoutMs?: number
   readonly selectedModel?: string
   readonly responseFormat: 'json_object' | 'json_schema' | 'none'
   readonly toolCalling: boolean
@@ -44,6 +46,8 @@ export interface OpenAiCompatibleDriverOptions {
   readonly driverId: string
   readonly models: readonly string[]
   readonly fetchImpl?: typeof fetch
+  /** Upper bound for headers and response-body consumption. */
+  readonly timeoutMs?: number
 }
 
 /** Narrow ProviderDriver adapter sharing ModelGateway's production OpenAI
@@ -56,17 +60,41 @@ export function createOpenAiCompatibleDriver(options: OpenAiCompatibleDriverOpti
     driverId: options.driverId, providerId: options.driverId, models: Object.freeze([...options.models]),
     async *request(request) {
       const route = (request.metadata as any)?.llmRoute ?? {}; const endpoint = `${String(route.baseUrl ?? '').replace(/\/$/, '')}/chat/completions`
-      const body = { model: request.model, messages: request.messages, stream: true, ...(route.responseFormat === 'json_object' ? { response_format: { type: 'json_object' } } : {}), ...(route.responseFormat === 'json_schema' && route.jsonSchema ? { response_format: { type: 'json_schema', json_schema: route.jsonSchema } } : {}), ...(route.toolCalling && Array.isArray(route.tools) ? { tools: route.tools } : {}) }
-      const response = await fetchImpl(endpoint, { method: 'POST', signal: request.signal, headers: { 'content-type': 'application/json', ...(request.credential?.secret ? { authorization: `Bearer ${request.credential.secret}` } : {}) }, body: JSON.stringify(body) })
-      if (!response.ok) throw new Error(`Model HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`)
-      if (response.body && response.headers.get('content-type')?.includes('text/event-stream')) {
-        const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; const accumulator = createModelStreamAccumulator();
-        const emit = (payload: string): ProviderChunk[] => { const parsed = accumulator.push(payload); const chunks: ProviderChunk[] = []; if (parsed.reasoning) chunks.push({ type: 'thinking', text: parsed.reasoning }); if (parsed.content) chunks.push({ type: 'text', text: parsed.content }); if (parsed.toolArguments) chunks.push({ type: 'text', text: parsed.toolArguments }); if (parsed.usage) chunks.push({ type: 'usage', usage: { inputTokens: parsed.usage.prompt_tokens, outputTokens: parsed.usage.completion_tokens, cachedTokens: parsed.usage.prompt_tokens_details?.cached_tokens } }); return chunks }
-        while (true) { const part = await reader.read(); if (part.done) break; buffer += decoder.decode(part.value, { stream: true }); buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n'); let sep; while ((sep = buffer.indexOf('\n\n')) >= 0) { const event = buffer.slice(0, sep); buffer = buffer.slice(sep + 2); const data = event.split('\n').map(line => line.trim()).find(line => line.startsWith('data:')); if (!data) continue; const payload = data.slice(5).trim(); if (payload === '[DONE]') { yield { type: 'done' }; return } for (const chunk of emit(payload)) yield chunk } }
-        if (buffer.trim()) for (const chunk of emit(buffer.trim())) yield chunk
-        yield { type: 'done' }; return
-      }
-      const result = parseModelCompleteResponse(await response.json()); if (result.reasoning) yield { type: 'thinking', text: result.reasoning }; if (result.content) yield { type: 'text', text: result.content }; if (result.toolArguments) yield { type: 'text', text: result.toolArguments }; if (result.usage) yield { type: 'usage', usage: { inputTokens: result.usage.prompt_tokens, outputTokens: result.usage.completion_tokens, cachedTokens: result.usage.prompt_tokens_details?.cached_tokens } }; yield { type: 'done' }
+      const thinking = buildThinkingParams(request.model, route.thinkingStrength ?? 'standard')
+      const tools = route.toolCalling && Array.isArray(route.tools) && route.tools.length > 0 ? route.tools : undefined
+      const schema = route.jsonSchema && typeof route.jsonSchema === 'object' && typeof route.jsonSchema.name === 'string' && route.jsonSchema.schema && route.jsonSchema.strict === true ? route.jsonSchema : undefined
+      // Build the no-tools body with the requested format up front; the
+      // first tools attempt removes it for providers that reject the
+      // combination, then the compatibility retry can restore JSON mode.
+      const responseFormat = route.responseFormat === 'json_object' ? { type: 'json_object' } : route.responseFormat === 'json_schema' && schema ? { type: 'json_schema', json_schema: schema } : undefined
+      const baseBody = { model: request.model, messages: request.messages, stream: true, ...(responseFormat ? { response_format: responseFormat } : {}), ...(thinking.body ?? {}) }
+      const toolBody = tools ? { ...baseBody, response_format: undefined, tools } : baseBody
+      const timeoutController = new AbortController(); const signal = request.signal ? AbortSignal.any([request.signal, timeoutController.signal]) : timeoutController.signal; const timeout = setTimeout(() => timeoutController.abort(), route.timeoutMs ?? options.timeoutMs ?? 120_000)
+      const headers = { 'content-type': 'application/json', ...(request.credential?.secret ? { authorization: `Bearer ${request.credential.secret}` } : {}) }
+      let response: Response
+      try {
+        response = await fetchImpl(endpoint, { method: 'POST', signal, headers, body: JSON.stringify(toolBody) })
+        if (!response.ok && tools && (response.status === 400 || response.status === 422)) {
+          const detail = await response.text()
+          if (/tool|function|choice/i.test(detail)) response = await fetchImpl(endpoint, { method: 'POST', signal, headers, body: JSON.stringify(baseBody) })
+          else throw new Error(`Model HTTP ${response.status}: ${detail.slice(0, 300)}`)
+        }
+      } catch (error) { clearTimeout(timeout); throw error }
+      try {
+        if (!response.ok) throw new Error(`Model HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`)
+        if (response.body && response.headers.get('content-type')?.includes('text/event-stream')) {
+          const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; const accumulator = createModelStreamAccumulator();
+          const emit = (payload: string): ProviderChunk[] => { const parsed = accumulator.push(payload); const chunks: ProviderChunk[] = []; if (parsed.reasoning) chunks.push({ type: 'thinking', text: parsed.reasoning }); if (parsed.content) chunks.push({ type: 'text', text: parsed.content }); if (parsed.toolArguments) chunks.push({ type: 'text', text: parsed.toolArguments }); if (parsed.usage) chunks.push({ type: 'usage', usage: { inputTokens: parsed.usage.prompt_tokens, outputTokens: parsed.usage.completion_tokens, cachedTokens: parsed.usage.prompt_tokens_details?.cached_tokens } }); return chunks }
+          const cancelReader = () => { void reader.cancel().catch(() => {}) }
+          signal.addEventListener('abort', cancelReader, { once: true })
+          try {
+            while (true) { const part = await reader.read(); if (signal.aborted) throw new DOMException('LLM request aborted', 'AbortError'); if (part.done) break; buffer += decoder.decode(part.value, { stream: true }); buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n'); let sep; while ((sep = buffer.indexOf('\n\n')) >= 0) { const event = buffer.slice(0, sep); buffer = buffer.slice(sep + 2); const data = event.split('\n').map(line => line.trim()).find(line => line.startsWith('data:')); if (!data) continue; const payload = data.slice(5).trim(); if (payload === '[DONE]') { yield { type: 'done' }; return } for (const chunk of emit(payload)) yield chunk } }
+          } finally { signal.removeEventListener('abort', cancelReader) }
+          if (buffer.trim()) for (const chunk of emit(buffer.trim())) yield chunk
+          yield { type: 'done' }; return
+        }
+        const result = parseModelCompleteResponse(await response.json()); if (result.reasoning) yield { type: 'thinking', text: result.reasoning }; if (result.content) yield { type: 'text', text: result.content }; if (result.toolArguments) yield { type: 'text', text: result.toolArguments }; if (result.usage) yield { type: 'usage', usage: { inputTokens: result.usage.prompt_tokens, outputTokens: result.usage.completion_tokens, cachedTokens: result.usage.prompt_tokens_details?.cached_tokens } }; yield { type: 'done' }
+      } finally { clearTimeout(timeout) }
     },
   }
 }
@@ -139,6 +167,7 @@ export async function createOfficialLlmSystemService(context: LlmSystemStartCont
     await state.write(stateKey, { profiles: [...profiles.values()].map(profile => ({ ...profile, models: [...profile.models] })), defaults: routeDefaults, usage: [...usage] })
   }
   if (!context.secrets && state && memorySecrets.size) await state.write(`${stateKey}:secrets`, Object.fromEntries(memorySecrets))
+  if (options.providerStore && state) await persist()
   const profileFor = (input: { profileId?: string; credentialProfileId?: string; providerId?: string }): LlmProviderProfile | undefined => {
     const id = input.profileId ?? input.credentialProfileId ?? input.providerId
     return id ? profiles.get(id) ?? [...profiles.values()].find(profile => profile.driverId === id) : undefined
@@ -194,7 +223,7 @@ export async function createOfficialLlmSystemService(context: LlmSystemStartCont
           const secret = selected.credentialProfileId ? (context.secrets ? await context.secrets.get(selected.credentialProfileId) : storedSecrets?.[selected.credentialProfileId] ?? memorySecrets.get(selected.credentialProfileId)) : undefined
           const credential: CredentialMaterial | undefined = input.credential ?? (secret === undefined ? undefined : { profileId: selected.credentialProfileId!, secret })
           const selectedProfile = profiles.get(selected.profileId ?? selected.providerId)
-          const requestMetadata = { ...(input.metadata ?? {}), llmRoute: { baseUrl: selectedProfile?.baseUrl, responseFormat: selectedProfile?.responseFormat, toolCalling: selectedProfile?.toolCalling, jsonSchema: (input.metadata as any)?.jsonSchema, tools: (input.metadata as any)?.tools } }
+          const requestMetadata = { ...(input.metadata ?? {}), llmRoute: { baseUrl: selectedProfile?.baseUrl, responseFormat: selectedProfile?.responseFormat, toolCalling: selectedProfile?.toolCalling, timeoutMs: (input.metadata as any)?.timeoutMs, thinkingStrength: (input.metadata as any)?.thinkingStrength, jsonSchema: (input.metadata as any)?.llmRoute?.jsonSchema ?? ((input.metadata as any)?.llmContract ? { name: (input.metadata as any).llmContract.id, strict: true, schema: (input.metadata as any).llmContract.schema } : (input.metadata as any)?.jsonSchema), tools: (input.metadata as any)?.llmRoute?.tools ?? (input.metadata as any)?.tools } }
           for await (const chunk of driver.request({ ...input, providerId: selected.providerId, credentialProfileId: selected.credentialProfileId, model: selected.model, credential, signal: controller.signal, metadata: requestMetadata }, context)) {
             if (controller.signal.aborted) break
             if (chunk.type === 'usage') { inputTokens = chunk.usage?.inputTokens; outputTokens = chunk.usage?.outputTokens; cachedTokens = chunk.usage?.cachedTokens }
