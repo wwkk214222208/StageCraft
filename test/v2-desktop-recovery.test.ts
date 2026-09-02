@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { request as httpRequest } from 'node:http'
 import { buildComponentLaunchPlan } from '../src/v2/launch-plan.ts'
 import { startV2DesktopRecoveryServer } from '../src/v2/desktop-recovery.ts'
 import { startV2DesktopHost } from '../src/v2/desktop-host.ts'
@@ -45,7 +46,8 @@ test('v2 recovery server disables a plugin by rebuilding a valid plan', async ()
     assert.match(page, /v2 恢复模式/)
     assert.match(page, /core handshake failed/)
     assert.match(page, /example\.two/)
-    const disable = await fetch(`http://127.0.0.1:${port}/admin/v2/disable-plugin`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ id: 'example.two' }).toString() })
+    assert.match(page, new RegExp(recovery.authToken.slice(0, 8)))
+    const disable = await fetch(`http://127.0.0.1:${port}/admin/v2/disable-plugin`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ id: 'example.two', token: recovery.authToken }).toString() })
     assert.equal(disable.status, 303)
     const plan = JSON.parse(readFileSync(recovery.planPath, 'utf8')) as { plugins: { id: string }[] }
     assert.deepEqual(plan.plugins.map(selection => selection.id), ['example.one'], 'disabled plugin must be removed from the plan')
@@ -60,12 +62,23 @@ test('v2 recovery server disables a plugin by rebuilding a valid plan', async ()
   } finally { rmSync(base, { recursive: true, force: true }) }
 })
 
+test('v2 recovery redirects the application root to plugin recovery configuration', async () => {
+  const base = mkdtempSync(join(root, '.tmp-v2-recovery-root-')); try {
+    const recovery = await startV2DesktopRecoveryServer({ userDataRoot: base, port: 0 })
+    const address = recovery.server.address(); const port = typeof address === 'object' && address ? address.port : 0
+    const response = await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual' })
+    assert.equal(response.status, 302)
+    assert.equal(response.headers.get('location'), '/admin/v2')
+    await recovery.close()
+  } finally { rmSync(base, { recursive: true, force: true }) }
+})
+
 test('v2 recovery server clears the plan so the next start selects the v1 chain', async () => {
   const base = mkdtempSync(join(root, '.tmp-v2-recovery-clear-')); try {
     setupBrokenPlan(base)
     const recovery = await startV2DesktopRecoveryServer({ userDataRoot: base, port: 0 })
     const address = recovery.server.address(); const port = typeof address === 'object' && address ? address.port : 0
-    const clear = await fetch(`http://127.0.0.1:${port}/admin/v2/clear-plan`, { method: 'POST' })
+    const clear = await fetch(`http://127.0.0.1:${port}/admin/v2/clear-plan`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: recovery.authToken }).toString() })
     assert.equal(clear.status, 303)
     assert.equal(existsSync(recovery.planPath), false)
     await recovery.close()
@@ -75,5 +88,26 @@ test('v2 recovery server clears the plan so the next start selects the v1 chain'
 test('v2 recovery server refuses a non-loopback bind', async () => {
   const base = mkdtempSync(join(root, '.tmp-v2-recovery-loop-')); try {
     await assert.rejects(() => startV2DesktopRecoveryServer({ userDataRoot: base, host: '0.0.0.0', port: 0 }), /loopback/)
+  } finally { rmSync(base, { recursive: true, force: true }) }
+})
+
+test('v2 recovery mutating actions require a random form token and loopback Host', async () => {
+  const base = mkdtempSync(join(root, '.tmp-v2-recovery-security-')); try {
+    setupBrokenPlan(base)
+    const recovery = await startV2DesktopRecoveryServer({ userDataRoot: base, port: 0 })
+    const address = recovery.server.address(); const port = typeof address === 'object' && address ? address.port : 0
+    const original = readFileSync(recovery.planPath, 'utf8')
+    const post = (path: string, body: Record<string, string>, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams(body).toString() })
+    assert.equal((await post('/admin/v2/disable-plugin', { id: 'example.two' })).status, 401)
+    assert.equal((await post('/admin/v2/disable-plugin', { id: 'example.two', token: 'wrong' })).status, 401)
+    assert.equal((await post('/admin/v2/clear-plan', {}, { 'x-stagecraft-token': 'wrong' })).status, 401)
+    assert.equal(readFileSync(recovery.planPath, 'utf8'), original)
+    const rebound: any = await new Promise((resolveRebound, rejectRebound) => {
+      const req = httpRequest({ host: '127.0.0.1', port, method: 'POST', path: '/admin/v2/clear-plan', headers: { host: 'evil.example.com', 'content-type': 'application/x-www-form-urlencoded', 'x-stagecraft-token': recovery.authToken } }, res => { let data = ''; res.on('data', chunk => { data += chunk }); res.on('end', () => resolveRebound({ status: res.statusCode, body: data })) })
+      req.on('error', rejectRebound); req.end('token=' + encodeURIComponent(recovery.authToken))
+    })
+    assert.equal(rebound.status, 403)
+    assert.equal(existsSync(recovery.planPath), true)
+    await recovery.close()
   } finally { rmSync(base, { recursive: true, force: true }) }
 })

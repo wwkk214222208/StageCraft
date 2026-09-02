@@ -1,11 +1,16 @@
 /**
  * Per-component key/area storage for the v2 reference Host port (`host.storage`).
  *
- * Every caller (the selected Core or one ordinary plugin) owns an isolated
- * namespace; callers can never read or write another component's areas. The
+ * Every cooperative caller (the selected Core or one ordinary plugin) is
+ * assigned an isolated namespace. This is not a strong security boundary:
+ * code sharing one WebView can manufacture caller fields, so users own the
+ * risk of sharing this host with untrusted content. The
  * reference implementation is intentionally simple (one JSON file per area,
  * atomic replace). It is NOT a secret store: material persisted here is
- * plaintext on desktop, matching the v1 `providers.json` trust level.
+ * plaintext on desktop, matching the v1 `providers.json` trust level. The
+ * `secret.*` native capability is available, but the official v2 LLM reference
+ * currently persists its secrets here through `host.storage`; users own the
+ * risk of exposing this shared WebView to third-party content.
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -74,6 +79,11 @@ export function createNodeFileComponentStorage(root: string, options: NodeFileCo
       const file = fileFor(caller, area)
       let raw: string
       try { raw = readFileSync(file, 'utf8') } catch { return undefined }
+      if (Buffer.byteLength(raw, 'utf8') > MAX_STORAGE_VALUE_BYTES) {
+        const error = new Error(`storage value exceeds ${MAX_STORAGE_VALUE_BYTES} bytes`)
+        options.onCorrupt?.(error)
+        return undefined
+      }
       try { return JSON.parse(raw) } catch (error) { options.onCorrupt?.(error); return undefined }
     },
     async write(caller, area, value) {
@@ -81,7 +91,7 @@ export function createNodeFileComponentStorage(root: string, options: NodeFileCo
       const key = `${caller.pluginId}/${area}`
       await serialized(key, async () => {
         const encoded = JSON.stringify(value ?? null, null, 2)
-        if (encoded.length > MAX_STORAGE_VALUE_BYTES) throw new Error(`storage value exceeds ${MAX_STORAGE_VALUE_BYTES} bytes`)
+        if (Buffer.byteLength(encoded, 'utf8') > MAX_STORAGE_VALUE_BYTES) throw new Error(`storage value exceeds ${MAX_STORAGE_VALUE_BYTES} bytes`)
         const temporary = `${file}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
         mkdirSync(dirname(file), { recursive: true })
         writeFileSync(temporary, encoded, 'utf8')

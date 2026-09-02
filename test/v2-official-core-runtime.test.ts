@@ -53,6 +53,34 @@ test('official runtime quarantines missing, cyclic and identity-invalid plugins 
   assert.match(invalid.listQuarantined()[0].reason, /category mismatch/)
 })
 
+test('official runtime isolates required dependents after identity or LLM init failure and hides them from Core', async () => {
+  const seen: string[] = []
+  const core = defineCore({ id: 'example.closure-core', version: '1.0.0', title: 'Core', start(ctx) { seen.push(...(ctx.components ?? []).map(component => String(component.manifest.id))); ctx.ready() } })
+  const badIdentityPlugin = defineToolPlugin({ id: 'example.identity-export', version: '1.0.0', title: 'Bad identity', execute: () => 1 })
+  const badIdentity = component(badIdentityPlugin, 'tool'); badIdentity.manifest.id = 'example.identity-bad'
+  const identityDependentPlugin = defineToolPlugin({ id: 'example.identity-dependent', version: '1.0.0', title: 'Dependent', execute: () => 1 })
+  const identityDependent = component(identityDependentPlugin, 'tool', [{ id: 'example.identity-bad', version: '1.0.0' }])
+  const identityRuntime = createOfficialCoreRuntime(component(core, 'core'))
+  await new HostCoreSession({ ...plan(), core: sel('example.closure-core'), plugins: [sel('example.identity-bad'), sel('example.identity-dependent')] } as any, { call: async () => null }, [badIdentity, identityDependent]).boot(identityRuntime)
+  assert.deepEqual(seen, [], 'identity-quarantined plugin and required dependent must not reach Core')
+  assert.deepEqual(identityRuntime.listPlugins(), [])
+  assert.equal(identityRuntime.listQuarantined().length, 2)
+  assert.match(identityRuntime.listQuarantined().find(entry => entry.id === 'example.identity-dependent')!.reason, /required dependency/)
+
+  const failingLlm = defineLlmSystem({ id: 'example.failing-llm', version: '1.0.0', title: 'Failing LLM', start() { throw new Error('llm init failed') }, route: () => ({ providerId: 'none', model: 'none' }) })
+  const llmDependentPlugin = defineToolPlugin({ id: 'example.llm-dependent', version: '1.0.0', title: 'LLM dependent', execute: () => 1 })
+  const failingLlmComponent = component(failingLlm, 'llm-system')
+  const llmDependent = component(llmDependentPlugin, 'tool', [{ id: 'example.failing-llm', version: '1.0.0' }])
+  const llmSeen: string[] = []
+  const llmCore = defineCore({ id: 'example.llm-closure-core', version: '1.0.0', title: 'Core', start(ctx) { llmSeen.push(...(ctx.components ?? []).map(component => String(component.manifest.id))); ctx.ready() } })
+  const llmRuntime = createOfficialCoreRuntime(component(llmCore, 'core'))
+  await new HostCoreSession({ ...plan(), core: sel('example.llm-closure-core'), plugins: [sel('example.failing-llm'), sel('example.llm-dependent')] } as any, { call: async () => null }, [failingLlmComponent, llmDependent]).boot(llmRuntime)
+  assert.deepEqual(llmSeen, [])
+  assert.equal(llmRuntime.listPlugins().length, 0)
+  assert.equal(llmRuntime.listQuarantined().length, 2)
+  assert.match(llmRuntime.listQuarantined().find(entry => entry.id === 'example.llm-dependent')!.reason, /required dependency/)
+})
+
 test('selection is explicit when multiple plugins share a category', async () => {
   const core = defineCore({ id: 'example.core3', version: '1.0.0', title: 'Core', start(ctx) { ctx.ready() } })
   const make = (id: string) => defineSolution({ id, version: '1.0.0', title: id, assemblePrompt: () => id })

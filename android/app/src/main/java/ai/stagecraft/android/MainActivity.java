@@ -328,19 +328,12 @@ public final class MainActivity extends Activity {
                 return result.toString();
             }
             case "host.restart": {
-                // 重启 Core（插件配置变更后生效）。:core 内 stopSelf 在绑定存活时不会重建（真机实测，
-                // 见 CoreService renderer-gone 注释）——stopGracefully 只会掏空服务实例，gateway 将永久失联。
-                // 改走与 renderer-gone 相同、Gate D 已验证的进程恢复链：kill :core（同 uid 允许）
-                // → binder death → CoreConnection 幂等重绑 → BIND_AUTO_CREATE 重建 → 新 endpoint + launch plan。
-                JSONObject endpoint = coreConnection == null ? null : coreConnection.endpoint();
-                int corePid = endpoint == null ? 0 : endpoint.optInt("pid", 0);
-                if (corePid > 0) {
-                    AppLog.i("host.restart: kill :core pid=" + corePid + "（binder death → 幂等重绑 → 重建）");
-                    android.os.Process.killProcess(corePid);
-                } else {
-                    // Core 未就绪（无 endpoint）：退回优雅停止请求（无重建承诺，重建链由恢复页兜底）
-                    AppLog.i("host.restart: endpoint 不可用，退回 requestStop");
-                    if (coreConnection != null) coreConnection.requestStop();
+                // CoreConnection owns the cold-restart contract. It kills the Core
+                // process when an endpoint exists; before handshake it detaches the
+                // binding, stops the bind-only service, and starts bounded rebind.
+                boolean accepted = coreConnection != null && coreConnection.restart();
+                if (!accepted) {
+                    return "{\"status\":503,\"body\":\"{\\\"error\\\":{\\\"code\\\":\\\"core_restart_unavailable\\\"}}\"}";
                 }
                 return "{\"status\":200,\"body\":\"{\\\"ok\\\":true,\\\"restarting\\\":true}\"}";
             }

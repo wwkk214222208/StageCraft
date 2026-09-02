@@ -9,7 +9,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isLoopbackHost } from '../remote-access.ts'
 import type { ComponentLaunchPlan, ComponentManifest } from './component-contract.ts'
-import { validateComponentLaunchPlan } from './launch-plan.ts'
+import { buildComponentLaunchPlan, validateComponentLaunchPlan } from './launch-plan.ts'
 import { validateComponentManifest, isPortableRelativePath } from './component-validation.ts'
 import { negotiateCapabilities } from './capabilities.ts'
 import { capabilityForHostOperation, createNodeFileComponentStorage, type ComponentStoragePort, type HostPortCaller } from './component-storage.ts'
@@ -80,7 +80,6 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
       ? verifyArtifact(componentsRoot, component, component.entrypoints.ui, component.integrity.ui, 'ui entry')
       : undefined,
   }))
-  const uiEntries = verified.filter(component => component.uiPath).map(component => ({ id: component.manifest.id, version: component.manifest.version, path: component.uiPath! }))
   const loadedComponents: LoadedCoreComponent[] = []
   const quarantinedPlugins: { id: string; version: string; reason: string }[] = []
   // All selected artifacts are checked before any third-party module is imported.
@@ -97,9 +96,23 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
       diagnostics.push(`plugin quarantined: ${component.manifest.id}@${component.manifest.version} import failed: ${reason}`)
     }
   }
-  const effectivePlan = quarantinedPlugins.length
-    ? { ...plan, plugins: plan.plugins.filter(selection => !quarantinedPlugins.some(quarantined => quarantined.id === selection.id && quarantined.version === selection.version)) }
-    : plan
+  const quarantinedKeys = new Set(quarantinedPlugins.map(plugin => `${plugin.id}@${plugin.version}`))
+  // Rebuild the effective plan from the exact manifests that made it through
+  // import. Filtering selections alone leaves the requested planHash behind,
+  // which makes the boot request internally inconsistent.
+  let effectivePlan: ComponentLaunchPlan
+  try {
+    effectivePlan = buildComponentLaunchPlan({
+      core: coreManifest,
+      plugins: verified.slice(1).filter(component => !quarantinedKeys.has(`${component.manifest.id}@${component.manifest.version}`)).map(component => component.manifest),
+      hostApiVersion: plan.hostApiVersion,
+      stateSchemaVersion: plan.stateSchemaVersion,
+    })
+  } catch (error) {
+    throw stageError('plan', coreManifest.id, error instanceof Error ? error.message : String(error))
+  }
+  const effectiveVerified = verified.filter((component, index) => index === 0 || !quarantinedKeys.has(`${component.manifest.id}@${component.manifest.version}`))
+  const effectiveUiEntries = effectiveVerified.filter(component => component.uiPath).map(component => ({ id: component.manifest.id, version: component.manifest.version, path: component.uiPath! }))
   let entry: HostCoreEntry
   try {
     const moduleUrl = `${pathToFileURL(verified[0].runtimePath).href}?stagecraftM4=${++importNonce}`
@@ -128,7 +141,7 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
       mkdirSync(join(options.userDataRoot, 'data'), { recursive: true })
       writeFileSync(join(options.userDataRoot, 'data', 'v2-host-token'), authToken, { encoding: 'utf8', mode: 0o600 })
     } catch { /* best effort: embedded callers use the returned authToken */ }
-    server = createHttpServer(session, plan, coreManifest, diagnostics, uiEntries, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES, authToken)
+    server = createHttpServer(session, effectivePlan, plan.planHash, coreManifest, diagnostics, effectiveUiEntries, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES, authToken)
     await listen(server, port, host)
   } catch (error) {
     let cleanupError: unknown
@@ -248,7 +261,7 @@ function createHostPort(options: HostPortOptions): { call(operation: string, inp
   } }
 }
 
-function createHttpServer(session: HostCoreSession, plan: ComponentLaunchPlan, manifest: ComponentManifest, diagnostics: readonly string[], uiEntries: readonly { id: string; version: string; path: string }[], maxBodyBytes: number, authToken: string): Server {
+function createHttpServer(session: HostCoreSession, plan: ComponentLaunchPlan, requestedPlanHash: string, manifest: ComponentManifest, diagnostics: readonly string[], uiEntries: readonly { id: string; version: string; path: string }[], maxBodyBytes: number, authToken: string): Server {
   const requireToken = (request: IncomingMessage, url: URL): void => {
     const provided = String(request.headers['x-stagecraft-token'] ?? url.searchParams.get('token') ?? '')
     const providedBytes = Buffer.from(provided); const expectedBytes = Buffer.from(authToken)
@@ -257,7 +270,8 @@ function createHttpServer(session: HostCoreSession, plan: ComponentLaunchPlan, m
   // DNS-rebinding guard: a web page must not reach the Host through a
   // rebinded domain name; loopback literals only.
   const requireLoopbackHostHeader = (request: IncomingMessage): void => {
-    const hostHeader = String(request.headers.host ?? '').split(':')[0]
+    const rawHost = String(request.headers.host ?? '').trim()
+    const hostHeader = rawHost.startsWith('[') ? rawHost.slice(1, rawHost.indexOf(']')) : rawHost.includes(':') && rawHost.indexOf(':') === rawHost.lastIndexOf(':') ? rawHost.slice(0, rawHost.lastIndexOf(':')) : rawHost
     if (!isLoopbackHost(hostHeader)) throw httpError(403, 'forbidden_host', 'Host header must be a loopback literal')
   }
   return createServer(async (request, response) => {
@@ -271,12 +285,12 @@ function createHttpServer(session: HostCoreSession, plan: ComponentLaunchPlan, m
       }
       if (request.method === 'GET' && url.pathname === '/api/v2/core/status') {
         requireLoopbackHostHeader(request)
-        sendJson(response, 200, { ok: session.state === 'ready', state: session.state, core: { id: manifest.id, version: manifest.version }, planHash: plan.planHash, diagnostics, mountUrl: '/api/v2/ui', uiEntries: uiEntries.map(entry => ({ id: entry.id, version: entry.version, url: `/api/v2/components/${encodeURIComponent(entry.id)}/${encodeURIComponent(entry.version)}/ui` })) })
+        sendJson(response, 200, { ok: session.state === 'ready', state: session.state, core: { id: manifest.id, version: manifest.version }, planHash: plan.planHash, requestedPlanHash, effectivePlanHash: plan.planHash, diagnostics, mountUrl: '/api/v2/ui', uiEntries: uiEntries.map(entry => ({ id: entry.id, version: entry.version, url: `/api/v2/components/${encodeURIComponent(entry.id)}/${encodeURIComponent(entry.version)}/ui` })) })
         return
       }
       if (request.method === 'GET') {
         const ui = uiEntries.find(entry => url.pathname === `/api/v2/components/${encodeURIComponent(entry.id)}/${encodeURIComponent(entry.version)}/ui`)
-        if (ui) { response.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(readFileSync(ui.path)); return }
+        if (ui) { requireLoopbackHostHeader(request); response.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(readFileSync(ui.path)); return }
       }
       if (request.method === 'POST' && url.pathname === '/api/v2/core/invoke') {
         requireLoopbackHostHeader(request)

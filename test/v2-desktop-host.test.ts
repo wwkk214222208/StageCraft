@@ -226,9 +226,9 @@ export default {
 test('v2 desktop host quarantines a plugin that throws at import and boots the Core without it', async () => {
   const base = mkdtempSync(join(root, '.tmp-v2-host-quarantine-')); try {
     setupCoreWithPlugin(base)
-    const badDir = join(base, 'components', 'example.bad', '1.0.0'); const badRuntime = join(badDir, 'dist', 'index.js')
-    mkdirSync(join(badDir, 'dist'), { recursive: true }); writeFileSync(badRuntime, `throw new Error('boom at import')`)
-    const bad: ComponentManifest = { schemaVersion: '0.1', id: 'example.bad', version: '1.0.0', title: 'Bad', componentType: 'plugin', pluginCategory: 'tool', entrypoints: { runtime: 'dist/index.js' }, integrity: { runtime: `sha256-${createHash('sha256').update(readFileSync(badRuntime)).digest('hex')}` } }
+    const badDir = join(base, 'components', 'example.bad', '1.0.0'); const badRuntime = join(badDir, 'dist', 'index.js'); const badUi = join(badDir, 'dist', 'ui.js')
+    mkdirSync(join(badDir, 'dist'), { recursive: true }); writeFileSync(badRuntime, `throw new Error('boom at import')`); writeFileSync(badUi, 'export const badUi = true')
+    const bad: ComponentManifest = { schemaVersion: '0.1', id: 'example.bad', version: '1.0.0', title: 'Bad', componentType: 'plugin', pluginCategory: 'tool', entrypoints: { runtime: 'dist/index.js', ui: 'dist/ui.js' }, integrity: { runtime: `sha256-${createHash('sha256').update(readFileSync(badRuntime)).digest('hex')}`, ui: `sha256-${createHash('sha256').update(readFileSync(badUi)).digest('hex')}` } }
     writeFileSync(join(badDir, 'manifest.json'), JSON.stringify(bad, null, 2))
     const corePath = join(base, 'components', 'example.desktop-core', '1.0.0', 'manifest.json')
     const core = JSON.parse(readFileSync(corePath, 'utf8')) as ComponentManifest
@@ -238,6 +238,12 @@ test('v2 desktop host quarantines a plugin that throws at import and boots the C
     assert.equal(host.session.state, 'ready', 'Core must still boot when a plugin fails at import')
     assert.deepEqual(host.quarantinedPlugins, [{ id: 'example.bad', version: '1.0.0', reason: 'boom at import' }])
     assert.deepEqual(host.session.request.pluginSelections.map(selection => selection.id), ['example.tool'], 'effective selections must exclude the quarantined plugin')
+    assert.equal(host.session.request.planHash, host.effectivePlan.planHash, 'effective request hash must match its effective plugin set')
+    assert.notEqual(host.plan.planHash, host.effectivePlan.planHash, 'quarantine must produce a distinct effective hash')
+    const status = await (await fetch(`http://127.0.0.1:${(host.server.address() as any).port}/api/v2/core/status`)).json() as any
+    assert.equal(status.requestedPlanHash, host.plan.planHash)
+    assert.equal(status.effectivePlanHash, host.effectivePlan.planHash)
+    assert.equal(status.uiEntries.some((entry: any) => entry.id === 'example.bad'), false, 'quarantined plugin UI must not be exposed')
     assert.ok(host.diagnostics.some(entry => entry.includes('plugin quarantined: example.bad@1.0.0')))
     await host.close()
   } finally { rmSync(base, { recursive: true, force: true }); delete (globalThis as { __m4CoreImported?: boolean }).__m4CoreImported }

@@ -1,11 +1,13 @@
 package ai.stagecraft.android;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 import org.junit.Test;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 import static org.junit.Assert.assertEquals;
@@ -77,6 +79,44 @@ public final class V2ComponentStorageTest {
             .put("area", "absent"));
         assertEquals(true, readResult.getBoolean("ok"));
         assertTrue(readResult.isNull("value"));
+    }
+
+    @Test public void allJsonValueKindsRoundTripWithUtf8Content() throws Exception {
+        File files = Files.createTempDirectory("v2storage").toFile();
+        V2ComponentStore store = storeWithComponent(files, "example.tool", "1.0.0", true);
+        V2ComponentStorage storage = new V2ComponentStorage(files, store);
+        Object[] values = new Object[] {
+            new JSONArray().put("你好").put(3),
+            "纯文本🙂",
+            true,
+            17,
+            JSONObject.NULL,
+        };
+        for (int index = 0; index < values.length; index++) {
+            String area = "value" + index;
+            storage.write(new JSONObject().put("caller", caller("example.tool", "1.0.0")).put("area", area).put("value", values[index]));
+            Object actual = storage.read(new JSONObject().put("caller", caller("example.tool", "1.0.0")).put("area", area)).opt("value");
+            if (values[index] instanceof JSONArray) assertEquals(values[index].toString(), actual.toString());
+            else if (values[index] == JSONObject.NULL) assertTrue(actual == JSONObject.NULL);
+            else assertEquals(values[index], actual);
+        }
+    }
+
+    @Test public void utf8LimitAndCompleteReadsUseBytes() throws Exception {
+        File files = Files.createTempDirectory("v2storage").toFile();
+        V2ComponentStore store = storeWithComponent(files, "example.tool", "1.0.0", true);
+        V2ComponentStorage storage = new V2ComponentStorage(files, store);
+        StringBuilder longText = new StringBuilder();
+        while (longText.length() < 20_000) longText.append("完整读取🙂");
+        storage.write(new JSONObject().put("caller", caller("example.tool", "1.0.0")).put("area", "large").put("value", longText.toString()));
+        assertEquals(longText.toString(), storage.read(new JSONObject().put("caller", caller("example.tool", "1.0.0")).put("area", "large")).getString("value"));
+
+        StringBuilder overBytes = new StringBuilder();
+        while (overBytes.length() < V2ComponentStorage.MAX_VALUE_BYTES / 3 + 1) overBytes.append('界');
+        try {
+            storage.write(new JSONObject().put("caller", caller("example.tool", "1.0.0")).put("area", "too-large").put("value", overBytes.toString()));
+            fail("storage limit must be measured in UTF-8 bytes");
+        } catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("bytes")); }
     }
 
     @Test public void undeclaredCapabilityIsDenied() throws Exception {

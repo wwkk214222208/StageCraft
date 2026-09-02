@@ -18,8 +18,9 @@ The reference Host is fail-closed for network exposure: M4 accepts only
 /api/v2/core/invoke` and `POST /api/v2/core/stream` require a loopback API
 token (`x-stagecraft-token` header or `?token=`); the token is generated at
 startup, persisted at `<userDataRoot>/data/v2-host-token`, and returned as
-`authToken`. Every `/api/v2` route also rejects a non-loopback `Host` header
-(DNS-rebinding guard). Remote (non-loopback) v2 access remains out of scope.
+`authToken`. Every `/api/v2` route, including component UI GETs, also rejects a
+non-loopback `Host` header (DNS-rebinding guard). Remote (non-loopback) v2
+access remains out of scope.
 
 M4 does not install archives. The Host validates plan/manifest shape, component-root containment (including realpath), single-file browser ESM restrictions and SHA-256 integrity before importing the selected Core. Runtime and UI entries may not use static/export-from/dynamic module loading; authors should bundle with the StageCraft CLI first. A present but invalid explicit plan is an error and enters the existing fallback; it is never silently changed to legacy selection.
 
@@ -33,11 +34,13 @@ After those checks, ordinary plugin modules are handed to Core through the
 generic read-only `CoreBootContext.components` list; the boot request contains
 the effective `pluginSelections`. A plugin whose module throws at import time
 is quarantined with a status diagnostic and excluded from the effective
-selections — the Core boots with the remaining set; artifact verification
-failures (integrity, path, browser-ESM rules) remain fail-closed startup
-errors. The Host does not interpret LLM, Solution, or UI
-semantics, and no official Core Plugin API is required.
+selections — the Core boots with the remaining set. The Host rebuilds a
+self-consistent effective plan and status reports both `requestedPlanHash` and
+`effectivePlanHash`; UI entries belonging to import-quarantined plugins are
+not exposed. Artifact verification failures (integrity, path, browser-ESM
+rules) remain fail-closed startup errors. The Host does not interpret LLM,
+Solution, or UI semantics, and no official Core Plugin API is required.
 
 The imported default export may implement the M3 `HostCoreEntry` directly, or use the explicit M2 adapter: an M2 `defineCore` plugin's `registerCommand` handlers become generic Host→Core operations, and `ready()` maps to the Host-Core handshake. The external package remains described by a M3 `ComponentManifest`; the M2 authoring manifest is not silently reused as that package manifest.
 
-Shutdown is ordered as stop HTTP acceptance, invoke Core shutdown, then release the session; cleanup is attempted in `finally` even when shutdown reports an error. When the v2 Host fails to start, `src/server.ts` falls back to the v2 recovery server (`src/v2/desktop-recovery.ts`, `/admin/v2`), which imports only the pure contract/plan modules and can disable a plugin (rewrite the plan with fresh hashes) or clear the plan entirely; without a v2 plan the v1 plugin fallback page (`/admin/plugins`) remains the recovery entry. M4 is intentionally not a loader/installer: signatures, strong sandboxing, native components, marketplace/Git, hot reload, desktop last-good plan tracking and full UI framework integration remain future work. Third-party code is user-trusted code.
+Shutdown is ordered as stop HTTP acceptance, invoke Core shutdown, then release the session; cleanup is attempted in `finally` even when shutdown reports an error. When the v2 Host fails to start, `src/server.ts` falls back to the v2 recovery server (`src/v2/desktop-recovery.ts`, `/admin/v2`), which also requires a generated loopback-only CSRF token in every mutating form (or the equivalent header), rejects non-loopback `Host` headers, and can disable a plugin (rewrite the plan with fresh hashes) or clear the plan entirely; without a v2 plan the v1 plugin fallback page (`/admin/plugins`) remains the recovery entry. M4 is intentionally not a loader/installer: signatures, strong sandboxing, native components, marketplace/Git, hot reload, desktop last-good plan tracking and full UI framework integration remain future work. Third-party code is user-trusted code.

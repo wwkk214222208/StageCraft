@@ -46,7 +46,6 @@ test('harness persists credential profiles, secrets and usage through the store'
   const first = await createAuthoringLlmSystemHarness(llm, {}, { store })
   first.setCredentialSecret('main', 'sk-demo')
   first.recordUsage({ requestId: 'r0', providerId: 'demo', model: 'demo-1', inputTokens: 1, outputTokens: 1 })
-  await new Promise(resolve => setTimeout(resolve, 0))
   await first.stop()
   assert.ok(snapshots.length > 0)
 
@@ -56,6 +55,47 @@ test('harness persists credential profiles, secrets and usage through the store'
   const chunks = []; for await (const chunk of second.complete({ requestId: 'r1', messages: [{ role: 'user', content: 'hi' }] })) chunks.push(chunk)
   assert.equal((chunks[0] as any).text, 'secret=sk-demo', 'complete() must inject the stored secret when the caller passes none')
   await second.stop()
+})
+
+test('LLM harness stop waits for queued writes before reporting shutdown', async () => {
+  const snapshots: LlmHarnessSnapshot[] = []
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const store: LlmHarnessStore = {
+    async read() { return undefined },
+    async write(snapshot) { await gate; snapshots.push(structuredClone(snapshot)) },
+  }
+  const llm = defineLlmSystem({ id: 'example.slow-llm', version: '1.0.0', title: 'Slow LLM', start() {}, route: () => ({ providerId: 'demo', model: 'demo-1' }) })
+  const harness = await createAuthoringLlmSystemHarness(llm, {}, { store })
+  harness.recordUsage({ requestId: 'slow', providerId: 'demo', model: 'demo-1', inputTokens: 2, outputTokens: 1 })
+  const stopping = harness.stop()
+  await Promise.resolve()
+  assert.equal(snapshots.length, 0, 'shutdown must still be waiting on the store')
+  release()
+  await stopping
+  assert.equal(harness.status, 'stopped')
+  assert.equal(snapshots.at(-1)?.usage[0]?.requestId, 'slow')
+})
+
+test('LLM harness flushes slow persistence and becomes stopped when plugin stop throws', async () => {
+  const snapshots: LlmHarnessSnapshot[] = []
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const store: LlmHarnessStore = {
+    async read() { return undefined },
+    async write(snapshot) { await gate; snapshots.push(structuredClone(snapshot)) },
+  }
+  const llm = defineLlmSystem({ id: 'example.throwing-stop-llm', version: '1.0.0', title: 'Throwing stop LLM', start() {}, stop() { throw new Error('plugin stop failed') }, route: () => ({ providerId: 'demo', model: 'demo-1' }) })
+  const harness = await createAuthoringLlmSystemHarness(llm, {}, { store })
+  harness.recordUsage({ requestId: 'throwing-stop', providerId: 'demo', model: 'demo-1', inputTokens: 4, outputTokens: 2 })
+  const stopping = harness.stop()
+  await Promise.resolve()
+  assert.equal(snapshots.length, 0, 'the throwing stop must not bypass a pending write')
+  release()
+  await assert.rejects(stopping, /plugin stop failed/)
+  assert.equal(harness.status, 'stopped')
+  assert.equal(snapshots.at(-1)?.usage[0]?.requestId, 'throwing-stop')
+  await harness.stop()
 })
 
 test('official runtime restores config and LLM usage from host storage across restarts', async () => {

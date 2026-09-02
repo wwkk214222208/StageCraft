@@ -39,36 +39,42 @@ const remoteAccess = remoteEnabled
   : undefined
 const port = Number(process.env.PORT ?? '8787')
 
-try {
-  await startDesktopEntry({
-    planPath: join(userDataRoot, 'data', 'component-launch-plan.v2.json'),
-    legacyOptions: { userDataRoot, ...(host ? { host } : {}), ...(remoteAccess ? { remoteAccess } : {}) },
-    v2Options: { userDataRoot, ...(host ? { host } : {}), port },
-    hasPlan: existsSync,
-    startLegacy: startTavern,
-    startV2: startV2DesktopHost,
-  })
-} catch (error) {
-  // D2 兜底（§3.5）：主运行时失败也必须能进插件管理（查看隔离原因 / 停用问题插件），
-  // 否则"坏插件 → 起不来 → 进不去管理关掉它"死锁。兜底服务器只依赖 PluginConfigStore。
-  console.error('[StageCraft] 主运行时启动失败：', error instanceof Error ? error.stack ?? error.message : error)
+/** Start the desktop composition root and, if necessary, a repair-only server. */
+export async function startDesktopServer(): Promise<void> {
   try {
-    const fallbackPort = Number.isInteger(port) && port > 0 ? port : 8787
-    const v2PlanPath = join(userDataRoot, 'data', 'component-launch-plan.v2.json')
-    if (existsSync(v2PlanPath)) {
-      // v2 计划存在时走 v2 恢复入口：v1 兜底页不认识 v2 组件，修不了 v2 计划。
-      const recovery = await startV2DesktopRecoveryServer({ userDataRoot, port: fallbackPort, failure: error instanceof Error ? error.message : String(error) })
-      const address = recovery.server.address()
-      const actualPort = typeof address === 'object' && address ? address.port : fallbackPort
-      console.error(`[StageCraft] 已进入 v2 恢复模式：打开 http://127.0.0.1:${actualPort}/admin/v2 查看启动失败原因、停用问题插件或清除 v2 计划，修改后重启应用。`)
-      return
+    await startDesktopEntry({
+      planPath: join(userDataRoot, 'data', 'component-launch-plan.v2.json'),
+      legacyOptions: { userDataRoot, ...(host ? { host } : {}), ...(remoteAccess ? { remoteAccess } : {}) },
+      v2Options: { userDataRoot, ...(host ? { host } : {}), port },
+      hasPlan: existsSync,
+      startLegacy: startTavern,
+      startV2: startV2DesktopHost,
+    })
+  } catch (error) {
+    // D2 兜底（§3.5）：主运行时失败也必须能进插件管理（查看隔离原因 / 停用问题插件），
+    // 否则"坏插件 → 起不来 → 进不去管理关掉它"死锁。兜底服务器只依赖 PluginConfigStore。
+    console.error('[StageCraft] 主运行时启动失败：', error instanceof Error ? error.stack ?? error.message : error)
+    try {
+      const fallbackPort = Number.isInteger(port) && port > 0 ? port : 8787
+      const v2PlanPath = join(userDataRoot, 'data', 'component-launch-plan.v2.json')
+      if (existsSync(v2PlanPath)) {
+        // v2 计划存在时走 v2 恢复入口：v1 兜底页不认识 v2 组件，修不了 v2 计划。
+        const recovery = await startV2DesktopRecoveryServer({ userDataRoot, port: fallbackPort, failure: error instanceof Error ? error.message : String(error) })
+        const address = recovery.server.address()
+        const actualPort = typeof address === 'object' && address ? address.port : fallbackPort
+        console.error(`[StageCraft] 已进入 v2 恢复模式：打开 http://127.0.0.1:${actualPort}/admin/v2 查看启动失败原因、停用问题插件或清除 v2 计划，修改后重启应用。`)
+      } else {
+        const server = await startPluginFallbackServer({ root, userDataRoot, port: fallbackPort, ...(host && !remoteEnabled ? { host: '127.0.0.1' } : {}) })
+        const address = server.address()
+        const actualPort = typeof address === 'object' && address ? address.port : fallbackPort
+        console.error(`[StageCraft] 已进入恢复模式：打开 http://127.0.0.1:${actualPort}/admin/plugins 查看插件状态并停用问题插件，修改后重启应用。`)
+      }
+    } catch (fallbackError) {
+      console.error('[StageCraft] 恢复模式服务器启动失败：', fallbackError instanceof Error ? fallbackError.message : fallbackError)
+      process.exitCode = 1
     }
-    const server = await startPluginFallbackServer({ root, userDataRoot, port: fallbackPort, ...(host && !remoteEnabled ? { host: '127.0.0.1' } : {}) })
-    const address = server.address()
-    const actualPort = typeof address === 'object' && address ? address.port : fallbackPort
-    console.error(`[StageCraft] 已进入恢复模式：打开 http://127.0.0.1:${actualPort}/admin/plugins 查看插件状态并停用问题插件，修改后重启应用。`)
-  } catch (fallbackError) {
-    console.error('[StageCraft] 恢复模式服务器启动失败：', fallbackError instanceof Error ? fallbackError.message : fallbackError)
-    process.exitCode = 1
   }
 }
+
+// Keep the module importable for tests and tooling without starting a listener.
+if (process.env.STAGECRAFT_SKIP_START !== '1') await startDesktopServer()

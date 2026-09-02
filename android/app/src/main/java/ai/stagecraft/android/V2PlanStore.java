@@ -22,7 +22,8 @@ public final class V2PlanStore {
     private static final int MAX_PLAN_BYTES = 256 * 1024;
     public static final String SUPPORTED_HOST_API_VERSION = "0.1";
     public static final String HOST_LOG_CAPABILITY = "host.log";
-    private static final Set<String> SUPPORTED_HOST_CAPABILITIES = Collections.singleton(HOST_LOG_CAPABILITY);
+    public static final String HOST_STORAGE_CAPABILITY = "host.storage";
+    private static final Set<String> SUPPORTED_HOST_CAPABILITIES = new HashSet<>(java.util.Arrays.asList(HOST_LOG_CAPABILITY, HOST_STORAGE_CAPABILITY));
     private static final Pattern ID = Pattern.compile("^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$");
     private static final Pattern VERSION = Pattern.compile("^\\d+\\.\\d+\\.\\d+(?:[-+][\\w.-]+)?$");
 
@@ -67,6 +68,9 @@ public final class V2PlanStore {
         if (!SUPPORTED_HOST_API_VERSION.equals(plan.optString("hostApiVersion"))) throw new IllegalArgumentException("unsupported Android Host API: " + plan.optString("hostApiVersion"));
         JSONObject core = plan.optJSONObject("core"); if (core == null || !validSelection(core)) throw new IllegalArgumentException("v2 plan requires an independent core selection");
         JSONArray plugins = plan.optJSONArray("plugins"); if (plugins == null) throw new IllegalArgumentException("v2 plan plugins must be an array"); Set<String> ids = new HashSet<>(); ids.add(core.optString("id")); for (int i = 0; i < plugins.length(); i++) { JSONObject plugin = plugins.optJSONObject(i); if (plugin == null || !validSelection(plugin)) throw new IllegalArgumentException("plugin selection is invalid"); if (!ids.add(plugin.optString("id"))) throw new IllegalArgumentException("duplicate component id in v2 plan: " + plugin.optString("id")); if (plugin.has("componentTypeCore") && !(plugin.opt("componentTypeCore") instanceof Boolean)) throw new IllegalArgumentException("plugin componentTypeCore must be boolean"); if (plugin.optBoolean("componentTypeCore", false)) throw new IllegalArgumentException("core is not allowed in plugins"); }
+        if (plan.has("planHash")) {
+            if (!isString(plan, "planHash") || !planHash(plan).equals(plan.optString("planHash"))) throw new IllegalArgumentException("planHash mismatch");
+        }
     }
 
     /** Validate selected package identities and exact manifest hashes before cold boot. */
@@ -91,7 +95,7 @@ public final class V2PlanStore {
 
     private static boolean isString(JSONObject value, String key) { return value != null && value.opt(key) instanceof String; }
 
-    /** Android's narrow HostPort currently grants only diagnostic logging. */
+    /** Android HostPort grants the negotiated diagnostic logging and per-component storage capabilities. */
     private static void validateRequiredCapabilities(JSONObject manifest) {
         JSONObject capabilities = manifest.optJSONObject("capabilities"); if (capabilities == null || !capabilities.has("required")) return;
         Object raw = capabilities.opt("required"); if (!(raw instanceof JSONArray)) throw new IllegalArgumentException("capabilities.required must be an array");
@@ -128,7 +132,20 @@ public final class V2PlanStore {
         for (int i = 0; i < plugins.length(); i++) { JSONObject plugin = plugins.optJSONObject(i); if (plugin == null) continue; JSONObject requiredApi = plugin.optJSONObject("coreApi"); String required = requiredApi == null ? "" : requiredApi.optString("version"); if (!required.isEmpty() && !required.equals(provided)) throw new IllegalArgumentException("plugin " + plugin.optString("id") + " requires Core API " + required + " but selected Core provides " + (provided.isEmpty() ? "none" : provided)); }
     }
 
-    private static JSONObject refreshPlanHash(JSONObject plan) throws Exception { JSONObject copy = new JSONObject(plan.toString()); copy.remove("planHash"); return copy.put("planHash", manifestHash(copy)); }
+    private static JSONObject refreshPlanHash(JSONObject plan) throws Exception { JSONObject copy = new JSONObject(plan.toString()); copy.remove("planHash"); return copy.put("planHash", planHash(copy)); }
+
+    /** Plan identity contract shared with src/v2/launch-plan.ts. */
+    public static String planHash(JSONObject plan) {
+        JSONObject identity = new JSONObject();
+        try {
+            identity.put("planVersion", plan.opt("planVersion"));
+            identity.put("hostApiVersion", plan.opt("hostApiVersion"));
+            identity.put("core", plan.opt("core"));
+            identity.put("plugins", plan.opt("plugins"));
+            identity.put("stateSchemaVersion", plan.opt("stateSchemaVersion"));
+        } catch (Exception error) { throw new IllegalArgumentException("invalid plan identity", error); }
+        return manifestHash(identity);
+    }
 
     /** Same provisional FNV/stable JSON identity used by the TypeScript M3 contract. */
     public static String manifestHash(JSONObject manifest) { String value = stableStringify(manifest); int hash = 0x811c9dc5; for (int i = 0; i < value.length(); i++) { hash ^= value.charAt(i); hash *= 0x01000193; } return String.format("%08x", hash); }

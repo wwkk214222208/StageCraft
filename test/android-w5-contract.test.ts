@@ -204,6 +204,10 @@ test('W6：PluginLaunchPlan 隔离链路——组合根校验 + 桥回报 + heal
   const bridge = read('assets', 'web', 'core-host-bridge.js')
   assert.match(bridge, /applyLaunchPlan: function/, '桥必须暴露 applyLaunchPlan')
   assert.match(bridge, /plugin-report/, '桥必须转发 plugin-report')
+  assert.match(bridge, /function requestPlanHash/, 'v2 桥必须实现与 TS 同契约的 planHash')
+  assert.match(bridge, /planHash: requestPlanHash\(request, effectiveSelections\)/, '隔离插件后必须重算 effective planHash')
+  assert.match(bridge, /request\.planHash !== requestPlanHash\(request, requestedSelections\)/, '旧/伪造 planHash 不得被当作有效请求')
+  assert.match(bridge, /cooperative authorization inside one WebView/, 'caller 授权边界必须明确为合作式而非强安全边界')
 })
 
 test('W6：恢复联动——Core 断连自动导航恢复页，恢复后回本地 UI', () => {
@@ -213,6 +217,21 @@ test('W6：恢复联动——Core 断连自动导航恢复页，恢复后回本�
   assert.match(activity, /showPairingPage\(\)/, '恢复页=配对页（远程模式入口）')
   assert.match(activity, /returning to local UI/, 'Core 恢复必须回本地 UI')
   assert.match(activity, /core recovered/, '恢复后自动回本地')
+})
+
+test('W6：Android JS planHash 与 TS/Java 稳定哈希夹具一致', () => {
+  const bridge = read('assets', 'web', 'core-host-bridge.js')
+  const start = bridge.indexOf('function stableStringify')
+  const end = bridge.indexOf('async function startV2Core')
+  assert.ok(start >= 0 && end > start, '桥必须包含可执行的 planHash 实现')
+  const hashApi = Function(`${bridge.slice(start, end)}; return { requestPlanHash };`)()
+  const request = {
+    planVersion: '0.1', hostApiVersion: '0.1',
+    selectedCore: { id: 'example.core', version: '1.0.0', manifestHash: 'abcd1234' },
+    pluginSelections: [{ id: 'example.plugin', version: '1.0.0', manifestHash: 'efgh5678' }],
+    stateSchemaVersion: 'state-1',
+  }
+  assert.equal(hashApi.requestPlanHash(request, request.pluginSelections), '3b59c24a')
 })
 
 test('W6-1 整改：Core 业务路由必须全部挂载或明确裁决（无 handler_not_mounted 遗留）', () => {

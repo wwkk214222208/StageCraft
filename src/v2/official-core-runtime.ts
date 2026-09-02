@@ -29,6 +29,25 @@ function validateIdentity(component: LoadedCoreComponent): AnyPlugin {
 
 function selectionKey(selection: ComponentSelection): string { return `${selection.id}@${selection.version}` }
 
+/** Once a component is quarantined, isolate every selected component with a
+ * required edge to it as well. Repeat to reach the complete transitive
+ * dependent closure (optional edges intentionally do not propagate failure). */
+function quarantineRequiredDependents(components: readonly LoadedCoreComponent[], quarantined: Map<string, string>): void {
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const component of components) {
+      const key = `${component.manifest.id}@${component.manifest.version}`
+      if (quarantined.has(key)) continue
+      const dependency = (component.manifest.dependencies ?? []).find(dep => !dep.optional && quarantined.has(`${dep.id}@${dep.version}`))
+      if (!dependency) continue
+      const dependencyKey = `${dependency.id}@${dependency.version}`
+      quarantined.set(key, `required dependency ${dependencyKey} is quarantined: ${quarantined.get(dependencyKey)}`)
+      changed = true
+    }
+  }
+}
+
 /** Dependency-ordered load with plugin-level isolation: a component whose
  * dependency chain fails is quarantined with a reason instead of failing the
  * whole boot. The Core itself is validated separately by the caller. */
@@ -127,27 +146,35 @@ export function createOfficialCoreRuntime(coreComponent: LoadedCoreComponent, op
         core = validateIdentity(coreComponent) as CorePlugin
         const selected = context.request.pluginSelections
         const { ordered, quarantined: chainFailures } = orderComponents(context.components, selected)
-        loaded = ordered
         const quarantined = new Map(chainFailures)
         pluginValues = new Map()
         for (const component of ordered) {
           const key = `${component.manifest.id}@${component.manifest.version}`
           try { pluginValues.set(key, validateIdentity(component)) } catch (error) { quarantined.set(key, error instanceof Error ? error.message : String(error)) }
         }
-        const drivers = [...pluginValues.values()].filter((p): p is ProviderDriver => p?.kind === 'provider-driver')
+        quarantineRequiredDependents(ordered, quarantined)
+        const drivers = [...pluginValues.entries()].filter(([key, p]) => !quarantined.has(key) && p?.kind === 'provider-driver').map(([, p]) => p as ProviderDriver)
         for (const component of ordered) {
           const key = `${component.manifest.id}@${component.manifest.version}`
           const plugin = pluginValues.get(key)
-          if (!plugin) continue
+          if (!plugin || quarantined.has(key)) continue
           if (plugin.kind === 'llm-system') {
             try { llm.set(key, await createAuthoringLlmSystemHarness(plugin as LlmSystemPlugin, resolvedConfig, { drivers, store: createHostLlmStore(context.host, plugin.manifest) })) }
             catch (error) { quarantined.set(key, `llm system init failed: ${error instanceof Error ? error.message : String(error)}`); continue }
           }
-          await api.loadPlugin({ id: component.manifest.id, version: component.manifest.version, pluginCategory: component.manifest.pluginCategory! as OfficialCorePluginDescriptor['pluginCategory'] })
+        }
+        quarantineRequiredDependents(ordered, quarantined)
+        loaded = ordered.filter(component => !quarantined.has(`${component.manifest.id}@${component.manifest.version}`))
+        // Only the final viable set is reachable through the official API or
+        // the Core handoff. This also prevents a dependency's failed LLM
+        // initialization from leaving its dependents addressable.
+        for (const component of loaded) {
+          const key = `${component.manifest.id}@${component.manifest.version}`
+          active.add(key)
         }
         quarantinedPlugins.splice(0, quarantinedPlugins.length, ...[...quarantined].map(([key, reason]) => { const separator = key.lastIndexOf('@'); return { id: key.slice(0, separator), version: key.slice(separator + 1), reason } }))
         let innerReady = false
-        const authoringContext = { ...contextForCore(context, () => { if (innerReady) fail('Core ready() called more than once'); innerReady = true }), components: context.components.map(c => ({ manifest: c.manifest as unknown as Readonly<Record<string, unknown>>, defaultExport: c.defaultExport, module: c.module })) }
+        const authoringContext = { ...contextForCore(context, () => { if (innerReady) fail('Core ready() called more than once'); innerReady = true }), components: loaded.map(c => ({ manifest: c.manifest as unknown as Readonly<Record<string, unknown>>, defaultExport: c.defaultExport, module: c.module })) }
         coreStarted = true
         await core.start(authoringContext)
         if (!innerReady) fail('official Core did not call ready()')

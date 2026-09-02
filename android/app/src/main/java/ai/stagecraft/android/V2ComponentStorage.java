@@ -1,6 +1,8 @@
 package ai.stagecraft.android;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
+import org.json.JSONTokener;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -16,8 +18,13 @@ import java.util.regex.Pattern;
  * manifest 的 capabilities（required 或 optional）必须声明 host.storage。缺失 caller、
  * 组件未安装或能力未声明的调用一律 fail closed。
  *
- * 这不是秘密存储：内容是 filesDir 下的明文 JSON，信任级别与桌面 v2 存储一致；密钥级
- * 存储仍走 AndroidSecretStore（secret.* 操作）。
+ * 注意：caller 来自同一个 WebView 的合作式调用方，可以被页面脚本伪造；这里不是强安全
+ * 边界，也不是隔离/机密存储。使用方须自行承担同 WebView 内容互相冒充的风险。
+ *
+ * 这不是秘密存储：内容是 filesDir 下的明文 JSON，信任级别与桌面 v2 存储一致。
+ * secret.* 是可用的原生能力，但官方 v2 LLM reference 当前仍经 host.storage 将
+ * secrets 明文持久化在这里；同一 WebView 中的第三方可伪造 caller 读取它，用户须自行
+ * 承担风险。
  */
 public final class V2ComponentStorage {
     public static final String STORAGE_CAPABILITY = "host.storage";
@@ -41,7 +48,7 @@ public final class V2ComponentStorage {
         if (!file.isFile()) return new JSONObject().put("ok", true).put("value", JSONObject.NULL);
         byte[] bytes = readLimited(file);
         try {
-            return new JSONObject().put("ok", true).put("value", new JSONObject(new String(bytes, StandardCharsets.UTF_8)));
+            return new JSONObject().put("ok", true).put("value", parseJsonValue(bytes));
         } catch (Exception error) {
             // 损坏按缺失处理（与桌面参考实现一致），不阻断 Core 启动。
             return new JSONObject().put("ok", true).put("value", JSONObject.NULL);
@@ -53,8 +60,8 @@ public final class V2ComponentStorage {
         Caller caller = checkedCaller(input);
         String area = area(input);
         Object value = input == null ? null : input.opt("value");
-        String encoded = (value == null ? JSONObject.NULL : value).toString();
-        if (encoded.length() > MAX_VALUE_BYTES) throw new IllegalArgumentException("storage value exceeds " + MAX_VALUE_BYTES + " bytes");
+        String encoded = encodeJsonValue(value);
+        if (encoded.getBytes(StandardCharsets.UTF_8).length > MAX_VALUE_BYTES) throw new IllegalArgumentException("storage value exceeds " + MAX_VALUE_BYTES + " bytes");
         File file = fileFor(caller, area);
         File parent = file.getParentFile();
         if (parent != null && !parent.isDirectory() && !parent.mkdirs()) throw new IllegalStateException("cannot create storage directory");
@@ -113,13 +120,34 @@ public final class V2ComponentStorage {
 
     private static byte[] readLimited(File file) throws Exception {
         try (FileInputStream input = new FileInputStream(file)) {
-            byte[] bytes = new byte[(int) Math.min(file.length() + 1, MAX_VALUE_BYTES + 1)];
-            int read = input.read(bytes);
-            if (read > MAX_VALUE_BYTES) throw new IllegalArgumentException("storage value exceeds limit");
-            byte[] exact = new byte[Math.max(0, read)];
-            System.arraycopy(bytes, 0, exact, 0, exact.length);
-            return exact;
+            java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                if (output.size() + count > MAX_VALUE_BYTES) throw new IllegalArgumentException("storage value exceeds limit");
+                output.write(buffer, 0, count);
+            }
+            return output.toByteArray();
         }
+    }
+
+    /** Parse one complete JSON value (objects, arrays, primitives and null). */
+    private static Object parseJsonValue(byte[] bytes) throws Exception {
+        JSONTokener tokener = new JSONTokener(new String(bytes, StandardCharsets.UTF_8));
+        Object value = tokener.nextValue();
+        if (tokener.nextClean() != 0) throw new IllegalArgumentException("storage value contains trailing data");
+        return value == null ? JSONObject.NULL : value;
+    }
+
+    /** Match JSON.stringify(value ?? null) for all JSON values accepted by org.json. */
+    private static String encodeJsonValue(Object value) throws Exception {
+        if (value == null || value == JSONObject.NULL) return "null";
+        if (value instanceof JSONObject) return ((JSONObject) value).toString(2);
+        if (value instanceof JSONArray) return ((JSONArray) value).toString(2);
+        if (value instanceof String) return JSONObject.quote((String) value);
+        if (value instanceof Boolean) return value.toString();
+        if (value instanceof Number) return JSONObject.numberToString((Number) value);
+        throw new IllegalArgumentException("storage value is not JSON-serializable");
     }
 
     private static final class Caller {

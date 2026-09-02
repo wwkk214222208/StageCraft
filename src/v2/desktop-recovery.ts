@@ -9,7 +9,8 @@
  * plan only: disable a plugin, or clear the plan entirely (next start selects
  * the v1 composition root, which acts as the desktop rescue path).
  */
-import { createServer, type Server } from 'node:http'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { componentManifestHash, validateComponentManifest } from './component-validation.ts'
@@ -30,6 +31,8 @@ export interface V2DesktopRecoveryOptions {
 export interface V2DesktopRecoveryServer {
   readonly server: Server
   readonly planPath: string
+  /** Random capability required by mutating recovery actions. */
+  readonly authToken: string
   close(): Promise<void>
 }
 
@@ -39,6 +42,7 @@ export async function startV2DesktopRecoveryServer(options: V2DesktopRecoveryOpt
   const host = options.host ?? '127.0.0.1'
   const port = options.port ?? 8787
   if (!isLoopbackHost(host)) throw new Error(`v2 recovery server only permits loopback host (received ${host})`)
+  const authToken = randomBytes(32).toString('hex')
   const planPath = resolve(options.planPath ?? join(options.userDataRoot, 'data', 'component-launch-plan.v2.json'))
   const componentsRoot = resolve(options.componentsRoot ?? join(options.userDataRoot, 'components'))
 
@@ -80,7 +84,7 @@ export async function startV2DesktopRecoveryServer(options: V2DesktopRecoveryOpt
       const manifest = readManifest(selection.id, selection.version)
       const errors = manifest ? validateComponentManifest(manifest) : ['manifest missing on disk']
       const isCore = selection.id === plan.core.id
-      const disable = isCore ? '' : `<form method="post" action="/admin/v2/disable-plugin" style="display:inline"><input type="hidden" name="id" value="${escapeHtml(selection.id)}"><button>停用</button></form>`
+      const disable = isCore ? '' : `<form method="post" action="/admin/v2/disable-plugin" style="display:inline"><input type="hidden" name="id" value="${escapeHtml(selection.id)}"><input type="hidden" name="token" value="${escapeHtml(authToken)}"><button>停用</button></form>`
       return `<tr><td>${escapeHtml(selection.id)}</td><td>${escapeHtml(selection.version)}</td><td>${isCore ? 'core（不可停用）' : 'plugin'}</td><td>${manifest ? (errors.length ? escapeHtml(errors.join('; ')) : 'ok') : escapeHtml('manifest missing on disk')}</td><td>${disable}</td></tr>`
     }).join('') : '<tr><td colspan="5">launch plan 不存在（清除后下次启动将回到 v1）</td></tr>'
     return `<!doctype html>
@@ -92,17 +96,20 @@ export async function startV2DesktopRecoveryServer(options: V2DesktopRecoveryOpt
 ${options.failure ? `<pre style="background:#fdd;padding:0.5rem;white-space:pre-wrap">${escapeHtml(options.failure)}</pre>` : ''}
 <h2>当前计划（<code>${escapeHtml(planPath)}</code>）</h2>
 <table border="1" cellpadding="4" cellspacing="0"><tr><th>id</th><th>version</th><th>类型</th><th>manifest 校验</th><th>操作</th></tr>${rows}</table>
-<form method="post" action="/admin/v2/clear-plan" onsubmit="return confirm('清除 v2 计划并回到 v1 启动链？')"><button>清除 v2 计划（回到 v1 / rescue）</button></form>
+<form method="post" action="/admin/v2/clear-plan" onsubmit="return confirm('清除 v2 计划并回到 v1 启动链？')"><input type="hidden" name="token" value="${escapeHtml(authToken)}"><button>清除 v2 计划（回到 v1 / rescue）</button></form>
 <p style="color:#555">停用插件 = 从计划移除该组件并重算 planHash；清除计划 = 删除计划文件，下次启动按无计划处理（v1 组合根）。</p>
 </body></html>`
   }
 
   const server: Server = createServer(async (request, response) => {
     try {
+      requireLoopbackHostHeader(request)
       const url = new URL(request.url ?? '/', `http://127.0.0.1`)
+      if (request.method === 'GET' && url.pathname === '/') { respond(response, 302, 'text/plain; charset=utf-8', 'redirecting to /admin/v2', { Location: '/admin/v2' }); return }
       if (request.method === 'GET' && url.pathname === '/admin/v2') { respond(response, 200, 'text/html; charset=utf-8', page()); return }
       const body = request.method === 'POST' ? await readFormBody(request) : undefined
       if (request.method === 'POST' && url.pathname === '/admin/v2/disable-plugin') {
+        requireToken(request, body, authToken)
         const id = String(body?.get('id') ?? '')
         const plan = readPlan()
         if (!plan) throw new Error('launch plan is missing')
@@ -111,24 +118,41 @@ ${options.failure ? `<pre style="background:#fdd;padding:0.5rem;white-space:pre-
         respond(response, 303, 'text/plain; charset=utf-8', 'plugin disabled'); return
       }
       if (request.method === 'POST' && url.pathname === '/admin/v2/clear-plan') {
+        requireToken(request, body, authToken)
         rmSync(planPath, { force: true })
         respond(response, 303, 'text/plain; charset=utf-8', 'plan cleared'); return
       }
       respond(response, 404, 'application/json; charset=utf-8', JSON.stringify({ ok: false, error: { code: 'not_found' } }))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      respond(response, 400, 'text/plain; charset=utf-8', `recovery action failed: ${message}`)
+      const failure = error as RecoveryHttpFailure
+      respond(response, failure.status ?? 400, 'application/json; charset=utf-8', JSON.stringify({ ok: false, error: { code: failure.code ?? 'recovery_failed', message } }))
     }
   })
   await new Promise<void>((resolveListen, rejectListen) => { server.once('error', rejectListen); server.listen(port, host, () => resolveListen()) })
   return {
-    server, planPath,
+    server, planPath, authToken,
     close: () => new Promise(resolveClose => { server.close(() => resolveClose()) }),
   }
 }
 
-function respond(response: import('node:http').ServerResponse, status: number, type: string, body: string): void {
-  response.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' })
+function requireLoopbackHostHeader(request: IncomingMessage): void {
+  const raw = String(request.headers.host ?? '').trim()
+  const host = raw.startsWith('[') ? raw.slice(1, raw.indexOf(']')) : raw.includes(':') && raw.indexOf(':') === raw.lastIndexOf(':') ? raw.slice(0, raw.lastIndexOf(':')) : raw
+  if (!isLoopbackHost(host)) throw recoveryError(403, 'forbidden_host', 'Host header must be a loopback literal')
+}
+
+function requireToken(request: IncomingMessage, body: URLSearchParams | undefined, expectedToken: string): void {
+  const provided = String(request.headers['x-stagecraft-token'] ?? body?.get('token') ?? '')
+  const providedBytes = Buffer.from(provided); const expectedBytes = Buffer.from(expectedToken)
+  if (providedBytes.length !== expectedBytes.length || !timingSafeEqual(providedBytes, expectedBytes)) throw recoveryError(401, 'unauthorized', 'a valid recovery token is required for this operation')
+}
+
+interface RecoveryHttpFailure extends Error { status?: number; code?: string }
+function recoveryError(status: number, code: string, message: string): RecoveryHttpFailure { const error = new Error(message) as RecoveryHttpFailure; error.status = status; error.code = code; return error }
+
+function respond(response: import('node:http').ServerResponse, status: number, type: string, body: string, extraHeaders: Record<string, string> = {}): void {
+  response.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', ...extraHeaders })
   response.end(body)
 }
 

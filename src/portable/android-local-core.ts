@@ -25,6 +25,20 @@ export const ANDROID_CORE_BRIDGE_VERSION = '1'
 export const PROVIDER_SECRET_KEY = 'local.provider.default'
 export const LOCAL_ROOM_ID = 'android-local-room'
 
+export interface RequestScopedAbortRegistry {
+  register(requestId: string, abort: () => void): void
+  cancel(requestId: string): void
+  remove(requestId: string): void
+}
+export function createRequestScopedAbortRegistry(): RequestScopedAbortRegistry {
+  const active = new Map<string, () => void>()
+  return {
+    register(requestId: string, abort: () => void): void { if (active.has(requestId)) throw new Error(`Duplicate active requestId: ${requestId}`); active.set(requestId, abort) },
+    cancel(requestId: string): void { active.get(requestId)?.() },
+    remove(requestId: string): void { active.delete(requestId) },
+  }
+}
+
 /**
  * Android 内置插件候选集（构建期确定；与桌面 manifest 契约同源）。
  * 组合根装配（android-composition）的 4 类内置插件：solution/llm/state/human。
@@ -100,11 +114,14 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
 
   // ── 异步桥（model.request / story.read）──
   let asyncSequence = 0
-  const pendingAsync = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; onStreamPayload?: (payload: string) => void }>()
-  const invokeAsync = (operation: string, input: Json, hooks?: { onStreamPayload?: (payload: string) => void }): Promise<unknown> => {
+  const pendingAsync = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; onStreamPayload?: (payload: string) => void; cleanup?: () => void }>()
+  const invokeAsync = (operation: string, input: Json, hooks?: { onStreamPayload?: (payload: string) => void; signal?: AbortSignal }): Promise<unknown> => {
     return new Promise((resolve, reject) => {
       const callbackId = `local-${Date.now().toString(36)}-${++asyncSequence}`
-      pendingAsync.set(callbackId, { resolve, reject, onStreamPayload: hooks?.onStreamPayload })
+      const abort = () => { if (pendingAsync.delete(callbackId)) { cleanup(); reject(new Error('Aborted')) } }
+      const cleanup = () => hooks?.signal?.removeEventListener('abort', abort)
+      pendingAsync.set(callbackId, { resolve, reject, onStreamPayload: hooks?.onStreamPayload, cleanup })
+      if (hooks?.signal) { if (hooks.signal.aborted) { abort(); return }; hooks.signal.addEventListener('abort', abort, { once: true }) }
       const method = native.invokeAsync as (name: string, value: string, callbackId: string) => void
       method.call(native, operation, JSON.stringify(input), callbackId)
     })
@@ -120,7 +137,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       if (value && typeof value === 'object') {
         const result = value as ResultValue
         if (result.error) {
-          pendingAsync.delete(callbackId)
+          pendingAsync.delete(callbackId); entry.cleanup?.()
           entry.reject(new Error(typeof result.error === 'object' && result.error !== null && typeof (result.error as { message?: unknown }).message === 'string' ? (result.error as { message: string }).message : 'Native operation failed.'))
           return
         }
@@ -129,7 +146,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
           return
         }
       }
-      pendingAsync.delete(callbackId)
+      pendingAsync.delete(callbackId); entry.cleanup?.()
       entry.resolve(value)
     },
   })
@@ -200,6 +217,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     return body
   }
 
+  const activeModelAborts = createRequestScopedAbortRegistry()
   const modelRequest = (request: ModelRequest, hooks?: { onThinking?: (text: string) => void }): Promise<ModelResult> => {
     const config = readProvider(request)
     if (!config) return Promise.reject(new Error('未配置模型供应商：点击「连接」→ 管理供应商，新建供应商并填写接口地址、API Key 与模型名。'))
@@ -207,6 +225,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
     // 连续 IDLE_TIMEOUT_MS 无新流数据（卡住/断流/首字节迟迟不来）才掐断；
     // 总上限 10 分钟防止无限缓慢吐字永不结束。收到任何数据（thinking/content）即重置空闲计时。
     const abort = new AbortController()
+    activeModelAborts.register(request.requestId, () => abort.abort())
     const idleTimeoutMs = 120_000
     const totalTimeoutMs = Math.max(idleTimeoutMs * 5, 600_000)
     let idleTimer = setTimeout(() => abort.abort(), idleTimeoutMs)
@@ -221,7 +240,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       endpoint: endpointFor(config.baseUrl),
       apiKey: config.apiKey,
       body: toOpenAiBody(request, config, includeTool),
-    }, {
+    }, { signal: abort.signal,
       onStreamPayload: payload => {
         if (abort.signal.aborted) return
         const parsed = streamWithTimeout.push(payload)
@@ -262,7 +281,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
         })
       }
       return normalizeModelResult(value)
-    }) as Promise<ModelResult>
+    }).finally(() => { clearTimeout(idleTimer); clearTimeout(totalTimer); activeModelAborts.remove(request.requestId) }) as Promise<ModelResult>
     // 空闲超时触发：立即取消底层模型请求（Java transport request-scoped cancel）
     abort.signal.addEventListener('abort', () => {
       try { void requireComposition().core.cancel(request.requestId).catch(() => {}) } catch { /* no-op */ }
@@ -286,6 +305,7 @@ export function installLocalCore(global: Record<string, unknown> = globalThis as
       // 思维链增量必须透传给 modelRequest：否则累加器的 onThinking 为空，
       // 流式 reasoning 无处可去，只能等最终结果一次性出现（安卓端"无法即时显示"的根因）。
       if (operation === 'model.request') return modelRequest(input as unknown as ModelRequest, callbacks) as Promise<T>
+      if (operation === 'model.cancel') { activeModelAborts.cancel(typeof input.requestId === 'string' ? input.requestId : ''); return Promise.resolve(invokeSync(operation, input) as T) }
       if (SYNC_OPERATIONS.has(operation)) return Promise.resolve(invokeSync(operation, input) as T)
       return invokeAsync(operation, input) as Promise<T>
     },

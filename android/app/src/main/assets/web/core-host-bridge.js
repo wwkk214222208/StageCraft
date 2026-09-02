@@ -449,7 +449,10 @@
   /** Per-capability authorization: operations map to capabilities that the
    * identified caller must have been granted; everything else fails closed.
    * host.storage goes through CoreNative, whose Java side re-verifies the
-   * caller's manifest capability before touching per-component storage. */
+   * caller's manifest capability before touching per-component storage.
+   * This is cooperative authorization inside one WebView, not a strong
+   * security boundary: page code can manufacture caller fields and owns the
+   * risk of sharing this WebView with untrusted content. */
   function createV2HostPort(config) {
     const grants = new Map()
     if (config.core && config.core.manifest) grants.set(config.core.id, grantedCapabilities(config.core.manifest))
@@ -483,6 +486,35 @@
     }
   }
 
+  // Keep the request hash contract aligned with src/v2/launch-plan.ts. The
+  // hash is an identity/integrity check, not a secret or an authorization
+  // token. Filtering an import-quarantined plugin must produce a new hash;
+  // the pre-quarantine hash must never masquerade as the effective plan.
+  function stableStringify(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value == null ? null : value)
+    if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']'
+    return '{' + Object.keys(value).filter(function (key) { return value[key] !== undefined }).sort(function (a, b) { return a.localeCompare(b) }).map(function (key) {
+      return JSON.stringify(key) + ':' + stableStringify(value[key])
+    }).join(',') + '}'
+  }
+  function stableHash(value) {
+    let hash = 0x811c9dc5
+    for (let index = 0; index < value.length; index++) {
+      hash ^= value.charCodeAt(index)
+      hash = Math.imul(hash, 0x01000193) >>> 0
+    }
+    return hash.toString(16).padStart(8, '0')
+  }
+  function requestPlanHash(request, pluginSelections) {
+    return stableHash(stableStringify({
+      planVersion: request.planVersion,
+      hostApiVersion: request.hostApiVersion,
+      core: request.selectedCore,
+      plugins: pluginSelections,
+      stateSchemaVersion: request.stateSchemaVersion,
+    }))
+  }
+
   async function startV2Core(config) {
     // Plugin-level isolation: a plugin whose module fails at import time is
     // quarantined (diagnostic only); the Core boots with the remaining set.
@@ -496,10 +528,21 @@
         if (window.CoreHostBridgePort) window.CoreHostBridgePort.send({ type: 'log', text: 'plugin quarantined: ' + componentConfig.id + '@' + componentConfig.version + ' import failed: ' + reason })
       }
     }
-    const effectiveRequest = Object.assign({}, config.request, {
-      pluginSelections: (config.request.pluginSelections || []).filter(function (selection) {
-        return loadedPlugins.some(function (entry) { return entry.config.id === selection.id && entry.config.version === selection.version })
-      }),
+    const request = config.request || {}
+    const requestedSelections = Array.isArray(request.pluginSelections) ? request.pluginSelections : []
+    if (typeof request.planHash === 'string' && request.planHash !== requestPlanHash(request, requestedSelections)) {
+      throw new Error('launch plan hash mismatch')
+    }
+    const effectiveSelections = requestedSelections.filter(function (selection) {
+      return loadedPlugins.some(function (entry) { return entry.config.id === selection.id && entry.config.version === selection.version })
+    })
+    const effectiveRequest = Object.assign({}, request, {
+      pluginSelections: effectiveSelections,
+      planHash: requestPlanHash(request, effectiveSelections),
+    })
+    const effectiveConfig = Object.assign({}, config, {
+      request: effectiveRequest,
+      plugins: loadedPlugins.map(function (entry) { return entry.config }),
     })
     const coreModule = await import(config.core.url)
     const candidate = coreModule.default
@@ -531,14 +574,14 @@
       await candidate.boot({
         request: effectiveRequest,
         components: loadedPlugins.map(function (entry) { return Object.freeze({ manifest: entry.config.manifest, defaultExport: entry.module.default, module: entry.module }) }),
-        host: createV2HostPort(config),
+        host: createV2HostPort(effectiveConfig),
         ready: function (signal) {
           if (failedCalled) throw new Error('Core already reported failure')
           if (readyCalled) throw new Error('Core ready called more than once')
-          if (signal && signal.hostApiVersion && signal.hostApiVersion !== config.request.hostApiVersion) throw new Error('Host API mismatch')
+          if (signal && signal.hostApiVersion && signal.hostApiVersion !== effectiveRequest.hostApiVersion) throw new Error('Host API mismatch')
           if (signal && signal.coreId && signal.coreId !== config.core.id) throw new Error('Core identity mismatch')
           if (signal && signal.coreVersion && signal.coreVersion !== config.core.version) throw new Error('Core version mismatch')
-          if (signal && signal.planHash && config.request.planHash && signal.planHash !== config.request.planHash) throw new Error('launch plan mismatch')
+          if (signal && signal.planHash && signal.planHash !== effectiveRequest.planHash) throw new Error('launch plan mismatch')
           readyCalled = true
         },
         // failed() may be called from a later async callback after boot()
@@ -555,7 +598,7 @@
     if (candidate && candidate.kind === 'core' && typeof candidate.start === 'function') {
       const commands = {}
       let readyCalled = false
-      const hostPort = createV2HostPort(config)
+      const hostPort = createV2HostPort(effectiveConfig)
       const coreCaller = { pluginId: config.core.id, version: config.core.version }
       const startContext = { apiVersion: config.request.hostApiVersion, pluginId: config.core.id, config: {}, components: loadedPlugins.map(function (entry) { return Object.freeze({ manifest: entry.config.manifest, defaultExport: entry.module.default, module: entry.module }) }), log: function (level, message, details) { hostPort.call('host.log', { level: level, message: message, details: details }, coreCaller).catch(function () { }) }, registerCommand: function (name, handler) { commands[name] = handler }, ready: function () { readyCalled = true } }
       await candidate.start(startContext)

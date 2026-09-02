@@ -132,9 +132,27 @@ async function createAuthoringLlmSystemHarness(plugin, config = {}, options = {}
   }, async stop() {
     if (stopped) return;
     stopped = true;
-    for (const requestId of [...active.keys()]) await this.cancel(requestId);
-    await plugin.stop?.(context);
+    const errors = [];
+    for (const requestId of [...active.keys()]) {
+      try {
+        await this.cancel(requestId);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    try {
+      await plugin.stop?.(context);
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      await writeChain;
+    } catch (error) {
+      errors.push(error);
+    }
     status = "stopped";
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "one or more LLM harness stop operations failed");
   } };
 }
 

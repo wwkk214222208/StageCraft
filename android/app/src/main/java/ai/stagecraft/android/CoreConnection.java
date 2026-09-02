@@ -10,6 +10,11 @@ import org.json.JSONObject;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * W6：主进程 CoreConnection（计划 §2.1/§2.4/§4.4，阶段 1/4）。
@@ -26,6 +31,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * 回调全部在 UI 线程（ServiceConnection 回调本身在 binder 线程，需 runOnUiThread）。
  */
 public final class CoreConnection {
+    /** Rebind is deliberately bounded: a dead/unavailable Core must not leave a thread alive forever. */
+    static final int MAX_REBIND_ATTEMPTS = 4;
+    static final long REBIND_INITIAL_DELAY_MS = 300L;
+    static final long REBIND_MAX_DELAY_MS = 2_000L;
+    static final long BIND_CALLBACK_TIMEOUT_MS = 2_000L;
     /** 主进程监听 Core 生命周期事件。 */
     public interface Listener {
         /** endpoint 就绪/更新：{port, nonce, pid}（nonce 只进原生连接层）。 */
@@ -41,6 +51,18 @@ public final class CoreConnection {
     private final AtomicBoolean rebindPending = new AtomicBoolean(false);
     private final AtomicLong rebindDedupedCount = new AtomicLong();
     private final AtomicBoolean bound = new AtomicBoolean(false);
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final ScheduledExecutorService rebindExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "core-rebind");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final Object rebindLock = new Object();
+    private ScheduledFuture<?> rebindTask;
+    private ScheduledFuture<?> bindTimeoutTask;
+    private int rebindAttempt;
+    /** True while a restart has detached the old binding and is waiting for a new one. */
+    private final AtomicBoolean restartRequested = new AtomicBoolean(false);
     private volatile ICoreControl core;
     private volatile JSONObject endpoint;
     private volatile String lastStatus = "";
@@ -57,7 +79,17 @@ public final class CoreConnection {
 
     private final ServiceConnection connection = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName name, IBinder binder) {
+            if (closed.get()) {
+                // Activity may be destroyed while Android delivers a queued callback.
+                try { context.unbindService(connection); } catch (Exception ignored) { }
+                return;
+            }
+            cancelBindTimeout();
             rebindPending.set(false); // 绑定完成：新一轮死亡通知方可触发重绑
+            synchronized (rebindLock) {
+                rebindAttempt = 0;
+                restartRequested.set(false);
+            }
             bound.set(true);
             core = ICoreControl.Stub.asInterface(binder);
             try {
@@ -99,6 +131,7 @@ public final class CoreConnection {
     };
 
     private void handleDisconnect(String source) {
+        if (closed.get()) return;
         core = null;
         endpoint = null;
         bound.set(false);
@@ -108,38 +141,184 @@ public final class CoreConnection {
 
     /** 幂等重绑守卫（评审第 1 条）：同一轮死亡只执行一次 unbind+rebind。 */
     private void scheduleRebindOnce(String source) {
+        if (closed.get()) return;
         if (!rebindPending.compareAndSet(false, true)) {
             rebindDedupedCount.incrementAndGet();
             AppLog.i("core connection: rebind already pending, deduped source=" + source);
             return;
         }
+        synchronized (rebindLock) {
+            rebindAttempt = 0;
+        }
         AppLog.i("core connection: rebind scheduled (source=" + source + ")");
-        new Thread(() -> {
-            try { Thread.sleep(300); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-            try { context.unbindService(connection); } catch (Exception ignored) { }
-            core = null;
-            endpoint = null;
-            // rebindPending 在 onServiceConnected 后才清零（评审：清零过早存在重复重绑窗口）
-            bind();
-        }, "core-rebind").start();
+        scheduleRebindAttempt(REBIND_INITIAL_DELAY_MS);
+    }
+
+    private void scheduleRebindAttempt(long delayMs) {
+        synchronized (rebindLock) {
+            if (closed.get() || !rebindPending.get()) return;
+            if (rebindTask != null) rebindTask.cancel(false);
+            try {
+                rebindTask = rebindExecutor.schedule(this::runRebindAttempt, delayMs, TimeUnit.MILLISECONDS);
+            } catch (RejectedExecutionException error) {
+                // unbind() may win the race after the closed check but before schedule().
+                // Treat that race as an orderly end of this sequence, never as a binder
+                // callback thread crash or a permanently latched rebindPending flag.
+                rebindPending.set(false);
+                restartRequested.set(false);
+                rebindAttempt = 0;
+                AppLog.i("core connection: rebind scheduler is closed; sequence abandoned");
+            }
+        }
+    }
+
+    private void runRebindAttempt() {
+        if (closed.get() || !rebindPending.get()) return;
+        final int attempt;
+        synchronized (rebindLock) {
+            attempt = ++rebindAttempt;
+        }
+        try { context.unbindService(connection); } catch (Exception ignored) { }
+        core = null;
+        endpoint = null;
+        try {
+            Intent intent = new Intent(context, CoreService.class);
+            if (!context.bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
+                onRebindAttemptFailed(attempt, "bindService returned false");
+                return;
+            }
+            // Android may accept a bind and never deliver onServiceConnected. Do not leave
+            // rebindPending latched forever in that case.
+            synchronized (rebindLock) {
+                if (closed.get() || !rebindPending.get()) return;
+                if (bindTimeoutTask != null) bindTimeoutTask.cancel(false);
+                try {
+                    bindTimeoutTask = rebindExecutor.schedule(
+                        () -> onRebindAttemptFailed(attempt, "onServiceConnected timeout"),
+                        BIND_CALLBACK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                } catch (RejectedExecutionException error) {
+                    rebindPending.set(false);
+                    restartRequested.set(false);
+                    AppLog.i("core connection: bind timeout scheduler is closed; sequence abandoned");
+                    try { context.unbindService(connection); } catch (Exception ignored) { }
+                    return;
+                }
+            }
+            AppLog.i("core connection: rebind attempt " + attempt + " accepted");
+        } catch (Exception error) {
+            onRebindAttemptFailed(attempt, "bindService exception: " + error.getClass().getSimpleName());
+        }
+    }
+
+    private void onRebindAttemptFailed(int attempt, String reason) {
+        if (closed.get() || !rebindPending.get()) return;
+        cancelBindTimeout();
+        try { context.unbindService(connection); } catch (Exception ignored) { }
+        core = null;
+        endpoint = null;
+        if (attempt >= MAX_REBIND_ATTEMPTS) {
+            rebindPending.set(false);
+            restartRequested.set(false);
+            synchronized (rebindLock) { rebindAttempt = 0; }
+            AppLog.w("core connection: rebind exhausted after " + attempt + " attempts (" + reason + ")");
+            return;
+        }
+        long delay = Math.min(REBIND_MAX_DELAY_MS,
+            REBIND_INITIAL_DELAY_MS * (1L << Math.min(10, Math.max(0, attempt - 1))));
+        AppLog.w("core connection: rebind attempt " + attempt + " failed (" + reason + "), retry in " + delay + "ms");
+        scheduleRebindAttempt(delay);
+    }
+
+    private void cancelBindTimeout() {
+        synchronized (rebindLock) {
+            if (bindTimeoutTask != null) {
+                bindTimeoutTask.cancel(false);
+                bindTimeoutTask = null;
+            }
+        }
     }
 
     /** 绑定 CoreService（BIND_AUTO_CREATE）。 */
     public void bind() {
+        if (closed.get()) return;
         Intent intent = new Intent(context, CoreService.class);
         try {
             if (context.bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
                 AppLog.i("core connection: bound :core service (BIND_AUTO_CREATE)");
+                // A successful bind is only an acceptance, not a connection. Bound
+                // services are occasionally observed to omit the callback; use the
+                // same bounded recovery path as a failed rebind.
+                synchronized (rebindLock) {
+                    if (bindTimeoutTask != null) bindTimeoutTask.cancel(false);
+                    try {
+                        bindTimeoutTask = rebindExecutor.schedule(
+                            () -> onInitialBindTimeout(), BIND_CALLBACK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                    } catch (RejectedExecutionException error) {
+                        AppLog.i("core connection: initial bind timeout scheduler is closed");
+                    }
+                }
             } else {
                 AppLog.w("core connection: bindService FAILED");
+                scheduleRebindOnce("initial bind returned false");
             }
         } catch (Exception error) {
             AppLog.w("core connection: bindService exception: " + error);
+            scheduleRebindOnce("initial bind exception");
         }
+    }
+
+    private void onInitialBindTimeout() {
+        if (closed.get() || bound.get() || rebindPending.get()) return;
+        try { context.unbindService(connection); } catch (Exception ignored) { }
+        AppLog.w("core connection: initial bind timed out; entering bounded rebind");
+        scheduleRebindOnce("initial bind timeout");
+    }
+
+    /**
+     * Cold-restart Core. If the endpoint is ready, killing its pid drives the normal
+     * binder-death path. Before handshake, detach the binding first and stop the
+     * bind-only service; the bounded rebind then creates a fresh :core process.
+     *
+     * @return true when a restart sequence was accepted, false after Activity teardown
+     */
+    public boolean restart() {
+        if (closed.get()) return false;
+        JSONObject currentEndpoint = endpoint;
+        int corePid = currentEndpoint == null ? 0 : currentEndpoint.optInt("pid", 0);
+        if (corePid > 0) {
+            AppLog.i("core connection: restart killing :core pid=" + corePid);
+            android.os.Process.killProcess(corePid);
+            // Do not depend solely on the platform death callback: scheduleRebindOnce
+            // supplies the bounded fallback, while binder callbacks remain deduped.
+            scheduleRebindOnce("restart-kill");
+            return true;
+        }
+        if (!restartRequested.compareAndSet(false, true)) return true;
+        AppLog.i("core connection: restart before endpoint; detach + stopService + bounded rebind");
+        core = null;
+        endpoint = null;
+        bound.set(false);
+        try { context.unbindService(connection); } catch (Exception ignored) { }
+        try { context.stopService(new Intent(context, CoreService.class)); } catch (Exception error) {
+            AppLog.w("core connection: stopService during restart failed: " + error.getClass().getSimpleName());
+        }
+        scheduleRebindOnce("restart-endpoint-not-ready");
+        return true;
     }
 
     /** 解除绑定（Activity onDestroy）。 */
     public void unbind() {
+        if (!closed.compareAndSet(false, true)) return;
+        cancelBindTimeout();
+        synchronized (rebindLock) {
+            if (rebindTask != null) {
+                rebindTask.cancel(false);
+                rebindTask = null;
+            }
+        }
+        rebindPending.set(false);
+        restartRequested.set(false);
+        rebindExecutor.shutdownNow();
         try { context.unbindService(connection); } catch (Exception ignored) { }
         bound.set(false);
         core = null;

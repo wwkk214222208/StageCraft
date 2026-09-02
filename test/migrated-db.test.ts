@@ -19,7 +19,15 @@ test('migrated live DB works with new code end-to-end', async () => {
   src.exec(`VACUUM INTO '${snapshot.replaceAll("'", "''")}'`)
   src.close()
   const store = new Store(snapshot)
-  const room = store.getRoom('festival-room')!
+  const roomId = (store as any).db.prepare('SELECT id FROM rooms ORDER BY rowid').all()
+    .map((row: { id: string }) => row.id)
+    .map((id: string) => ({ id, room: store.getRoom(id) }))
+    .find((entry: { room?: ReturnType<Store['getRoom']> }) => {
+      const candidate = entry.room
+      return candidate && candidate.roles.length >= 3 && candidate.roles.some(role => role.memories.length > 0 && Boolean(role.selfModel?.length))
+    })?.id
+  assert.ok(roomId, 'live snapshot should contain a room with roles and structured memory')
+  const room = store.getRoom(roomId)!
   assert.ok(room.roles.length >= 3, `roles >= 3, got ${room.roles.length}`)
   const sourceRole = room.roles.find(role => role.presence === 'present') ?? room.roles[0]
   assert.ok(sourceRole, 'at least one role')
@@ -29,29 +37,29 @@ test('migrated live DB works with new code end-to-end', async () => {
 
   // 快照副本可能处于任意 phase（如 live 服务器正在 drafting）——restart 到最小剧本保证 idle，
   // 只在 VACUUM INTO 的临时快照上进行，不影响真实数据库。
-  store.restartRoom('festival-room', {
+  store.restartRoom(roomId, {
     id: 'migrated', title: 'migrated', opening: '开局。', sceneTime: '夜晚', sceneLocation: '大厅',
     playerCharacter: { name: '玩家', persona: 'p', currentState: 'c' },
     roles: [{ id: sourceRole.id, name: sourceRole.name, portraitRef: sourceRole.portraitRef ?? '/assets/default.svg', currentState: sourceRole.currentState, presence: 'present' as const, memories: sourceRole.memories, selfModel: sourceRole.selfModel }],
     lore: [],
   })
-  const testRole = store.getRoom('festival-room')!.roles[0]
-  assert.equal(store.getRoom('festival-room')!.phase, 'awaiting-player-input')
+  const testRole = store.getRoom(roomId)!.roles[0]
+  assert.equal(store.getRoom(roomId)!.phase, 'awaiting-player-input')
 
   // intervene 更新自我模型；记忆以结构化记录写入
   const runtime = new RoomRuntime(store)
-  runtime.interveneRole('festival-room', testRole.id, '新自我模型。')
-  runtime.storeNpcMemories('festival-room', testRole.id, [{ text: '初始记忆 v2。', occurredAt: '过去' }, { text: '她笑了。', occurredAt: '正午' }])
-  const after = store.getRoom('festival-room')!.roles.find(role => role.id === testRole.id)!
+  runtime.interveneRole(roomId, testRole.id, '新自我模型。')
+  runtime.storeNpcMemories(roomId, testRole.id, [{ text: '初始记忆 v2。', occurredAt: '过去' }, { text: '她笑了。', occurredAt: '正午' }])
+  const after = store.getRoom(roomId)!.roles.find(role => role.id === testRole.id)!
   assert.equal(after.selfModel, '新自我模型。')
-  const afterMemories = store.listNpcMemories('festival-room', testRole.id)
+  const afterMemories = store.listNpcMemories(roomId, testRole.id)
   assert.ok(afterMemories.some(memory => memory.text === '初始记忆 v2。' && memory.occurredAt === '过去'), `expected intervention memory, got: ${JSON.stringify(afterMemories)}`)
   assert.ok(afterMemories.some(memory => memory.text === '她笑了。' && memory.occurredAt === '正午'), `expected intervention memory, got: ${JSON.stringify(afterMemories)}`)
 
   // 回合流程
-  await runtime.submitTurn('festival-room', { text: '正午时分，我们回到主厅。', requiredRoleIds: [testRole.id] })
-  await runtime.proceedToDraft('festival-room')
-  const draft = runtime.get('festival-room').draft!
-  runtime.approve('festival-room', draft.id, draft.text, draft.stateUpdates)
-  assert.ok(store.listNpcMemories('festival-room', testRole.id).some(memory => memory.occurredAt === '过去'))
+  await runtime.submitTurn(roomId, { text: '正午时分，我们回到主厅。', requiredRoleIds: [testRole.id] })
+  await runtime.proceedToDraft(roomId)
+  const draft = runtime.get(roomId).draft!
+  runtime.approve(roomId, draft.id, draft.text, draft.stateUpdates)
+  assert.ok(store.listNpcMemories(roomId, testRole.id).some(memory => memory.occurredAt === '过去'))
 })

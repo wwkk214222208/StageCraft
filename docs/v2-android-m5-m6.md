@@ -25,12 +25,14 @@ This is a single-device smoke record, not multi-device compatibility certificati
 ## 2026-09-02 收尾增量
 
 - **页面侧逐能力授权**：`buildV2WebConfig` 将 Core manifest 与插件 manifest 一并下发；页面宿主端口按 caller（pluginId+version）对照组件 granted 能力集合逐操作校验（`host.log`→`host.log`、`host.storage.*`→`host.storage`），未识别操作、缺失 caller、能力未声明一律拒绝。
-- **host.storage**：新增 core-native 操作 `storage.read`/`storage.write`（仅 Core WebView 可达，不进 legacy 迁移期例外集）；Java `V2ComponentStorage` 在 Java 侧再次校验 caller 组件 manifest 已声明 `host.storage` 能力，然后读写 `filesDir/v2-storage/<id>/<area>.json`（原子替换写）。这不是秘密存储；密钥级存储仍走 AndroidSecretStore（`secret.*`）。
+- **host.storage**：新增 core-native 操作 `storage.read`/`storage.write`（仅 Core WebView 可达，不进 legacy 迁移期例外集）；Java `V2ComponentStorage` 在 Java 侧再次校验 caller 组件 manifest 已声明 `host.storage` 能力，然后读写 `filesDir/v2-storage/<id>/<area>.json`（原子替换写）。这不是秘密存储；`secret.*` 是可用的原生能力，但官方 v2 LLM reference 当前仍经 `host.storage` 将 secrets 明文持久化在这里。同一 WebView 中的第三方可伪造 caller 读取它，因此这属于合作式授权而非强安全边界，用户须自行承担与不受信内容共享 WebView 的风险。
 - **插件级隔离**：页面桥逐插件 import，失败者隔离并记录诊断，Core 以剩余集合启动；Java 侧的包校验失败仍 fail closed。
 - **守卫收口**：`NativeOperationGuard` 改为消费生成器输出的 `coreNative` 目标集（不再等同 legacy 例外集）；v2 管理面此前漏登记的 `@JavascriptInterface` 方法（含 synchronized 修饰的 7 个 + `chooseV2Component`）已全部补登记，registry 测试的正则现在穷举 synchronized 方法。
 
 ### 2026-09-02 收尾后真机复验
 
-同一台 FOA-AL00（Android 12，API 31）在收尾改动合入后重跑 instrumentation 冒烟：`OK (2 tests)`，install → select → cold restart → health `ready`（`effectiveCore=example.stagecraft.core@1.0.0`）→ `/api/core/commands` `demo/run` 全部断言通过，Solution system prompt、流式 chunk、LLM usage 与 Tool 输出与桌面 e2e 一致。复验前设备侧清空了 v2 计划/组件/恢复状态。
+同一台 FOA-AL00（Android 12，API 31）在本轮生命周期修复后重跑 `connectedDebugAndroidTest`：`OK (6 tests)`，其中包含 `CoreGatewayInstrumentationTest.hostRestartRecreatesCoreAndRestoresHealth`。install → select → cold restart → health `ready`（`effectiveCore=example.stagecraft.core@1.0.0`）→ `/api/core/commands` `demo/run` 全部断言通过，Solution system prompt、流式 chunk、LLM usage 与 Tool 输出与桌面 e2e 一致。复验前设备侧清空了 v2 计划/组件/恢复状态。
 
-复验过程中记录两次**环境性**失败供后续排查：① 设备 USB 断连重连后，应用两个进程出现存储 I/O 卡死（D 状态，WebView 首次加载处冻结），重启设备后消失；② 测试发出的 `host.restart` 在 `:core` endpoint 未就绪时会回退 requestStop（该路径无重建承诺），理论上可超过测试 45 秒健康窗口——本次复验未复现（优雅路径正常），但重启链仍值得补就绪等待与重绑超时兜底。
+本轮已修复 Core 生命周期链：`host.restart` 在 `:core` endpoint 未就绪时不再回退 `requestStop`，而是先 detach + `stopService`，再走 bounded rebind；`bindService=false`、异常或无 `onServiceConnected` 回调均纳入 2 秒超时、最多 4 次指数退避与清理，Activity 销毁后停止继续重绑。
+
+仍保留一项历史**环境性**记录：设备 USB 断连重连后，应用两个进程曾出现存储 I/O 卡死（D 状态，WebView 首次加载处冻结）；重启设备后消失。该现象未归因于本轮代码修复，不作为已解决的代码问题表述。

@@ -15,12 +15,13 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { installLocalCore } from '../src/portable/android-local-core.ts'
+import { createRequestScopedAbortRegistry, installLocalCore } from '../src/portable/android-local-core.ts'
 
 /** 配置好 provider 且挂起模型请求的假 native。 */
 function hangingNative(room: unknown, providerConfigured = true) {
   const requests: Array<{ requestId: string; endpoint: string }> = []
   const cancels: string[] = []
+  const pendingCallbacks = new Map<string, { callbackId: string; handle: (callbackId: string, resultJson: string) => void }>()
   const secrets = new Map<string, string>()
   if (providerConfigured) {
     secrets.set('local.provider.meta', JSON.stringify({
@@ -40,21 +41,56 @@ function hangingNative(room: unknown, providerConfigured = true) {
       if (operation === 'stories.list') return JSON.stringify({ stories: [{ id: 'eldoria', title: 'Eldoria', mode: 'director', custom: false }] })
       if (operation === 'story.read') return JSON.stringify({ value: JSON.stringify({ id: input.id, title: 'Eldoria', mode: 'director', roles: [], lore: [] }) })
       if (operation === 'stagecraft.room.get') return JSON.stringify(room)
-      if (operation === 'model.cancel') { cancels.push(String(input.requestId ?? '')); return JSON.stringify({ ok: true }) }
+      if (operation === 'model.cancel') {
+        const requestId = String(input.requestId ?? '')
+        cancels.push(requestId)
+        // A real native transport completes the callback when cancellation closes
+        // its request.  Do the same here so the test fixture does not retain the
+        // model-request timeout handles after each assertion.
+        const callback = pendingCallbacks.get(requestId)
+        const callbacks = callback ? [[requestId, callback] as const] : []
+        for (const [pendingRequestId, pendingCallback] of callbacks) {
+          pendingCallbacks.delete(pendingRequestId)
+          pendingCallback.handle(pendingCallback.callbackId, JSON.stringify({ error: { message: 'cancelled' } }))
+        }
+        return JSON.stringify({ ok: true })
+      }
       return JSON.stringify({})
     },
     invokeAsync(operation: string, inputJson: string, callbackId: string): void {
       const input = JSON.parse(inputJson)
       if (operation === 'model.request') {
         requests.push({ requestId: input.requestId, endpoint: input.endpoint })
+        const handle = globalThis.StageCraftNativeResult?.handle
+        if (handle) pendingCallbacks.set(String(input.requestId), { callbackId, handle: handle.bind(globalThis.StageCraftNativeResult) })
         // 故意不回调：模拟长模型请求挂起（等待取消）
         return
       }
       globalThis.StageCraftNativeResult?.handle(callbackId, JSON.stringify({ error: { message: `unsupported async op: ${operation}` } }))
     },
   }
-  return { native, requests, cancels }
+  const cleanup = (): void => {
+    for (const pending of pendingCallbacks.values()) pending.handle(pending.callbackId, JSON.stringify({ error: { message: 'test cleanup' } }))
+    pendingCallbacks.clear()
+  }
+  return { native, requests, cancels, cleanup }
 }
+
+test('request-scoped model cancellation leaves a concurrent request pending', async () => {
+  const registry = createRequestScopedAbortRegistry()
+  let aAborted = false
+  let bAborted = false
+  registry.register('A', () => { aAborted = true })
+  registry.register('B', () => { bAborted = true })
+  assert.throws(() => registry.register('A', () => {}), /Duplicate active requestId: A/)
+  registry.cancel('A')
+  assert.equal(aAborted, true)
+  assert.equal(bAborted, false)
+  registry.cancel('missing')
+  assert.equal(bAborted, false)
+  registry.cancel('B')
+  assert.equal(bAborted, true)
+})
 
 function install(roomMode = 'director', speechMode = 'manual') {
   const room = {
@@ -69,13 +105,17 @@ function install(roomMode = 'director', speechMode = 'manual') {
     playerCharacter: { name: '玩家', persona: '', currentState: '' },
     sceneTime: '黄昏', sceneLocation: '森林', playerContribution: '', speech: null, draft: null,
   }
-  const { native, requests, cancels } = hangingNative(room)
+  const { native, requests, cancels, cleanup } = hangingNative(room)
   const globalObject: Record<string, unknown> = { StageCraftNative: native }
   installLocalCore(globalObject)
   const local = globalObject.StageCraftLocalCore as any
   local.start(() => {})
-  return { local, requests, cancels }
+  fixtures.push({ cleanup })
+  return { local, requests, cancels, cleanup }
 }
+
+const fixtures: Array<{ cleanup: () => void }> = []
+test.afterEach(() => { for (const fixture of fixtures.splice(0)) fixture.cleanup() })
 
 /** 等待条件成立（带超时）。 */
 async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void> {
