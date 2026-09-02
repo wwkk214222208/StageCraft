@@ -41,10 +41,10 @@ ws.onopen = async () => {
     check('④ 初始全启用（desired 缺省 enabled）', catalog.every(p => state.desired?.[p.id] !== false), JSON.stringify(state.desired ?? {}))
     check('⑤ effective 与 desired 一致', Array.isArray(state.effective) && state.effective.length === 4, JSON.stringify(state.effective))
 
-    // ② 前端面板 DOM + 渲染（走 app.js 的 native 通道代码路径）
+    // ② 前端面板 DOM + 渲染（走 app.js 的 native 通道代码路径；入口按钮已移入设置弹窗）
     const hasModal = await evaluate(`!!document.getElementById('plugin-modal') && !!document.getElementById('plugin-settings')`)
     check('⑥ 插件面板 DOM（index.html 生成进 local.html）', hasModal === true)
-    await evaluate(`document.getElementById('plugin-settings').click()`)
+    await evaluate(`document.getElementById('app-settings').click(); document.getElementById('plugin-settings').click()`)
     await sleep(1200)
     const listHtml = await evaluate(`document.getElementById('plugin-list')?.innerHTML ?? ''`)
     const rendered = /stagecraft\.solution/.test(listHtml) && /启用|停用/.test(listHtml)
