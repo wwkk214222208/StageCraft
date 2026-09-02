@@ -540,13 +540,20 @@
     let url
     try { url = typeof input === 'string' ? new URL(input, window.location.href) : (input && input.url ? new URL(input.url, window.location.href) : null) } catch { return originalFetch(input, init) }
     if (!url || url.origin !== window.location.origin || !url.pathname.startsWith('/api/')) return originalFetch(input, init)
+    const method = String(init.method ?? (typeof input === 'object' && input && input.method ? input.method : 'GET')).toUpperCase()
+    const pathname = url.pathname
     if (gatewayMode) {
-      // W6 数据面：直通同源 gateway（CoreGatewayServer 按 registry 分派；nonce 由 gateway 原生注入）
+      // W6 数据面：直通同源 gateway（CoreGatewayServer 按 registry 分派；nonce 由 gateway 原生注入）。
+      // 例外：GET /api/update/check —— registry owner=main-host 的原生桥按 W6-3 裁决返回稳定
+      // unsupported（更新经 APK 分发），该裁决针对原生 HTTP 面；应用内「检查更新」需要 GitHub
+      // release 信息，由页面直连 api.github.com 完成（下载/安装仍走原生桥 updateDownloadAndInstall）。
+      if (method === 'GET' && pathname === '/api/update/check') {
+        const handler = legacyRoutes.get['/api/update/check']
+        if (handler) return Promise.resolve().then(() => handler(url.searchParams)).catch(error => respondJson(400, { error: error instanceof Error ? error.message : String(error) }))
+      }
       return originalFetch(input, init)
     }
     // ── 回退路径：页面内 Core（旧 shim；迁移期保留）──
-    const method = String(init.method ?? (typeof input === 'object' && input && input.method ? input.method : 'GET')).toUpperCase()
-    const pathname = url.pathname
     // SSE（CoreClient 用 fetch 读流）
     if (pathname === '/api/core/events') {
       const abortSignal = init.signal ?? null

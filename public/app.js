@@ -729,7 +729,7 @@ $('#check-update').onclick = async () => {  const status = $('#update-status')
   try {
     const response = await fetch('/api/update/check')
     const data = await response.json()
-    if (!response.ok) throw new Error(data.error || '检查更新失败。')
+    if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : data.error?.message || '检查更新失败。')
     if (!data.updateAvailable) { status.textContent = '当前已是最新版本。'; return }
     status.textContent = `发现新版本 ${data.tag}（${data.version}）。`
     if (!confirm(`发现新版本 ${data.tag}，是否下载并更新？${window.__STAGECRAFT_LOCAL__ ? '' : '更新过程中程序会短暂退出。'}`)) return

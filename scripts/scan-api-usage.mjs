@@ -52,6 +52,7 @@ const SPECIAL_METHODS = {
   '/api/core/commands': 'POST',
   '/api/core/events': 'GET',
   '/api/core/ui/action': 'POST',
+  '/api/update/check': 'GET',
 }
 
 /** 前端：fetch/EventSource/api()/postJson()/agentSessionRequest() 调用点 + 全量字面量兜底。 */
@@ -138,7 +139,8 @@ function scanShim(text) {
     if (special) {
       // 特判分派的 method 在 shim 源码中静态可判定（CP-W1 要求能静态确定的必须登记真实 method）：
       // /api/core/view → GET（respondJsonAsync 只读快照）；/api/core/commands → POST（读 body 派发）；
-      // /api/core/events → GET SSE（fetch 读流）；/api/core/ui/action → POST（前端以 method POST 调用）。
+      // /api/core/events → GET SSE（fetch 读流）；/api/core/ui/action → POST（前端以 method POST 调用）；
+      // /api/update/check → GET（gateway 模式下页面直连 GitHub 的更新检查分支）。
       const p = normalizePathLiteral(special[1])
       if (!p) return
       const known = SPECIAL_METHODS[p]
