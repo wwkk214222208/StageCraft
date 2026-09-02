@@ -1,6 +1,6 @@
 {
   "name": "dsh-rp",
-  "version": "0.4.21",
+  "version": "0.5.1",
   "description": "StageCraft 的 Cordis/dsh 适配壳：把角色酒馆作为自包含插件跑进 dsh profile（蹭热度原型）",
   "type": "module",
   "main": "dist/index.js",
