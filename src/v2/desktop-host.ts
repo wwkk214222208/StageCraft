@@ -14,6 +14,7 @@ import { validateComponentManifest, isPortableRelativePath } from './component-v
 import { negotiateCapabilities } from './capabilities.ts'
 import { capabilityForHostOperation, createNodeFileComponentStorage, type ComponentStoragePort, type HostPortCaller } from './component-storage.ts'
 import { HOST_CORE_ABI_VERSION, type HostCoreEntry, type LoadedCoreComponent, HostCoreSession } from './host-core-abi.ts'
+import { createOfficialCoreRuntime } from './official-core-runtime.ts'
 import { renderUiMountPage } from './ui-mount.ts'
 
 export interface V2DesktopHostOptions {
@@ -117,7 +118,12 @@ export async function startV2DesktopHost(options: V2DesktopHostOptions): Promise
   try {
     const moduleUrl = `${pathToFileURL(verified[0].runtimePath).href}?stagecraftM4=${++importNonce}`
     const loaded = await import(moduleUrl)
-    entry = adaptCoreExport(loaded.default, coreManifest)
+    // Authoring Cores use the official runtime so LLM services are started and
+    // handed off through the replaceable boundary. Legacy/generic Core entries
+    // retain the narrow adapter used by existing v2 Host ABI fixtures.
+    entry = loaded.default && typeof loaded.default === 'object' && (loaded.default as { kind?: string; manifest?: { category?: string } }).kind === 'core' && (loaded.default as { manifest?: { category?: string } }).manifest?.category === 'core'
+      ? createOfficialCoreRuntime({ manifest: immutableJson(coreManifest), defaultExport: loaded.default, module: Object.freeze({ ...loaded }) })
+      : adaptCoreExport(loaded.default, coreManifest)
   } catch (error) {
     throw stageError('import', coreManifest.id, error instanceof Error ? error.message : String(error))
   }

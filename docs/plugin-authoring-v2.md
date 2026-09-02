@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | Tool/config | `defineToolPlugin`, schema, `execute` | flash-level model or first-time author | Cordis patching, private Context/class, lifecycle cleanup, platform branches, hand-written hashes |
 | Provider | `defineProviderDriver`, provider protocol stream | integration author | credential storage, routing policy, global cancellation bookkeeping |
-| LLM System | `defineLlmSystem`, driver registry, routing, lifecycle and usage | system author | provider protocol details, solution prompts and domain state |
+| LLM System | `defineLlmSystem`, returned `LlmSystemService`, catalogs, credentials, routing, lifecycle and usage | system author | provider protocol details, solution prompts and domain state |
 | Solution | `defineSolution`, prompt assembly, commands | domain author | LLM provider internals, Store/SQLite, internal state reducers |
 | Host + UI | `defineUiPlugin`, host mount handle | UI author | DOM assumptions, Android/Desktop forks, Host process APIs |
 | Core template | `defineCore`, lifecycle callbacks | advanced author | Host process boot, native loaders, ABI negotiation internals |
@@ -17,22 +17,24 @@ Every author sees a small, typed context: plugin id, API version, read-only conf
 
 ## Suggested API
 
-The prototype exposes `defineToolPlugin`, `defineProviderDriver`, `defineLlmSystem`, `defineSolution`, `defineUiPlugin` and `defineCore`. `defineProviderDriver` is only a provider-protocol adapter: it receives the provider/model and runtime credential material selected by the LLM System and must not implement global routing or credential policy. `defineLlmSystem` owns provider and model enumeration, credential-profile metadata/references, route selection, lifecycle, completion streams, request cancellation and usage records. It receives the messages already assembled by the Solution; it never invents, appends or interprets a system prompt.
+The prototype exposes `defineToolPlugin`, `defineProviderDriver`, `defineLlmSystem`, `defineSolution`, `defineUiPlugin` and `defineCore`. `defineProviderDriver` is only a provider-protocol adapter: it receives the driver/model and runtime credential material selected by the LLM System and must not implement global routing or credential policy. `defineLlmSystem` returns a complete `LlmSystemService` owning provider-profile CRUD, model discovery, explicit role/director/assistant routing, lifecycle, completion streams, request cancellation and usage records. It receives the messages already assembled by the Solution; it never invents, appends or interprets a system prompt. The official reference implementation and OpenAI-compatible driver adapter live in `src/llm/` and reuse the production ModelGateway stream/JSON parsers. The adapter only emits `json_schema` when complete schema metadata is supplied and forwards tool definitions when `toolCalling` is enabled; otherwise it sends a valid plain completion request.
 
 ### Smallest LLM System
 
 ```ts
 const system = defineLlmSystem({
   id: 'example.llm-system', version: '0.1.0', title: 'Example LLM System',
-  start(context) {
-    context.registerDriver(driver)
-    context.upsertCredentialProfile({ id: 'main', providerId: 'example', label: 'Main account' })
+  async start(context) {
+    const service = await createDefaultLlmSystemService(context)
+    await service.upsertCredentialProfile({ id: 'main', profileId: 'main', providerId: 'example', driverId: 'example', label: 'Main account' })
+    return service
   },
-  route: () => ({ providerId: 'example', model: 'example-model', credentialProfileId: 'main' }),
 })
 ```
 
-Use `createAuthoringLlmSystemHarness` for a portable in-memory exercise. Credentials are runtime-only values; profile metadata and diagnostics contain references and labels, never secrets. The harness calls the selected driver with the exact selected route and the exact Solution-provided messages.
+在 LLM 路由结果中，`providerId` 保持兼容用的 provider/driver 别名，`driverId` 表示协议驱动，`profileId` 表示供应商实例；不要再把 profile id 写入 `providerId`。凭据 secret 只通过 secret port（没有 port 时由官方实现暂存于内存）传递，不属于公开 profile、usage 或 manifest。
+
+Use `createAuthoringLlmSystemHarness` only to start and validate a plugin's returned service. `createDefaultLlmSystemService` is an optional reference implementation that a plugin may explicitly call. Credentials are runtime-only values; profile metadata and diagnostics contain references and labels, never secrets. The service calls the selected driver with the exact selected route and the exact Solution-provided messages.
 
 All definitions require reverse-domain lowercase id, full semver version, title and API version `0.1`. The manifest category is deliberately separate from the existing v1 `PluginKind` so this prototype does not silently freeze or rewrite the v1 launcher contract.
 

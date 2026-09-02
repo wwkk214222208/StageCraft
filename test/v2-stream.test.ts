@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { defineCore, defineLlmSystem, defineProviderDriver } from '../src/sdk/index.ts'
+import { createDefaultLlmSystemService, defineCore, defineLlmSystem, defineProviderDriver } from '../src/sdk/index.ts'
 import { createOfficialCoreRuntime } from '../src/v2/official-core-runtime.ts'
 import { startV2DesktopHost } from '../src/v2/desktop-host.ts'
 import { buildComponentLaunchPlan } from '../src/v2/launch-plan.ts'
@@ -23,7 +23,7 @@ function plan(coreId: string, plugins: string[]) {
 
 test('official runtime streams llm chunks through the Host-Core ABI as they are produced', async () => {
   const driver = defineProviderDriver({ id: 'example.driver', version: '1.0.0', title: 'Driver', providerId: 'demo', models: ['demo-1'], async *request() { for (const part of ['a', 'b', 'c']) { await sleep(10); yield { type: 'text', text: part } } yield { type: 'usage', usage: { inputTokens: 1, outputTokens: 1 } } } })
-  const llm = defineLlmSystem({ id: 'example.llm', version: '1.0.0', title: 'LLM', start() {}, route: () => ({ providerId: 'demo', model: 'demo-1' }) })
+  const llm = defineLlmSystem({ id: 'example.llm', version: '1.0.0', title: 'LLM', start: context => createDefaultLlmSystemService(context) })
   const core = defineCore({ id: 'example.core', version: '1.0.0', title: 'Core', start(ctx) { ctx.ready() } })
   const runtime = createOfficialCoreRuntime(component(core, 'core'))
   const session = new HostCoreSession(plan('example.core', ['example.driver', 'example.llm']), { call: async () => null }, [component(driver, 'provider-driver'), component(llm, 'llm-system')])
@@ -41,7 +41,7 @@ test('cancelling a running stream releases the producer and ends iteration', asy
   const driver = defineProviderDriver({ id: 'example.driver', version: '1.0.0', title: 'Driver', providerId: 'demo', models: ['demo-1'], async *request(request) {
     try { let index = 0; while (true) { await sleep(10); if (request.signal?.aborted) break; yield { type: 'text', text: `t${index++}` } } } finally { producerReleased = true }
   } })
-  const llm = defineLlmSystem({ id: 'example.llm', version: '1.0.0', title: 'LLM', start() {}, route: () => ({ providerId: 'demo', model: 'demo-1' }) })
+  const llm = defineLlmSystem({ id: 'example.llm', version: '1.0.0', title: 'LLM', start: context => createDefaultLlmSystemService(context) })
   const core = defineCore({ id: 'example.core', version: '1.0.0', title: 'Core', start(ctx) { ctx.ready() } })
   const runtime = createOfficialCoreRuntime(component(core, 'core'))
   const session = new HostCoreSession(plan('example.core', ['example.driver', 'example.llm']), { call: async () => null }, [component(driver, 'provider-driver'), component(llm, 'llm-system')])

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createAuthoringLlmSystemHarness, defineCore, defineLlmSystem, defineProviderDriver } from '../src/sdk/index.ts'
+import { createAuthoringLlmSystemHarness, createDefaultLlmSystemService, defineCore, defineLlmSystem, defineProviderDriver } from '../src/sdk/index.ts'
 import type { LlmHarnessSnapshot, LlmHarnessStore } from '../src/sdk/index.ts'
 import { createOfficialCoreRuntime } from '../src/v2/official-core-runtime.ts'
 import { HostCoreSession, type LoadedCoreComponent } from '../src/v2/host-core-abi.ts'
@@ -41,16 +41,16 @@ test('harness persists credential profiles, secrets and usage through the store'
     async write(snapshot) { snapshots.push(structuredClone(snapshot)) },
   }
   const driver = defineProviderDriver({ id: 'example.driver', version: '1.0.0', title: 'Driver', providerId: 'demo', models: ['demo-1'], async *request(request) { yield { type: 'text', text: `secret=${request.credential?.secret ?? 'none'}` }; yield { type: 'usage', usage: { inputTokens: 5, outputTokens: 2 } } } })
-  const llm = defineLlmSystem({ id: 'example.llm', version: '1.0.0', title: 'LLM', start(context) { context.registerDriver(driver); context.upsertCredentialProfile({ id: 'main', providerId: 'demo' }) }, route: () => ({ providerId: 'demo', model: 'demo-1', credentialProfileId: 'main' }) })
+  const llm = defineLlmSystem({ id: 'example.llm', version: '1.0.0', title: 'LLM', async start(context) { const service = await createDefaultLlmSystemService(context, { store }); await service.upsertCredentialProfile({ id: 'main', providerId: 'demo' }); return service } })
 
-  const first = await createAuthoringLlmSystemHarness(llm, {}, { store })
-  first.setCredentialSecret('main', 'sk-demo')
+  const first = await createAuthoringLlmSystemHarness(llm, {}, { drivers: [driver] })
+  await first.setCredentialSecret('main', 'sk-demo')
   first.recordUsage({ requestId: 'r0', providerId: 'demo', model: 'demo-1', inputTokens: 1, outputTokens: 1 })
   await first.stop()
   assert.ok(snapshots.length > 0)
 
-  const second = await createAuthoringLlmSystemHarness(llm, {}, { store })
-  assert.equal(second.hasCredentialSecret('main'), true, 'restored harness must know the stored secret')
+  const second = await createAuthoringLlmSystemHarness(llm, {}, { drivers: [driver] })
+  assert.equal(await second.hasCredentialSecret('main'), true, 'restored service must know the stored secret')
   assert.equal(second.aggregateUsage().requests, 1, 'usage must survive restart')
   const chunks = []; for await (const chunk of second.complete({ requestId: 'r1', messages: [{ role: 'user', content: 'hi' }] })) chunks.push(chunk)
   assert.equal((chunks[0] as any).text, 'secret=sk-demo', 'complete() must inject the stored secret when the caller passes none')
@@ -65,8 +65,8 @@ test('LLM harness stop waits for queued writes before reporting shutdown', async
     async read() { return undefined },
     async write(snapshot) { await gate; snapshots.push(structuredClone(snapshot)) },
   }
-  const llm = defineLlmSystem({ id: 'example.slow-llm', version: '1.0.0', title: 'Slow LLM', start() {}, route: () => ({ providerId: 'demo', model: 'demo-1' }) })
-  const harness = await createAuthoringLlmSystemHarness(llm, {}, { store })
+  const llm = defineLlmSystem({ id: 'example.slow-llm', version: '1.0.0', title: 'Slow LLM', start: context => createDefaultLlmSystemService(context, { store }) })
+  const harness = await createAuthoringLlmSystemHarness(llm)
   harness.recordUsage({ requestId: 'slow', providerId: 'demo', model: 'demo-1', inputTokens: 2, outputTokens: 1 })
   const stopping = harness.stop()
   await Promise.resolve()
@@ -85,8 +85,8 @@ test('LLM harness flushes slow persistence and becomes stopped when plugin stop 
     async read() { return undefined },
     async write(snapshot) { await gate; snapshots.push(structuredClone(snapshot)) },
   }
-  const llm = defineLlmSystem({ id: 'example.throwing-stop-llm', version: '1.0.0', title: 'Throwing stop LLM', start() {}, stop() { throw new Error('plugin stop failed') }, route: () => ({ providerId: 'demo', model: 'demo-1' }) })
-  const harness = await createAuthoringLlmSystemHarness(llm, {}, { store })
+  const llm = defineLlmSystem({ id: 'example.throwing-stop-llm', version: '1.0.0', title: 'Throwing stop LLM', async start(context) { const service = await createDefaultLlmSystemService(context, { store }); const wrapped = { ...service, async stop() { await service.stop(); throw new Error('plugin stop failed') } }; Object.defineProperty(wrapped, 'status', { get: () => service.status }); return wrapped } })
+  const harness = await createAuthoringLlmSystemHarness(llm)
   harness.recordUsage({ requestId: 'throwing-stop', providerId: 'demo', model: 'demo-1', inputTokens: 4, outputTokens: 2 })
   const stopping = harness.stop()
   await Promise.resolve()
@@ -95,14 +95,14 @@ test('LLM harness flushes slow persistence and becomes stopped when plugin stop 
   await assert.rejects(stopping, /plugin stop failed/)
   assert.equal(harness.status, 'stopped')
   assert.equal(snapshots.at(-1)?.usage[0]?.requestId, 'throwing-stop')
-  await harness.stop()
+  await assert.rejects(harness.stop(), /plugin stop failed/)
 })
 
 test('official runtime restores config and LLM usage from host storage across restarts', async () => {
   const backing = createHostBacking()
   const makeRuntime = async () => {
     const driver = defineProviderDriver({ id: 'example.driver', version: '1.0.0', title: 'Driver', providerId: 'demo', models: ['demo-1'], async *request() { yield { type: 'usage', usage: { inputTokens: 3, outputTokens: 4 } } } })
-    const llm = defineLlmSystem({ id: 'example.llm', version: '1.0.0', title: 'LLM', start(context) { context.upsertCredentialProfile({ id: 'main', providerId: 'demo' }) }, route: () => ({ providerId: 'demo', model: 'demo-1', credentialProfileId: 'main' }) })
+    const llm = defineLlmSystem({ id: 'example.llm', version: '1.0.0', title: 'LLM', async start(context) { const service = await createDefaultLlmSystemService(context); await service.upsertCredentialProfile({ id: 'main', providerId: 'demo' }); return service } })
     const core = defineCore({ id: 'example.core', version: '1.0.0', title: 'Core', start(ctx) { ctx.registerCommand('config', () => (ctx as any).config); ctx.ready() } })
     const coreComponent = component(core, 'core')
     const runtime = createOfficialCoreRuntime(coreComponent)
@@ -124,6 +124,6 @@ test('official runtime restores config and LLM usage from host storage across re
   assert.deepEqual(profiles, [{ id: 'main', providerId: 'demo', hasSecret: true }])
   const command = await second.session.invoke('core/command', { name: 'config' })
   assert.deepEqual(command, { temperature: 0.7 }, 'core start() must see the persisted config')
-  assert.ok(backing.areas.has('example.llm/llm-harness'), 'llm harness state must be namespaced per component')
+  assert.ok(backing.areas.has('example.llm/llm-system'), 'LLM System state must be namespaced per component')
   await second.runtime.shutdown!()
 })

@@ -22,7 +22,7 @@ function defineProviderDriver(definition) {
   if (!definition.providerId?.trim()) throw new Error("providerId is required");
   if (!Array.isArray(definition.models) || definition.models.length === 0) throw new Error("provider driver must declare at least one model");
   if (typeof definition.request !== "function") throw new TypeError("provider request must be a function");
-  const value = { kind: "provider-driver", manifest: manifest(definition, "provider-driver"), providerId: definition.providerId, models: Object.freeze([...definition.models]), request: definition.request, cancel: definition.cancel };
+  const value = { kind: "provider-driver", manifest: manifest(definition, "provider-driver"), driverId: definition.driverId ?? definition.providerId, providerId: definition.providerId, models: Object.freeze([...definition.models]), request: definition.request, cancel: definition.cancel };
   return Object.freeze(value);
 }
 

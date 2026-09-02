@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { defineCore, defineLlmSystem, defineProviderDriver, defineSolution, defineToolPlugin, defineUiPlugin } from '../src/sdk/index.ts'
+import { createDefaultLlmSystemService, defineCore, defineLlmSystem, defineProviderDriver, defineSolution, defineToolPlugin, defineUiPlugin } from '../src/sdk/index.ts'
 import { createOfficialCoreRuntime } from '../src/v2/official-core-runtime.ts'
 import { HostCoreSession, type LoadedCoreComponent } from '../src/v2/host-core-abi.ts'
 
@@ -14,7 +14,7 @@ function plan() { return { planVersion: '0.1' as const, hostApiVersion: '0.1', c
 test('official runtime boots through HostCoreSession and exposes generic operations', async () => {
   const events: string[] = []
   const driver = defineProviderDriver({ id: 'example.driver', version: '1.0.0', title: 'Driver', providerId: 'demo', models: ['demo-1'], async *request(request) { events.push(`request:${request.messages[0].content}`); yield { type: 'text', text: 'ok' }; yield { type: 'usage', usage: { inputTokens: 2, outputTokens: 3 } } } })
-  const llm = defineLlmSystem({ id: 'example.llm', version: '1.0.0', title: 'LLM', start() { events.push('llm:start') }, route() { return { providerId: 'demo', model: 'demo-1' } }, stop() { events.push('llm:stop') } })
+  const llm = defineLlmSystem({ id: 'example.llm', version: '1.0.0', title: 'LLM', async start(context) { events.push('llm:start'); const service = await createDefaultLlmSystemService(context); return { ...service, async stop() { events.push('llm:stop'); await service.stop() } } } })
   const solution = defineSolution({ id: 'example.solution', version: '1.0.0', title: 'Solution', systemPrompt: 'KEEP', assemblePrompt: ({ user }) => `assembled:${user}` })
   const hostCalls: string[] = []
   const tool = defineToolPlugin({ id: 'example.tool', version: '1.0.0', title: 'Tool', execute(input, ctx) { ctx.log('info', 'tool'); return { input } } })
@@ -67,7 +67,7 @@ test('official runtime isolates required dependents after identity or LLM init f
   assert.equal(identityRuntime.listQuarantined().length, 2)
   assert.match(identityRuntime.listQuarantined().find(entry => entry.id === 'example.identity-dependent')!.reason, /required dependency/)
 
-  const failingLlm = defineLlmSystem({ id: 'example.failing-llm', version: '1.0.0', title: 'Failing LLM', start() { throw new Error('llm init failed') }, route: () => ({ providerId: 'none', model: 'none' }) })
+  const failingLlm = defineLlmSystem({ id: 'example.failing-llm', version: '1.0.0', title: 'Failing LLM', start() { throw new Error('llm init failed') } })
   const llmDependentPlugin = defineToolPlugin({ id: 'example.llm-dependent', version: '1.0.0', title: 'LLM dependent', execute: () => 1 })
   const failingLlmComponent = component(failingLlm, 'llm-system')
   const llmDependent = component(llmDependentPlugin, 'tool', [{ id: 'example.failing-llm', version: '1.0.0' }])
