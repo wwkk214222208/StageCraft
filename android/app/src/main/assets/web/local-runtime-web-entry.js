@@ -675,7 +675,30 @@
           if (typeof defaults.defaultRoleProviderId === 'string' && !normalized.role) normalized.role = { providerId: defaults.defaultRoleProviderId, model: defaults.defaultRoleModel || undefined }
           if (typeof defaults.directorProviderId === 'string' && !normalized.director) normalized.director = { providerId: defaults.directorProviderId, model: defaults.directorModel || undefined }
           saveProviderMeta({ providers, defaults: normalized })
-          refreshActiveProvider({ providers, defaults: normalized })
+          if (gatewayMode) {
+            // gateway 模式：供应商 UI 与模型路由读 :core 内 LLM System 的凭据存储
+            // （provider.list/save/default-role/director 都是 core 业务路由），legacy secret 表
+            // 只是兼容快照——必须逐条经 /api/providers/save 写入权威存储，否则拉取后 UI 与
+            // 路由都看不到新供应商。默认激活（role/director）失败不阻断其余数据。
+            const importedIds = new Set(providers.map(item => item.id))
+            const postJson = async (path, body) => originalFetch(path, { method: 'POST', headers: jsonHeaders, body: JSON.stringify(body) })
+            const errorText = async (response, fallback) => { const detail = await response.json().catch(() => ({})); return typeof detail.error === 'string' ? detail.error : detail.error?.message || `${fallback}（HTTP ${response.status}）` }
+            for (const provider of providers) {
+              const response = await postJson('/api/providers/save', { config: provider })
+              if (!response.ok) throw new Error(await errorText(response, `供应商 ${provider.id} 导入失败`))
+            }
+            // 全表同步：删除电脑侧已不存在的本机供应商（与 legacy meta 全量替换语义一致）
+            const localProviders = await originalFetch('/api/providers').then(r => r.ok ? r.json() : null).catch(() => null)
+            for (const local of (localProviders && Array.isArray(localProviders.providers) ? localProviders.providers : [])) {
+              if (!importedIds.has(String(local.id))) { try { await postJson('/api/providers/delete', { id: String(local.id) }) } catch { /* 删除失败不阻断 */ } }
+            }
+            const roleId = normalized.role && normalized.role.providerId
+            if (roleId) { try { await postJson('/api/providers/default-role', { id: roleId, model: normalized.role.model || undefined }) } catch { /* 默认激活失败不阻断 */ } }
+            const directorId = normalized.director && normalized.director.providerId
+            if (directorId) { try { await postJson('/api/providers/director', { id: directorId, model: normalized.director.model || undefined }) } catch { /* 默认激活失败不阻断 */ } }
+          } else {
+            refreshActiveProvider({ providers, defaults: normalized })
+          }
           result.providers = true
         }
       }
