@@ -10,6 +10,15 @@ export const STAGECRAFT_AUTHORING_API = '0.1' as const
 
 export type AuthoringKind = 'tool' | 'provider-driver' | 'llm-system' | 'solution' | 'ui' | 'core'
 
+/** Host capabilities requested by an authoring plugin.  The object form is
+ * aligned with the v2 component contract; a flat readonly array remains
+ * accepted as a legacy required-capabilities declaration. */
+export interface AuthoringCapabilities {
+  readonly required?: readonly string[]
+  readonly optional?: readonly string[]
+}
+export type AuthoringCapabilityDeclaration = AuthoringCapabilities | readonly string[]
+
 export interface AuthoringManifest {
   id: string
   version: string
@@ -21,7 +30,7 @@ export interface AuthoringManifest {
   apiVersion: typeof STAGECRAFT_AUTHORING_API
   /** Entry names are build metadata and are not consumed by the current v1 launcher. */
   entry?: Readonly<{ desktop: string; android: string }>
-  capabilities?: readonly string[]
+  capabilities?: AuthoringCapabilityDeclaration
 }
 
 export interface AuthoringContext {
@@ -336,8 +345,19 @@ function manifest(definition: Omit<AuthoringManifest, 'category' | 'apiVersion'>
   if (definition.description !== undefined) value.description = definition.description
   if (definition.author !== undefined) value.author = definition.author
   if (definition.entry !== undefined) value.entry = Object.freeze({ desktop: definition.entry.desktop, android: definition.entry.android })
-  if (definition.capabilities !== undefined) value.capabilities = Object.freeze([...definition.capabilities])
+  if (definition.capabilities !== undefined) value.capabilities = freezeCapabilities(definition.capabilities)
   return Object.freeze(value)
+}
+
+function freezeCapabilities(value: AuthoringCapabilityDeclaration): AuthoringCapabilityDeclaration {
+  if (Array.isArray(value)) return Object.freeze([...value])
+  if (!value || typeof value !== 'object') throw new TypeError('plugin capabilities must be an array or { required?, optional? }')
+  if (value.required !== undefined && !Array.isArray(value.required)) throw new TypeError('plugin capabilities.required must be an array')
+  if (value.optional !== undefined && !Array.isArray(value.optional)) throw new TypeError('plugin capabilities.optional must be an array')
+  const required = value.required === undefined ? undefined : Object.freeze([...value.required])
+  const optional = value.optional === undefined ? undefined : Object.freeze([...value.optional])
+  if (required?.some(capability => typeof capability !== 'string' || !capability.trim()) || optional?.some(capability => typeof capability !== 'string' || !capability.trim())) throw new TypeError('plugin capabilities must contain non-empty strings')
+  return Object.freeze({ ...(required === undefined ? {} : { required }), ...(optional === undefined ? {} : { optional }) })
 }
 
 export function defineToolPlugin(definition: ToolPluginDefinition): ToolPlugin {

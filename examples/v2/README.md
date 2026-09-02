@@ -33,3 +33,19 @@ Windows PowerShell 可执行：
 在 APK 的组件管理入口通过系统文件选择器（SAF）逐个选择上述 `.stagecraft-plugin.zip` 并完成 install；然后调用 `selectV2Core(id, version, true)` 选择 Core，再对 driver、llm、solution、tool 分别调用 `setV2PluginEnabled(id, version, true, true)`，最后重启。没有 active v2 Core plan 时，bundled v1 Core 下不能启用这些 v2 ordinary plugins。当前 v2 入口是开发/参考 API，不是完整市场页面；若 UI 尚未接线，可从现有 native bridge 开发入口调用 install、select Core、enable plugin、restart/rescue。Android 只接受打包后的 JS/ESM 单文件，不加载第三方 Dex/Java/Kotlin/.so，也不热加载。
 
 运行 `test/m9-v2-e2e.test.ts` 可看到同一套 Solution→LLM System→Driver→stream/usage→Tool 链路。
+
+## 独立第三方 LLM System
+
+`examples/v2/llm-third-party` 是不依赖 `src/llm/official.ts` 或 Core 私有模块的作者样例。它只使用公开 SDK，自己管理 profile CRUD、默认角色/导演路由、secret、driver/model catalog、流式 complete、取消、超时与 usage。最短验证路径：
+
+```bash
+node scripts/stagecraft.mjs plugin build examples/v2/llm-third-party
+node scripts/stagecraft.mjs plugin check examples/v2/llm-third-party
+node scripts/stagecraft.mjs plugin test examples/v2/llm-third-party
+node scripts/stagecraft.mjs plugin pack examples/v2/llm-third-party
+```
+
+仓库级 runtime 集成验证：`node --experimental-strip-types --test test/third-party-llm.test.ts`。
+
+Flash 级交付评估：作为可替换插件样例可交付；生产使用前仍需接入真实 Provider Driver、模型发现 HTTP 和平台 secret port。无 state/secret port 时示例只保留内存密钥，重启会丢失。
+该插件的打包 manifest 明确声明 `host.storage` 为必需能力、`host.secrets` 为可选能力；没有 storage 授权时应由 v2 Host 拒绝加载，未提供 secrets 时仅使用进程内密钥。

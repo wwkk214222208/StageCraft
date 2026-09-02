@@ -57,6 +57,7 @@ async function check(projectDir, { quiet = false } = {}) {
   if (!manifest.title?.trim()) errors.push('manifest.title is required')
   if (!['tool', 'provider-driver', 'llm-system', 'solution', 'ui', 'core'].includes(manifest.category)) errors.push('manifest.category must be tool/provider-driver/llm-system/solution/ui/core')
   if (manifest.apiVersion !== '0.1') errors.push(`unsupported manifest.apiVersion: ${manifest.apiVersion ?? 'missing'}`)
+  errors.push(...validateCapabilities(manifest.capabilities))
   let sourceEntry; let outputEntry; const entryPaths = {}
   try {
     sourceEntry = safeProjectPath(projectDir, manifest.source ?? 'src/index.ts', 'source')
@@ -97,6 +98,7 @@ async function verifyBuiltDefaultExport(outputEntry, manifest, errors) {
     for (const key of ['id', 'version', 'title', 'category', 'apiVersion']) {
       if (plugin.manifest[key] !== manifest[key]) errors.push(`built manifest mismatch for ${key}: package=${String(manifest[key])}, built=${String(plugin.manifest[key])}`)
     }
+    if (JSON.stringify(projectCapabilities(plugin.manifest.capabilities)) !== JSON.stringify(projectCapabilities(manifest.capabilities))) errors.push('built manifest mismatch for capabilities')
   } catch (error) {
     errors.push(`cannot import built ESM default export ${outputEntry}: ${error instanceof Error ? error.message : String(error)}`)
   }
@@ -157,6 +159,7 @@ async function packPlugin(projectDir) {
     componentType: value.category === 'core' ? 'core' : 'plugin',
     ...(value.category === 'core' ? {} : { pluginCategory: value.category }),
     entrypoints: { runtime: runtimePath },
+    ...(projectCapabilities(value.capabilities) ? { capabilities: projectCapabilities(value.capabilities) } : {}),
     ...(value.category === 'core' ? { hostApi: { version: '0.1' } } : {}),
     integrity: { runtime: `sha256-${sha256(runtimeBytes)}` },
   }
@@ -184,6 +187,26 @@ function assertSharedPortableEntry(manifest) {
 }
 
 function sha256(data) { return createHash('sha256').update(data).digest('hex') }
+
+function validateCapabilities(value) {
+  if (value === undefined) return []
+  if (Array.isArray(value)) return value.every(item => typeof item === 'string' && item.trim()) ? [] : ['manifest.capabilities legacy array must contain non-empty strings']
+  if (!value || typeof value !== 'object') return ['manifest.capabilities must be { required?, optional? } or a legacy string array']
+  const errors = []
+  for (const key of Object.keys(value)) if (key !== 'required' && key !== 'optional') errors.push(`manifest.capabilities.${key} is not supported`)
+  for (const key of ['required', 'optional']) if (value[key] !== undefined && (!Array.isArray(value[key]) || value[key].some(item => typeof item !== 'string' || !item.trim()))) errors.push(`manifest.capabilities.${key} must contain non-empty strings`)
+  return errors
+}
+
+function projectCapabilities(value) {
+  if (value === undefined) return undefined
+  if (Array.isArray(value)) return { required: [...value] }
+  if (!value || typeof value !== 'object') return undefined
+  return {
+    ...(value.required === undefined ? {} : { required: [...value.required] }),
+    ...(value.optional === undefined ? {} : { optional: [...value.optional] }),
+  }
+}
 
 // Minimal store-only ZIP writer (no native or third-party dependency); entries are deterministic.
 function zip(entries) {

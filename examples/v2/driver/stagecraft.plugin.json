@@ -11,6 +11,6 @@
     "android": "dist/index.js"
   },
   "integrity": {
-    "dist/index.js": "sha256-c7b1002af495e3b60c0c66e46617720834d1eb2c7b9947a59cca403be030b103"
+    "dist/index.js": "sha256-75f20530096666196f988d6b24932de1f170abca8ca2113d5aea00a0a5396262"
   }
 }

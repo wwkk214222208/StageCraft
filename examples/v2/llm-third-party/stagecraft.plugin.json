@@ -1,0 +1,24 @@
+{
+  "id": "example.third-party.llm",
+  "version": "0.1.0",
+  "title": "Third-party LLM System",
+  "category": "llm-system",
+  "apiVersion": "0.1",
+  "capabilities": {
+    "required": [
+      "host.storage"
+    ],
+    "optional": [
+      "host.secrets"
+    ]
+  },
+  "entry": {
+    "desktop": "dist/index.js",
+    "android": "dist/index.js"
+  },
+  "source": "src/index.ts",
+  "output": "dist/index.js",
+  "integrity": {
+    "dist/index.js": "sha256-7d4580f3124aa1d873647506fe486bb4c08c4b18750d531a4a90160b3b400747"
+  }
+}

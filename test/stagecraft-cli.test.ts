@@ -29,7 +29,8 @@ test('CLI covers all six templates and deterministic packing', () => {
       assert.equal(run(stagecraftCli, ['plugin', 'pack', project], root).status, 0)
       assert.deepEqual(readFileSync(join(project, archive!)), first, `${kind} pack should be deterministic`)
       const manifest = JSON.parse(readFileSync(join(project, 'stagecraft.plugin.json'), 'utf8'))
-      assert.deepEqual(Object.keys(manifest).sort(), ['apiVersion', 'category', 'entry', 'id', 'integrity', 'output', 'source', 'title', 'version'])
+      const expectedManifestKeys = ['apiVersion', 'category', 'entry', 'id', 'integrity', 'output', 'source', 'title', 'version', ...(kind === 'llm-system' ? ['capabilities'] : [])]
+      assert.deepEqual(Object.keys(manifest).sort(), expectedManifestKeys.sort())
     }
   } finally { rmSync(base, { recursive: true, force: true }) }
 })
@@ -42,9 +43,14 @@ test('CLI check rejects root escape, CommonJS, divergent entries and missing tes
     assert.equal(run(stagecraftCli, ['plugin', 'build', project], root).status, 0)
     const manifestPath = join(project, 'stagecraft.plugin.json')
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    manifest.id = 'stagecraft.character-status'; manifest.title = 'Character Status UI'; manifest.category = 'ui'
+    manifest.capabilities = { required: 'host.storage' }
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
     let result = run(stagecraftCli, ['plugin', 'check', project], root)
+    assert.notEqual(result.status, 0); assert.match(result.output, /manifest\.capabilities\.required/)
+    delete manifest.capabilities; writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+    manifest.id = 'stagecraft.character-status'; manifest.title = 'Character Status UI'; manifest.category = 'ui'
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+    result = run(stagecraftCli, ['plugin', 'check', project], root)
     assert.notEqual(result.status, 0); assert.match(result.output, /built manifest mismatch for (id|title|category)/)
     manifest.id = 'example.tool'; manifest.title = 'Example tool'; manifest.category = 'tool'
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
@@ -69,5 +75,26 @@ test('CLI check rejects root escape, CommonJS, divergent entries and missing tes
     rmSync(join(project, 'test'), { recursive: true, force: true })
     result = run(stagecraftCli, ['plugin', 'test', project], root)
     assert.notEqual(result.status, 0); assert.match(result.output, /no plugin tests found/)
+  } finally { rmSync(base, { recursive: true, force: true }) }
+})
+
+test('LLM package capabilities are projected into the packed v2 manifest', () => {
+  const base = mkdtempSync(join(root, '.tmp-sdk-llm-capabilities-'))
+  try {
+    const project = join(base, 'llm')
+    assert.equal(run(createCli, [project, 'llm-system'], root).status, 0)
+    assert.equal(run(stagecraftCli, ['plugin', 'build', project], root).status, 0)
+    const packageManifest = JSON.parse(readFileSync(join(project, 'stagecraft.plugin.json'), 'utf8'))
+    assert.deepEqual(packageManifest.capabilities, { required: ['host.storage'], optional: ['host.secrets'] })
+    assert.equal(run(stagecraftCli, ['plugin', 'pack', project], root).status, 0)
+    const archive = readFileSync(join(project, 'example-llm-system-0.1.0.stagecraft-plugin.zip'))
+    const marker = Buffer.from('manifest.json')
+    const nameOffset = archive.indexOf(marker)
+    assert.ok(nameOffset > 0)
+    const localOffset = nameOffset - 30
+    const nameLength = archive.readUInt16LE(localOffset + 26)
+    const dataLength = archive.readUInt32LE(localOffset + 22)
+    const packedManifest = JSON.parse(archive.subarray(localOffset + 30 + nameLength, localOffset + 30 + nameLength + dataLength).toString('utf8'))
+    assert.deepEqual(packedManifest.capabilities, { required: ['host.storage'], optional: ['host.secrets'] })
   } finally { rmSync(base, { recursive: true, force: true }) }
 })

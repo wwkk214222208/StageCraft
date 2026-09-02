@@ -46,6 +46,18 @@ test('manifest metadata is defensively copied and nested public values cannot mu
   assert.equal(Object.isFrozen(plugin.manifest.capabilities), true)
 })
 
+test('authoring capabilities use the v2 required/optional shape and are frozen', () => {
+  const capabilities = { required: ['host.storage'], optional: ['host.secrets'] }
+  const plugin = defineToolPlugin({ id: 'example.capabilities', version: '0.1.0', title: 'Capabilities', capabilities, execute() {} })
+  capabilities.required.push('host.network'); capabilities.optional.push('host.clipboard')
+  assert.deepEqual(plugin.manifest.capabilities, { required: ['host.storage'], optional: ['host.secrets'] })
+  assert.equal(Object.isFrozen(plugin.manifest.capabilities), true)
+  assert.equal(Object.isFrozen((plugin.manifest.capabilities as { required: readonly string[] }).required), true)
+  assert.throws(() => defineToolPlugin({ id: 'example.bad-capabilities', version: '0.1.0', title: 'Bad', capabilities: { required: [''] }, execute() {} }), /capabilities/)
+  assert.throws(() => defineToolPlugin({ id: 'example.bad-required', version: '0.1.0', title: 'Bad required', capabilities: { required: 'host.storage' as any }, execute() {} }), /required.*array/)
+  assert.throws(() => defineToolPlugin({ id: 'example.bad-optional', version: '0.1.0', title: 'Bad optional', capabilities: { optional: [1] as any }, execute() {} }), /capabilities/)
+})
+
 test('authoring SDK rejects malformed public definitions', () => {
   assert.throws(() => defineToolPlugin({ id: 'bad', version: '0.1.0', title: 'x', execute() {} }), /invalid plugin id/)
   assert.throws(() => defineProviderDriver({ id: 'example.provider', version: '0.1.0', title: 'x', providerId: '', models: ['m'], request() { return [] as never } }), /providerId/)

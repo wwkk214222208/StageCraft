@@ -15,8 +15,18 @@ function manifest(definition, category) {
   if (definition.description !== void 0) value.description = definition.description;
   if (definition.author !== void 0) value.author = definition.author;
   if (definition.entry !== void 0) value.entry = Object.freeze({ desktop: definition.entry.desktop, android: definition.entry.android });
-  if (definition.capabilities !== void 0) value.capabilities = Object.freeze([...definition.capabilities]);
+  if (definition.capabilities !== void 0) value.capabilities = freezeCapabilities(definition.capabilities);
   return Object.freeze(value);
+}
+function freezeCapabilities(value) {
+  if (Array.isArray(value)) return Object.freeze([...value]);
+  if (!value || typeof value !== "object") throw new TypeError("plugin capabilities must be an array or { required?, optional? }");
+  if (value.required !== void 0 && !Array.isArray(value.required)) throw new TypeError("plugin capabilities.required must be an array");
+  if (value.optional !== void 0 && !Array.isArray(value.optional)) throw new TypeError("plugin capabilities.optional must be an array");
+  const required = value.required === void 0 ? void 0 : Object.freeze([...value.required]);
+  const optional = value.optional === void 0 ? void 0 : Object.freeze([...value.optional]);
+  if (required?.some((capability) => typeof capability !== "string" || !capability.trim()) || optional?.some((capability) => typeof capability !== "string" || !capability.trim())) throw new TypeError("plugin capabilities must contain non-empty strings");
+  return Object.freeze({ ...required === void 0 ? {} : { required }, ...optional === void 0 ? {} : { optional } });
 }
 function defineProviderDriver(definition) {
   if (!definition.providerId?.trim()) throw new Error("providerId is required");
