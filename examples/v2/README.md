@@ -1,6 +1,6 @@
 # StageCraft v2：最小可运行示例
 
-这是一个不含真实密钥的端到端样例，拆成五个组件：可替换 Core、LLM System、Provider Driver、Solution 和 Tool。Solution 负责 system prompt 与 prompt assembly；LLM System 只负责驱动注册、路由、流式与 usage；Provider Driver 只模拟供应商响应。
+这是一个不含真实密钥的端到端样例，拆成五个组件：可替换 Core、LLM System、Provider Driver、Solution 和 Tool。Solution 负责 system prompt 与 prompt assembly；LLM System 是完整可替换的管理系统，负责驱动/模型目录、凭据 profile、路由、生命周期、流式、取消与 usage；Provider Driver 只模拟供应商协议响应。
 
 ## 构建组件
 
@@ -47,5 +47,4 @@ node scripts/stagecraft.mjs plugin pack examples/v2/llm-third-party
 
 仓库级 runtime 集成验证：`node --experimental-strip-types --test test/third-party-llm.test.ts`。
 
-Flash 级交付评估：作为可替换插件样例可交付；生产使用前仍需接入真实 Provider Driver、模型发现 HTTP 和平台 secret port。无 state/secret port 时示例只保留内存密钥，重启会丢失。
-该插件的打包 manifest 明确声明 `host.storage` 为必需能力、`host.secrets` 为可选能力；没有 storage 授权时应由 v2 Host 拒绝加载，未提供 secrets 时仅使用进程内密钥。
+当前作者性证据只有这一个独立样本；它经历多轮审查修复后可用于契约联调，不能据此声称一次生成可靠或正式统计门槛通过。生产使用前仍需接入真实 Provider Driver、模型发现 HTTP 和平台 secret port。该插件的打包 manifest 明确声明 `host.storage` 为必需能力、`host.secrets` 为可选能力；没有 storage 授权时应由 v2 Host 拒绝加载，未提供 secrets 时仅使用进程内密钥，重启会丢失。Android 授权后的 `host.secrets` 才是 Keystore-backed；桌面参考 Host 的 `host.storage` 不应视为安全密钥存储。

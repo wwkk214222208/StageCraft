@@ -7,6 +7,7 @@ import { resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const root = resolve(new URL('..', import.meta.url).pathname.replace(/^\/(\w):/, '$1:'))
+const LOAD_TEST_TIMEOUT_MS = 15_000
 
 async function freePort(): Promise<number> {
   const probe = createServer()
@@ -28,7 +29,9 @@ test('server.ts is actually loadable by Node strip-types without a top-level ret
     })
     let stderr = ''
     child.stderr.on('data', chunk => { stderr += String(chunk) })
-    const timer = setTimeout(() => { child.kill(); reject(new Error('server.ts load test timed out')) }, 5000)
+    // Import-only smoke can be delayed by the full-suite scheduler; it must
+    // still kill the child if the process genuinely hangs.
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`server.ts load test timed out after ${LOAD_TEST_TIMEOUT_MS}ms`)) }, LOAD_TEST_TIMEOUT_MS)
     child.once('error', error => { clearTimeout(timer); reject(error) })
     child.once('exit', code => { clearTimeout(timer); resolveResult({ code, stderr }) })
   })

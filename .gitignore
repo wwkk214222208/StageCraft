@@ -48,3 +48,4 @@ custom/docs/HANDOFF-STRUCTURED-NPC-MEMORY.md
 
 # 会话临时目录（评估样本 / 测试脚手架）
 .tmp-*/
+.tmp-*.txt

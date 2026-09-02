@@ -10,7 +10,7 @@
 
 ## 说明：v1 shipping 与 v2 参考路径
 
-本文主体描述当前仍在发布的 v1 运行时与插件契约。v2 的可替换 Core、M3 组件 manifest、桌面 Host 与 Android Component Store 已实现到 M9（2026-09-02 收尾：逐能力授权、LLM 持久化、插件级隔离、传输层真流式、桌面 UI 挂载/恢复入口/loopback token 防护，详见各 v2 文档），但仍是实验性、未冻结的参考路径；请结合 [`architecture-v2-proposal.md`](./architecture-v2-proposal.md) 与 [`v2-migration-and-usage.md`](./v2-migration-and-usage.md) 阅读。文中 legacy LLM router 不等同于 v2 LLM System：v2 的 Provider Driver 只是供应商适配，Solution 负责 system prompt/prompt assembly。
+本文主体描述当前仍在发布的 v1 运行时与插件契约。当前 shipping 的 Node/Android 组合根均由独立 official LLM System 持有 provider/model/credential/routing/lifecycle/stream/cancel/usage；原 Core router 与旧 HTTP provider API 仅作为兼容适配面保留。v2 的可替换 Core、M3 组件 manifest、桌面 Host 与 Android Component Store 已实现到 M9，另有 LLM System 作者脚手架与独立样本验证（2026-09-03）；v2 仍是实验性、未冻结的参考路径。请结合 [`architecture-v2-proposal.md`](./architecture-v2-proposal.md) 与 [`v2-migration-and-usage.md`](./v2-migration-and-usage.md) 阅读。LLM System 是完整可替换的管理系统，Provider Driver 只是协议适配，Solution 负责 system prompt/prompt assembly。
 
 ---
 
@@ -40,7 +40,7 @@ Core 是**唯一状态权威**。任何要改状态的动作都走 **Command →
 | **人-核心交互插件** | Web / HTTP / Cordis Session / CLI 入口。只发 `HumanCommand`，只消费 `CoreView` / `CoreEvent` | **不直接访问 Store、模型或领域流程** |
 | **核心运行时插件** | 状态、Reducer、本地规则、审批、事件历史、取消 / 恢复、Command 调度。Workflow Registry/Executor 由 Core 提供，玩法由方案插件注册 | 不依赖 HTTP / DOM / Cordis / 具体模型；状态的唯一权威 |
 | **玩法方案插件** | 经 `CoreSolutionHost` 注册固定、版本化的 Workflow Definition、只读房间投影（WorkflowInstance、InteractionRequest）、状态类别 / 投影、可撤销的 Command Handler。默认 `StageCraftSolutionPlugin` 提供三条 StageCraft 流程（`stagecraft.chat.speech` / `stagecraft.chat.director` / `stagecraft.director.turn`）、默认状态类别与群聊命令处理器 | 不访问 Store / RoomRuntime；不能动态修改 Definition；安装 / 卸载可撤销且按 owner 隔离 |
-| **核心-LLM 路由插件** | `ModelRequest` / `ModelResult`：provider 路由、SSE、thinking 参数、usage、超时、request-scoped 取消、错误归一化 | 以 `requestId` 等待匹配结果并隔离取消的迟到结果；不决定房间阶段、不直接修改状态 |
+| **核心-LLM 兼容适配层** | 将 `ModelRequest` / `ModelResult` 接入独立 official LLM System：provider 路由、SSE、thinking 参数、usage、超时、request-scoped 取消、错误归一化 | 以 `requestId` 等待匹配结果并隔离取消的迟到结果；不决定房间阶段、不直接修改状态 |
 
 > 关键文件：`src/core/plugins.ts`（插件类型）、`src/core/container.ts`（插件容器）、`src/core/runtime.ts`（CoreRuntimeSkeleton）、`src/core/solutions.ts`（默认方案与三条 Workflow）。
 
@@ -76,6 +76,7 @@ Core 通过小型平台端口使用时间、UUID、仓储、资源、秘密、�
 - **已正式接入**：`Clock`、`IdFactory`、`CoreStateRepository`，以及 Android 本地的资源 / 秘密 / 模型传输端口。
 - Node 文件资源适配器仍在 Core 之外，且限制所有路径不能逃逸资源根目录。
 - 默认桌面组合根使用 Node / SQLite / HTTP 适配器（`src/platform/`）；浏览器与 Android 提供自己的实现，**不需要复制 Core、Workflow、审批或状态事务逻辑**。
+- v2 `host.secrets` 是按组件 manifest 声明、经 Host 授权后才提供的可选端口；Android 实现使用按组件命名空间隔离的 Keystore-backed 存储。桌面参考 Host 只提供 `host.log` 与普通的 `host.storage`，不宣称提供安全 secret port；未获得 secret port 的插件不得把普通 storage 当作安全密钥存储。
 - **Core 源码不得直接依赖 Node 文件系统 / Android API / DOM / 平台密钥存储。**
 
 ---
@@ -277,5 +278,6 @@ governance/                  治理数据（裁决/工单/期限；不进运行�
 - Workflow Executor 当前负责固定定义的注册 / 投影 / 合法转换，**不是通用自动业务编排器**；LLM 或 Author Pack 不允许直接修改 Definition（未来走版本化 `WorkflowPatchProposal` 且需授权校验）。
 - 兼容层：ST 卡导入在 `st-card-import.ts`；ST/MVU 兼容器在 `src/compat/st-mvu.ts`（前瞻、部分落地）；旧接口 / 外部调用经 `compat/`。
 - 创作者工作台的 AI 编辑（生成 / 润色 / 一致性检查 / 扩开场）当前依赖 dsh（`dsh-story-bridge`）；脱离 dsh 的独立模式暂不保证可用。
+- **LLM System 作者路径**：脚手架默认声明 `host.storage` 必需、`host.secrets` 可选，并按 `build → check → test → pack` 验证。当前只有一个独立第三方 LLM System 样本，经历多轮审查修复后通过功能验证；这只能证明“有脚手架和测试时能交付功能可用插件”，不能声称一次生成可靠，也不能声称正式统计门槛已通过。
 - **ADB 免码直连**：手机经 `adb reverse tcp:8787 tcp:8787` 把本机回环映射到电脑后，`POST /api/remote/device-token`
   以 loopback 身份免配对码直发会话 token（与配对码同一会话表）；配对码通道完整保留，二者互不影响。

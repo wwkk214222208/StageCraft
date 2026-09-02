@@ -1,6 +1,6 @@
 # v1 / v2 迁移与使用说明
 
-当前发布仍是 v1：已有 Node/Android 入口、旧插件管理器和 legacy LLM router 继续工作。v2 是已经实现到 M9 的实验性参考路径，尚未冻结，也没有替换 v1。两套启动链可以共存，但一次启动只选择一套 Core。
+当前 shipping 的 Node/Android 组合根均由独立 official LLM System 持有 provider/model/credential/routing/lifecycle/stream/cancel/usage；原 Core router 与旧 HTTP provider API 仅作为兼容适配面保留。v2 的 M3–M9 参考路径及可替换 LLM System 作者路径已经实现，但仍未冻结，也没有替换 shipping 组合。两套启动链可以共存，但一次启动只选择一套 Core。
 
 ## 从 M2 authoring 到 M3 component
 
@@ -12,7 +12,7 @@ v2 默认从 `<userDataRoot>/data/component-launch-plan.v2.json` 读取计划，
 
 ## Android
 
-v1 插件管理器与 v2 Component Store 并存。实际顺序是：通过 SAF 逐个 install 全部 zip；调用 `selectV2Core(id, version, true)` 选择 Core；再逐个调用 `setV2PluginEnabled(id, version, true, true)` 启用 ordinary plugins；最后重启。没有 active v2 Core plan 时，bundled v1 Core 下不能启用这些 v2 插件。安装复制到应用私有 filesDir 的 Component Store，原子安装后才更新索引。恢复路径包括 last-good、失败计数达到阈值后的 quarantine 和 rescue Core。Android 外部组件仅允许浏览器兼容 JS/ESM 单文件，不加载第三方 Dex/Java/Kotlin/.so、Termux 或 Node built-ins；无强沙盒、无热加载，风险由用户承担。
+v1 插件管理器与 v2 Component Store 并存。实际顺序是：通过 SAF 逐个 install 全部 zip；调用 `selectV2Core(id, version, true)` 选择 Core；再逐个调用 `setV2PluginEnabled(id, version, true, true)` 启用 ordinary plugins；最后重启。没有 active v2 Core plan 时，bundled v1 Core 下不能启用这些 v2 插件。安装复制到应用私有 filesDir 的 Component Store，原子安装后才更新索引。恢复路径包括 last-good、失败计数达到阈值后的 quarantine 和 rescue Core。Android 外部组件仅允许浏览器兼容 JS/ESM 单文件，不加载第三方 Dex/Java/Kotlin/.so、Termux 或 Node built-ins；能力声明和授权是合作式控制，不是强沙盒，风险由用户承担。
 
 ### 2026-09-02 真机 smoke 证据
 
@@ -28,11 +28,11 @@ powershell -File scripts/android-v2-smoke.ps1 -Case smoke -Build -Install
 
 ## Core、插件与 LLM 边界
 
-第三方 Core 只需实现最小 Host ABI；official Core plugin runtime 是可选便利层，并非第三方 Core 必须实现的 ABI。LLM System 是完整管理系统，拥有 provider/model/credential/routing/lifecycle/stream/cancel/usage；Provider Driver 只是单供应商适配。Solution 拥有 system prompt、prompt assembly、领域状态和 workflow，不能把这些责任塞入 LLM。
+第三方 Core 只需实现最小 Host ABI；official Core plugin runtime 是可选便利层，并非第三方 Core 必须实现的 ABI。LLM System 是完整可替换的管理系统，拥有 provider/model/credential/routing/lifecycle/stream/cancel/usage；Provider Driver 只是协议适配，不能接管全局路由或凭据管理。Solution 拥有 system prompt、prompt assembly、领域状态和 workflow，不能把这些责任塞入 LLM。Android `host.secrets` 必须先由组件 manifest 声明并获 Host 授权，随后才提供按组件命名空间隔离的 Keystore-backed 端口；桌面参考 Host 只提供普通 `host.storage`，不宣称安全 secret port。
 
-## 已验证的低门槛
+## 当前作者性证据（非正式门槛结论）
 
-Luna/flash 级作者性门槛评估中，Tool、Provider Driver、Solution、UI、Core 均可在最多一次修复内完成；随后每类均通过 build/check/pack 与行为验证。本轮 LLM System 首轮出现 title mismatch，修复后 4/4 行为项通过，并通过 build/check/pack。该结果只代表“能交付可用插件、无明显 bug”的务实门槛，不是安全认证或 API 冻结承诺。
+当前只有一个独立第三方 LLM System 样本（`examples/v2/llm-third-party`）。它经历多轮审查修复（包括 stop/cancel、usage 元数据和默认路由优先级），随后通过 `build → check → test → pack` 与 runtime 合约验证。该证据只支持“有脚手架和测试时能交付功能可用插件”，不能声称一次生成可靠，也不能声称正式统计门槛通过。
 
 ## 限制
 

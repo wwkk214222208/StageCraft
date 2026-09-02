@@ -1,6 +1,6 @@
 # StageCraft Android local and remote client
 
-This directory is the native Android host for the shared StageCraft Core protocol. It supports remote HTTP/SSE mode and the phase-six embedded Core process path. The generated `embedded-core.js` executes the shared StageCraft solution composition in the dedicated `:core` WebView process; Java only owns lifecycle, media, pairing, persistence, model transport, and bounded bridge ports.
+This directory is the native Android host for the shared StageCraft Core protocol. It supports remote HTTP/SSE mode and the embedded Core process path. The generated `embedded-core.js` executes the shared StageCraft solution composition in the dedicated `:core` WebView process; Java only owns lifecycle, media, pairing, persistence, model transport, and bounded bridge ports.
 
 ## Local mode boundary
 
@@ -11,9 +11,9 @@ The embedded path is deliberately limited to the shared, platform-neutral Core s
 ## Android ports
 
 - `AndroidSqliteRepository` provides transactional records, Core snapshots, assets, and recovery metadata in `stagecraft.sqlite`.
-- `AndroidSecretStore` encrypts model provider secrets with an Android Keystore AES-GCM key. Secrets never enter WebView storage, CoreView, URLs, ordinary Core snapshots, or logs. v2 `host.secrets` adds per-component namespacing over this store.
+- `AndroidSecretStore` encrypts model provider secrets with an Android Keystore AES-GCM key. Secrets never enter WebView storage, CoreView, URLs, ordinary Core snapshots, or logs.
 - `AndroidModelTransport` sends model requests and emits bounded SSE deltas; cancellation closes active connections.
-- The embedded Core routes through the replaceable official LLM System and a native OpenAI-compatible driver. v2 `host.secrets` uses Keystore-backed, per-component namespaces; secrets do not enter ordinary Core state.
+- The embedded Core routes through the replaceable official LLM System and a native OpenAI-compatible driver. For v2 external components, `host.secrets` is exposed only after the component declares the capability and the Host grants it; the Android implementation is Keystore-backed and namespaced per component. Secrets do not enter ordinary Core state or `host.storage`.
 - `StageCraftArchive` imports/exports only bounded `stagecraft.json` ZIP archives and rejects unsafe archive content by requiring the canonical entry.
 - PNG card bytes are bounded and signature-checked before any import. JSON card parsing remains a Core/compatibility concern; Android only transports selected data.
 - Foreground/background state is forwarded to the local or remote human plugin. Core snapshots are persisted by the repository, so force-close recovery is based on durable state rather than WebView memory. Client disconnects cancel request-scoped model work; long generation in a backgrounded app remains subject to Android process scheduling and is not promised as a foreground-service workload.
@@ -26,6 +26,8 @@ The repository-wide incremental change, review, evidence, and rollback rules are
 - The main UI uses the same-origin Gateway path by default. The legacy page-local Core shim and generic core-native dispatch remain as an explicit migration fallback until the project records a decision to flip `legacyCoreBridgeEnabled` (migration decisions live in `governance/`).
 - The fallback is not a second business implementation: it exists only to recover from a Core/Gateway startup failure. New routes, protocol changes, or bug fixes must land in the shared registry/handler/fixture first.
 - A failed local Core must leave the host able to show the recovery page, edit plugin configuration, export diagnostics, and enter remote mode without clearing Core state or secrets.
+
+The Android v2 capability model is cooperative authorization, not a strong sandbox: third-party Core/plugin code is user-trusted code. External v2 Core and plugin packages are browser-compatible single-file JavaScript/ESM only; the loader rejects third-party Dex/Java/Kotlin/.so, Termux, Node built-ins and native bridge loading. Desktop and Android reuse the same v2 component/LLM System contract, while the reference desktop Host advertises ordinary `host.storage` and does not claim a secure secret port.
 
 ## Security boundary
 

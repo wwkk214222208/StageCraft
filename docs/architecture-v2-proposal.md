@@ -1,6 +1,6 @@
 # StageCraft v2 architecture baseline (reference path, experimental)
 
-> Status: reference path implemented through M8/M9 (2026-09-02), experimental and not frozen. v1 remains shipping; this document does not claim that v2 replaced the v1 startup chain. Existing `docs/architecture.md` and its launch-mode table describe v1 behavior unless they explicitly link here.
+> Status: reference path implemented through M8/M9, with the replaceable LLM System authoring path verified on 2026-09-03. It remains experimental and not frozen. The shipping Node/Android composition already uses the independent official LLM System; the original Core router and legacy HTTP provider API remain compatibility adapters only. This document does not claim that the v2 component authoring path replaced the shipping startup chain. Existing `docs/architecture.md` and its launch-mode table describe shipping behavior unless they explicitly link here.
 
 ## Vocabulary
 
@@ -14,7 +14,9 @@
 
 ## Responsibility and trust boundaries
 
-The Host is trusted to enforce platform lifecycle and to keep its control plane available when Core fails. Core is trusted with application state and user-selected plugin code. Third-party Core/plugin code is not sandboxed in this phase: the user accepts its risk, and the installer must show capabilities and integrity diagnostics. Android third-party components are browser-compatible JavaScript/ESM only; no external Dex/Java/Kotlin/.so, Termux, Node built-ins or native bridge is loaded.
+The Host is trusted to enforce platform lifecycle and to keep its control plane available when Core fails. Core is trusted with application state and user-selected plugin code. Third-party Core/plugin code is not sandboxed in this phase: the user accepts its risk, and the installer must show capabilities and integrity diagnostics. Capability checks are cooperative authorization, not a security boundary between code sharing a WebView. Android third-party components are browser-compatible JavaScript/ESM only; no external Dex/Java/Kotlin/.so, Termux, Node built-ins or native bridge is loaded.
+
+`host.secrets` is an optional capability: a component must declare it in its manifest and receive Host authorization before the port is exposed. Android backs the per-component namespace with the platform Keystore. The reference desktop Host advertises ordinary `host.storage` but does not claim a secure secret port; a plugin must tolerate that capability being absent and must not treat desktop component storage as a secure credential vault.
 
 The Host never implements Solution or LLM policy. Core never imports Node filesystem, Android APIs or DOM APIs. UI code receives a host mount handle and uses the host UI surface; it does not reach through to private Host/Core classes. State mutations go through Core commands/events and its transaction boundary.
 
@@ -30,7 +32,7 @@ The Host never implements Solution or LLM policy. Core never imports Node filesy
 
 ## Explicit non-goals for v2 proposal
 
-This phase does not freeze the final Manifest or Host ABI; implement marketplace, Git installation, signatures, strong sandboxing, hot reload, universal plugin compatibility, or desktop/Android native plugin loading. It also does not move the current v1 startup chain or claim that the SDK/reference path is production-ready.
+This phase does not freeze the final Manifest or Host ABI; marketplace UI, Git installation, signatures, strong sandboxing, hot reload, universal plugin compatibility, or desktop/Android native plugin loading remain out of scope. It also does not move the current v1 startup chain or claim that the SDK/reference path is production-ready.
 
 ## Compatibility with v1 documents
 
